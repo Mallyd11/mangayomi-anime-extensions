@@ -2,11 +2,11 @@ const mangayomiSources = [
   {
     "name": "Kaido",
     "id": 2457624982,
-    "baseUrl": "https://kaido.to",
+    "baseUrl": "https://kaido.vercel.app",
     "lang": "en",
     "typeSource": "single",
     "iconUrl":
-      "https://www.google.com/s2/favicons?sz=256&domain=https://kaido.to/",
+      "https://www.google.com/s2/favicons?sz=256&domain=https://kaido.vercel.app/",
     "dateFormat": "",
     "dateFormatLocale": "",
     "isNsfw": false,
