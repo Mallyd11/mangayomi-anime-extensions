@@ -68,9 +68,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getLatestUpdates(page) {
-    var choice = this.getPreference("animeparadise_pref_latest_tab");
-    if (choice === "recent_ep") return await this.formList("ep/recently-added");
-    return await this.formList("search?q=");
+    return await this.formList("ep/recently-added");
   }
   async search(query, page, filters) {
     var season = filters[0].values[filters[0].state].value;
