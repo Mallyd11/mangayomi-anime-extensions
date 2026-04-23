@@ -20,17 +20,17 @@ This repository contains the available javascript extension catalogues for the M
 
 Click on one of the buttons below to add the anime repository:
 
-<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=Mangayomi Mally extensions%26repo_url=https://github.com/Mallyd11/mangayomi-anime-extensions%26anime_url=https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/anime_index.json"><img alt="Add anime repository" src="images/add-anime-repository.png" height="35"></a>
+<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=Mangayomi Mally extensions%26repo_url=https://github.com/Mallyd11/mangayomi-anime-extensions%26anime_url=https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/main/anime_index.json"><img alt="Add anime repository" src="images/add-anime-repository.png" height="35"></a>
 
 If you installed the app via Live Container, then use the following button instead:
 
-<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBNYWxseSBleHRlbnNpb25zJnJlcG9fdXJsPWh0dHBzOi8vZ2l0aHViLmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucyZhbmltZV91cmw9aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL01hbGx5ZDExL21hbmdheW9taS1hbmltZS1leHRlbnNpb25zL3JlZnMvaGVhZHMvbWFpbi9hbmltZV9pbmRleC5qc29u"><img alt="Add anime repository" src="images/add-anime-repository-livecontainer.png" height="35"></a>
+<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBNYWxseSBleHRlbnNpb25zJnJlcG9fdXJsPWh0dHBzOi8vZ2l0aHViLmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucyZhbmltZV91cmw9aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL01hbGx5ZDExL21hbmdheW9taS1hbmltZS1leHRlbnNpb25zL21haW4vYW5pbWVfaW5kZXguanNvbg=="><img alt="Add anime repository" src="images/add-anime-repository-livecontainer.png" height="35"></a>
 
 Or add it manually in the app (More -> Settings -> Browse):
 
 anime repo
 ```
-https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/anime_index.json
+https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/main/anime_index.json
 ```
 
 ## License
