@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(git push *)",
+      "Bash(git remote *)",
+      "Bash(sed -i 's|Swakshan/mangayomi-swak-extensions|Mallyd11/mangayomi-anime-extensions|g' repo.json anime_index.json index.json novel_index.json)",
+      "Bash(sed -i 's|Mangayomi Swak extensions|Mangayomi Mally extensions|g' repo.json)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "WebFetch(domain:animeyy.com)",
+      "WebFetch(domain:mgread.io)",
+      "WebSearch",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(curl -s -L \"https://mgread.io/?act=search&f[status]=all&f[sortby]=hot&pageNum=1\" -H \"User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\")",
+      "Bash(curl -s -L \"https://mgread.io/?act=search&f[status]=all&f[sortby]=hot&pageNum=1\" -H \"User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/120.0.0.0 Safari/537.36\" -o /tmp/mgread.html)",
+      "Bash(grep -o '.\\\\{0,200\\\\}manga-item.\\\\{0,200\\\\}' /c/Users/malik/AppData/Local/Temp/mgread.html)",
+      "Bash(git rm *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:everythingmoe.com)",
+      "Bash(gh api *)",
+      "Bash(curl -s \"https://api.github.com/repos/kodjodevf/mangayomi/contents/lib/models/source.dart\")",
+      "Bash(python3)",
+      "Bash(xargs grep *)"
+    ]
+  }
+}
