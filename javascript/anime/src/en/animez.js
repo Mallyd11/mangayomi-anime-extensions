@@ -3,7 +3,7 @@ const mangayomiSources = [
     "name": "AnimeZZ",
     "id": 492689523,
     "lang": "en",
-    "baseUrl": "https://animeyy.com",
+    "baseUrl": "https://mgread.io",
     "apiUrl": "",
     "iconUrl":
       "https://www.google.com/s2/favicons?sz=256&domain=https://animeyy.com",
@@ -21,7 +21,7 @@ class DefaultExtension extends MProvider {
   }
 
   getBaseUrl() {
-    return "https://animeyy.com";
+    return "https://mgread.io";
   }
 
   getHeaders() {
@@ -55,7 +55,7 @@ class DefaultExtension extends MProvider {
 
     var paginations = body.select(".pagination > li");
     hasNextPage =
-      paginations[paginations.length - 1].text == "Last" ? true : false;
+      paginations.length > 0 && paginations[paginations.length - 1].text == "Last";
 
     return { list, hasNextPage };
   }
