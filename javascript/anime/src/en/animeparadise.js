@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
