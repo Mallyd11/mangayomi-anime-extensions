@@ -96,8 +96,8 @@ class DefaultExtension extends MProvider {
     var linkSlug = this.source.baseUrl + `/anime/`;
     if (url.includes(linkSlug)) url = url.replace(linkSlug, "");
 
-    var jsonData = await this.extractFromUrl(`/anime/${url}`);
-    jsonData = jsonData.data;
+    var res = await this.requestAPI(`anime/${url}`);
+    var jsonData = res.data;
     var details = {};
     var chapters = [];
     details.imageUrl = jsonData.posterImage.original;
@@ -168,10 +168,9 @@ class DefaultExtension extends MProvider {
 
   // For anime episode video list
   async getVideoList(url) {
-    var streams = [];
-    var jsonData = await this.extractFromUrl(`/watch/${url}`);
-    var epData = jsonData.episode;
-    streams = await this.extractStreams(epData.streamLink);
+    var jsonData = await this.requestAPI(`ep/${url}`);
+    var epData = jsonData.data.episode;
+    var streams = await this.extractStreams(epData.streamLink);
 
     var subtitles = [];
     epData.subData.forEach((sub) => {
