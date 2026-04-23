@@ -38,8 +38,9 @@ class DefaultExtension extends MProvider {
   async formList(slug) {
     var jsonData = await this.requestAPI(slug);
     var list = [];
-    if ("episodes" in jsonData) {
-      jsonData.episodes.forEach((item) => {
+    var isEpisodeList = slug.includes("recently-added");
+    if (isEpisodeList) {
+      jsonData.data.forEach((item) => {
         list.push({
           "name": item.origin.title,
           "link": item.origin.link,
@@ -63,16 +64,13 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    return await this.formList('?sort={"rate": -1 }');
+    return await this.formList("search?q=");
   }
 
   async getLatestUpdates(page) {
-    var slug = '?sort={"postDate": -1 }';
-
     var choice = this.getPreference("animeparadise_pref_latest_tab");
-    if (choice === "recent_ep") slug = "ep/recently-added";
-
-    return await this.formList(slug);
+    if (choice === "recent_ep") return await this.formList("ep/recently-added");
+    return await this.formList("search?q=");
   }
   async search(query, page, filters) {
     var season = filters[0].values[filters[0].state].value;

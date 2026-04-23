@@ -10,7 +10,7 @@ const mangayomiSources = [
     "typeSource": "single",
     "itemType": 1,
     "version": "1.0.5",
-    "pkgPath": "anime/src/all/animeonsen.js",
+    "pkgPath": "anime/src/en/animeonsen.js",
   },
 ];
 
