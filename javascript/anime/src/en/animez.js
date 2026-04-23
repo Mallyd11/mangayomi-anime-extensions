@@ -44,18 +44,16 @@ class DefaultExtension extends MProvider {
     var list = [];
     var hasNextPage = false;
 
-    var animes = body.select("li.TPostMv");
+    var animes = body.select("div.manga-item-grid");
     animes.forEach((anime) => {
       var link = anime.selectFirst("a").getHref;
-      var name = anime.selectFirst("h2.Title").text;
-      var imageUrl = this.getBaseUrl() + "/" + anime.selectFirst("img").getSrc;
+      var name = anime.selectFirst("a.uk-link-heading").text;
+      var imageUrl = anime.selectFirst("img").getSrc;
 
       list.push({ name, link, imageUrl });
     });
 
-    var paginations = body.select(".pagination > li");
-    hasNextPage =
-      paginations.length > 0 && paginations[paginations.length - 1].text == "Last";
+    hasNextPage = list.length >= 24;
 
     return { list, hasNextPage };
   }
