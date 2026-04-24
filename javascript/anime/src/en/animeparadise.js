@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.7",
+    "version": "0.2.8",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -35,8 +35,11 @@ class DefaultExtension extends MProvider {
     return body;
   }
 
-  async formList(slug) {
-    var jsonData = await this.requestAPI(slug);
+  async formList(slug, page = 1) {
+    var limit = 30;
+    var separator = slug.includes("?") ? "&" : "?";
+    var pagedSlug = slug + `${separator}page=${page}&limit=${limit}`;
+    var jsonData = await this.requestAPI(pagedSlug);
     var list = [];
     var isEpisodeList = slug.includes("recently-added");
     if (isEpisodeList) {
@@ -59,20 +62,20 @@ class DefaultExtension extends MProvider {
 
     return {
       "list": list,
-      "hasNextPage": false,
+      "hasNextPage": list.length >= limit,
     };
   }
 
   async getPopular(page) {
-    return await this.formList("search?q=");
+    return await this.formList("search?q=", page);
   }
 
   async getLatestUpdates(page) {
     var pref = this.getPreference("animeparadise_pref_latest_tab");
     if (pref === "recent_ep") {
-      return await this.formList("ep/recently-added");
+      return await this.formList("ep/recently-added", page);
     }
-    return await this.formList('search?q=&sort={"postDate":-1}');
+    return await this.formList('search?q=&sort={"postDate":-1}', page);
   }
   async search(query, page, filters) {
     var season = filters[0].values[filters[0].state].value;
