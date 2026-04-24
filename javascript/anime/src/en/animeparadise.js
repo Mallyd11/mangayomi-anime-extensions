@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.2.1",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -135,15 +135,20 @@ class DefaultExtension extends MProvider {
   // Extracts the streams url for different resolutions from a hls stream.
   async extractStreams(url) {
     var proxyUrl = "https://stream.animeparadise.moe/";
+    var streamHeaders = {
+      "Referer": "https://animeparadise.moe/",
+      "Origin": "https://animeparadise.moe",
+    };
     url = proxyUrl + "m3u8?url=" + url;
     var streams = [
       {
         url: url,
         originalUrl: url,
         quality: `Auto`,
+        headers: streamHeaders,
       },
     ];
-    const response = await new Client().get(url);
+    const response = await new Client().get(url, { "headers": streamHeaders });
     if (response.statusCode == 200) {
       const body = response.body;
       const lines = body.split("\n");
@@ -157,6 +162,7 @@ class DefaultExtension extends MProvider {
             url: m3u8Url,
             originalUrl: m3u8Url,
             quality: resolution,
+            headers: streamHeaders,
           });
         }
       }
