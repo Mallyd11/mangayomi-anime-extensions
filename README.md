@@ -12,7 +12,7 @@ This repository contains the available javascript extension catalogues for the M
 |------|---------|----------|---------------|
 | Animetsu | 1.0.2 | all | 2026/04/22 |
 | AnimeParadise | 0.2.0 | en | 2026/04/23 |
-| Animeonsen | 1.0.5 | en, ja | 2026/04/23 |
+| AnimeKai | 1.0.0 | en | 2026/04/24 |
 
 </details>
 
