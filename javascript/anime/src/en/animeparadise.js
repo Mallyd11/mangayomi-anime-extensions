@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.4",
+    "version": "0.2.5",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -136,6 +136,24 @@ class DefaultExtension extends MProvider {
     return [...sortedStreams, ...copyStreams];
   }
 
+  // Rewrites relative segment lines in an m3u8 body to absolute URLs.
+  rewriteM3u8Segments(body, baseUrl) {
+    return body.split("\n").map(line => {
+      var trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("#")) {
+        return trimmed.startsWith("http") ? trimmed : baseUrl + trimmed;
+      }
+      return line;
+    }).join("\n");
+  }
+
+  // Encodes rewritten m3u8 content as a data URI so Mangayomi's downloader
+  // gets absolute segment URLs instead of bare filenames.
+  m3u8ToDataUri(content) {
+    var encoded = btoa(unescape(encodeURIComponent(content)));
+    return "data:application/vnd.apple.mpegurl;base64," + encoded;
+  }
+
   // Extracts the streams url for different resolutions from a hls stream.
   async extractStreams(url) {
     var proxyUrl = "https://stream.animeparadise.moe/";
@@ -144,34 +162,63 @@ class DefaultExtension extends MProvider {
       "Origin": "https://animeparadise.moe",
     };
     var proxiedUrl = proxyUrl + "m3u8?url=" + url;
-    var streams = [
-      {
-        url: proxiedUrl,
-        originalUrl: proxiedUrl,
-        quality: "Auto",
-        headers: streamHeaders,
-      },
-    ];
+    var streams = [];
+
     const response = await new Client().get(proxiedUrl, streamHeaders);
     if (response.statusCode == 200) {
       const body = response.body;
       const lines = body.split("\n");
+      var hasMaster = lines.some(l => l.startsWith("#EXT-X-STREAM-INF:"));
 
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
-          var resolution = lines[i].match(/RESOLUTION=(\d+x\d+)/)[1];
-          var nextLine = lines[i + 1].trim();
-          var m3u8Url = nextLine.startsWith("http") ? nextLine : proxyUrl + nextLine;
+      if (hasMaster) {
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
+            var resolution = lines[i].match(/RESOLUTION=(\d+x\d+)/)[1];
+            var nextLine = lines[i + 1].trim();
+            var qualityUrl = nextLine.startsWith("http") ? nextLine : proxyUrl + nextLine;
 
-          streams.push({
-            url: m3u8Url,
-            originalUrl: m3u8Url,
-            quality: resolution,
-            headers: streamHeaders,
-          });
+            try {
+              var qRes = await new Client().get(qualityUrl, streamHeaders);
+              if (qRes.statusCode == 200) {
+                var rewritten = this.rewriteM3u8Segments(qRes.body, proxyUrl);
+                var dataUri = this.m3u8ToDataUri(rewritten);
+                streams.push({
+                  url: qualityUrl,
+                  originalUrl: dataUri,
+                  quality: resolution,
+                  headers: streamHeaders,
+                });
+              }
+            } catch (e) {
+              streams.push({
+                url: qualityUrl,
+                originalUrl: qualityUrl,
+                quality: resolution,
+                headers: streamHeaders,
+              });
+            }
+          }
         }
       }
+
+      // Always include Auto using the rewritten master/media content
+      var rewrittenAuto = this.rewriteM3u8Segments(body, proxyUrl);
+      var autoDataUri = this.m3u8ToDataUri(rewrittenAuto);
+      streams.unshift({
+        url: proxiedUrl,
+        originalUrl: autoDataUri,
+        quality: "Auto",
+        headers: streamHeaders,
+      });
+    } else {
+      streams.push({
+        url: proxiedUrl,
+        originalUrl: proxiedUrl,
+        quality: "Auto",
+        headers: streamHeaders,
+      });
     }
+
     return streams;
   }
 
