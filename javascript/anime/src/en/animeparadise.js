@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -148,7 +148,7 @@ class DefaultExtension extends MProvider {
         headers: streamHeaders,
       },
     ];
-    const response = await new Client().get(url, { "headers": streamHeaders });
+    const response = await new Client().get(url, streamHeaders);
     if (response.statusCode == 200) {
       const body = response.body;
       const lines = body.split("\n");
