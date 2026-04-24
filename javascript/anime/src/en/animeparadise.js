@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.6",
+    "version": "0.2.7",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -69,10 +69,10 @@ class DefaultExtension extends MProvider {
 
   async getLatestUpdates(page) {
     var pref = this.getPreference("animeparadise_pref_latest_tab");
-    if (pref === "recent_ani") {
-      return await this.formList("search?q=");
+    if (pref === "recent_ep") {
+      return await this.formList("ep/recently-added");
     }
-    return await this.formList("ep/recently-added");
+    return await this.formList('search?q=&sort={"postDate":-1}');
   }
   async search(query, page, filters) {
     var season = filters[0].values[filters[0].state].value;
