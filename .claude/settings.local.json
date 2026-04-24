@@ -54,7 +54,28 @@
       "WebFetch(domain:animetsu.bz)",
       "Bash(python -c \"import json; data=json.load\\(open\\('anime_index.json'\\)\\); [print\\(s\\) for s in data if 'paradise' in str\\(s\\).lower\\(\\)]\")",
       "Bash(python -c ' *)",
-      "Bash(python -c \"import json; data=json.load\\(open\\('anime_index.json'\\)\\); [print\\(s['name'], s['version']\\) for s in data if isinstance\\(s, dict\\) and 'paradise' in s.get\\('name',''\\).lower\\(\\)]\")"
+      "Bash(python -c \"import json; data=json.load\\(open\\('anime_index.json'\\)\\); [print\\(s['name'], s['version']\\) for s in data if isinstance\\(s, dict\\) and 'paradise' in s.get\\('name',''\\).lower\\(\\)]\")",
+      "WebFetch(domain:api.animeparadise.moe)",
+      "WebFetch(domain:animeparadise.moe)",
+      "Bash(gh search *)",
+      "WebFetch(domain:animeparadise.org)",
+      "WebFetch(domain:stream.animeparadise.moe)",
+      "WebFetch(domain:animeparadise-tm.s3.amazonaws.com)",
+      "WebFetch(domain:cloudstream.miraheze.org)",
+      "Bash(curl -s \"https://api.github.com/search/code?q=animeparadise+extension&type=code\" -H \"Accept: application/vnd.github.v3+json\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(i['repository']['full_name'], i['path']\\) for i in d.get\\('items',[]\\)]\")",
+      "Bash(curl -s \"https://api.github.com/search/repositories?q=animeparadise&sort=updated&per_page=15\" -H \"Accept: application/vnd.github.v3+json\")",
+      "Bash(python3 -c \" import sys,json d=json.load\\(sys.stdin\\) for i in d.get\\('items',[]\\): print\\(i['full_name'], '-', i.get\\('description',''\\), '-', i['updated_at']\\) \")",
+      "Bash(curl -s \"https://api.github.com/search/code?q=animeparadise.moe+filename:js+OR+filename:dart+OR+filename:kt&per_page=15\" -H \"Accept: application/vnd.github.v3+json\")",
+      "Bash(python3 -c \" import sys,json d=json.load\\(sys.stdin\\) for i in d.get\\('items',[]\\): print\\(i['repository']['full_name'], '-', i['path']\\) \")",
+      "Bash(curl -s \"https://api.github.com/search/code?q=animeparadise.moe&per_page=15\" -H \"Accept: application/vnd.github.v3+json\")",
+      "Bash(python3 -c \" import sys,json d=json.load\\(sys.stdin\\) print\\('total:', d.get\\('total_count'\\)\\) for i in d.get\\('items',[]\\): print\\(i['repository']['full_name'], '-', i['path']\\) \")",
+      "Bash(curl -sv \"https://api.github.com/search/code?q=animeparadise.moe&per_page=5\" -H \"Accept: application/vnd.github.v3+json\")",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:web.archive.org)",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(d['name']\\) for d in data]\")",
+      "Bash(python3 -c \" import json, sys data = json.load\\(sys.stdin\\) trees = data.get\\('tree', []\\) js_files = [t['path'] for t in trees if t['path'].endswith\\('.js'\\) and 'anime' in t['path'].lower\\(\\)] print\\('\\\\n'.join\\(js_files[:40]\\)\\) \")",
+      "WebFetch(domain:api.github.com)"
     ]
   }
 }
