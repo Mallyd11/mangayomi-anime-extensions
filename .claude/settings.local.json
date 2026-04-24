@@ -50,7 +50,8 @@
       "Bash(grep -oP 'itemprop=\"genre|class=\"desc|class=\"detail|class=\"rating|class=\"status|<div class=\"detail\">.{0,500}' /tmp/watch2.html)",
       "Bash(grep -oP 'Status[^<]{0,200}' /tmp/watch2.html)",
       "Bash(grep -oP 'Status:[^<]{0,100}' /tmp/watch2.html)",
-      "Bash(grep -oP '.{0,50}Status:.{0,100}' /tmp/watch2.html)"
+      "Bash(grep -oP '.{0,50}Status:.{0,100}' /tmp/watch2.html)",
+      "WebFetch(domain:animetsu.bz)"
     ]
   }
 }
