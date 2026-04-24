@@ -29,7 +29,28 @@
       "WebFetch(domain:cdn.animeonsen.xyz)",
       "WebFetch(domain:animekai.to)",
       "WebFetch(domain:anikai.to)",
-      "WebFetch(domain:enc-dec.app)"
+      "WebFetch(domain:enc-dec.app)",
+      "Bash(curl -s -L -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8' -H 'Accept-Language: en-US,en;q=0.5' -H 'Accept-Encoding: gzip, deflate, br' -H 'Connection: keep-alive' -H 'Upgrade-Insecure-Requests: 1' --compressed https://anikai.to/browser)",
+      "Bash(curl -s -L -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8' -H 'Accept-Language: en-US,en;q=0.5' -H 'Accept-Encoding: gzip, deflate, br' -H 'Connection: keep-alive' -H 'Upgrade-Insecure-Requests: 1' --compressed https://anikai.to/updates)",
+      "Bash(curl -s -L -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8' -H 'Accept-Language: en-US,en;q=0.5' -H 'Accept-Encoding: gzip, deflate, br' -H 'Connection: keep-alive' --compressed https://anikai.to/watch/one-piece-4r8e)",
+      "Bash(grep -oP '.{0,300}\\(data-id=\"[a-zA-Z0-9_-]+\"\\).{0,300}' /tmp/watch2.html)",
+      "Bash(grep -oP '.{0,100}\\(ep-list|eps-list|episode-list|watch-section|player-container|player-wrap|ep-container|eplists|eplist\\).{0,200}' /tmp/watch2.html)",
+      "Bash(grep -oP '<div class=\"watch-section\"[^>]*>.{0,500}' /tmp/watch2.html)",
+      "Bash(grep -oP '.{0,100}\\(server|source|eps|episode\\).{0,200}' /tmp/watch2.html)",
+      "Bash(grep -oP '.{0,50}\\(data-id=\"c4e78ac\"|\"wrw18\"|id=\"player-server\"|\"eps\"|\"ep-list\"|\"ep-num\"|\"ep-\"\\).{0,200}' /tmp/watch2.html)",
+      "Bash(curl -s -I -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'Referer: https://anikai.to/watch/dr-stone-science-future-part-3-wrw18' https://anikai.to/ajax/episode/list/c4e78ac)",
+      "Bash(curl -s -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'Referer: https://anikai.to/browser' -H 'X-Requested-With: XMLHttpRequest' https://anikai.to/ajax/info/c4e78ac)",
+      "Bash(curl -s -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'Referer: https://anikai.to/watch/dr-stone-science-future-part-3-wrw18' -H 'X-Requested-With: XMLHttpRequest' 'https://anikai.to/ajax/episode/list?ani=c4e78ac')",
+      "Bash(curl -s -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'Referer: https://anikai.to/watch/dr-stone-science-future-part-3-wrw18' -H 'X-Requested-With: XMLHttpRequest' 'https://anikai.to/ajax/episodes?ani=c4e78ac')",
+      "Bash(curl -s -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' 'https://anikai.to/assets/build/37585a3ffa8ec292ee9e370ab5e86f/dist/scripts-BzTinek-.js?12')",
+      "Bash(grep -oP '[\"'\\\\''/]ajax/[^\"'\\\\''\\\\\\\\]+')",
+      "Bash(curl -s -I -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'Referer: https://anikai.to/' https://megaup.net/media/)",
+      "Bash(curl -s -I -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' https://megaup.net/)",
+      "Bash(grep -oP '.{0,50}\\(class=\"poster|class=\"info|class=\"desc|class=\"genre|class=\"status|class=\"cover|class=\"synopsis|itemprop=\"description\\).{0,300}' /tmp/watch2.html)",
+      "Bash(grep -oP 'itemprop=\"genre|class=\"desc|class=\"detail|class=\"rating|class=\"status|<div class=\"detail\">.{0,500}' /tmp/watch2.html)",
+      "Bash(grep -oP 'Status[^<]{0,200}' /tmp/watch2.html)",
+      "Bash(grep -oP 'Status:[^<]{0,100}' /tmp/watch2.html)",
+      "Bash(grep -oP '.{0,50}Status:.{0,100}' /tmp/watch2.html)"
     ]
   }
 }
