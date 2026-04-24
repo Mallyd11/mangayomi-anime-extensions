@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.1",
+    "version": "1.0.2",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -34,7 +34,6 @@ class DefaultExtension extends MProvider {
     return {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
-      "Cookie": "__ddg1_=;__ddg2_=;",
       "X-Requested-With": "XMLHttpRequest",
     };
   }
@@ -194,13 +193,11 @@ class DefaultExtension extends MProvider {
       var serverDoc = new Document(JSON.parse(serverRes.body).result);
       var groups = serverDoc.select("div.server-items");
 
-      for (var g = 0; g < groups.length; g++) {
-        var group = groups[g];
+      for (var group of groups) {
         var sourceType = group.attr("data-id");
         var serverEls = group.select("span.server");
 
-        for (var s = 0; s < serverEls.length; s++) {
-          var serverEl = serverEls[s];
+        for (var serverEl of serverEls) {
           var serverId = serverEl.attr("data-lid");
           var serverName = serverEl.text.trim();
 
