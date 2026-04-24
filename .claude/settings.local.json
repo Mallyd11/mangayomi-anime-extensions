@@ -53,7 +53,8 @@
       "Bash(grep -oP '.{0,50}Status:.{0,100}' /tmp/watch2.html)",
       "WebFetch(domain:animetsu.bz)",
       "Bash(python -c \"import json; data=json.load\\(open\\('anime_index.json'\\)\\); [print\\(s\\) for s in data if 'paradise' in str\\(s\\).lower\\(\\)]\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import json; data=json.load\\(open\\('anime_index.json'\\)\\); [print\\(s['name'], s['version']\\) for s in data if isinstance\\(s, dict\\) and 'paradise' in s.get\\('name',''\\).lower\\(\\)]\")"
     ]
   }
 }
