@@ -23,7 +23,13 @@
       "Bash(gh api *)",
       "Bash(curl -s \"https://api.github.com/repos/kodjodevf/mangayomi/contents/lib/models/source.dart\")",
       "Bash(python3)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "WebFetch(domain:anime.nexus)",
+      "WebFetch(domain:api.anime.nexus)",
+      "WebFetch(domain:cdn.animeonsen.xyz)",
+      "WebFetch(domain:animekai.to)",
+      "WebFetch(domain:anikai.to)",
+      "WebFetch(domain:enc-dec.app)"
     ]
   }
 }
