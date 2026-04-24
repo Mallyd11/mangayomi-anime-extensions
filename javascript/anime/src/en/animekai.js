@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.0",
+    "version": "1.0.1",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -26,6 +26,7 @@ class DefaultExtension extends MProvider {
     return {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
+      "Cookie": "__ddg1_=;__ddg2_=;",
     };
   }
 
@@ -33,6 +34,7 @@ class DefaultExtension extends MProvider {
     return {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
+      "Cookie": "__ddg1_=;__ddg2_=;",
       "X-Requested-With": "XMLHttpRequest",
     };
   }
@@ -64,7 +66,9 @@ class DefaultExtension extends MProvider {
 
   parseList(doc) {
     var list = [];
-    doc.select("div.aitem").forEach((item) => {
+    var items = doc.select("div.aitem");
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
       var anchor = item.selectFirst("a.poster");
       var href = anchor ? anchor.attr("href") : "";
       var link = href.startsWith("http") ? href : this.source.baseUrl + href;
@@ -73,7 +77,7 @@ class DefaultExtension extends MProvider {
       var img = item.selectFirst(".poster img");
       var imageUrl = img ? (img.attr("data-src") || img.attr("src")) : "";
       if (name && link) list.push({ name, imageUrl, link });
-    });
+    }
     return list;
   }
 
@@ -121,19 +125,20 @@ class DefaultExtension extends MProvider {
     if (nameEl) name = nameEl.text.trim();
 
     var imageUrl = "";
-    var imgEl = doc.selectFirst(".anime-poster img, .poster img, .cover img");
+    var imgEl = doc.selectFirst(".poster img, .anime-poster img, .cover img");
     if (imgEl) imageUrl = imgEl.attr("src") || imgEl.attr("data-src");
 
     var description = "";
-    var descEl = doc.selectFirst(".description, .synopsis, .info-desc");
+    var descEl = doc.selectFirst("div.desc, .description, .synopsis");
     if (descEl) description = descEl.text.trim();
 
     var genre = [];
-    doc.select(".genres a, .genre a, .tags a").forEach((el) =>
-      genre.push(el.text.trim())
-    );
+    var genreEls = doc.select("div.detail a[href*='/genres/']");
+    for (var i = 0; i < genreEls.length; i++) {
+      genre.push(genreEls[i].text.trim());
+    }
 
-    var statusEl = doc.selectFirst(".status, .info-status");
+    var statusEl = doc.selectFirst(".status span, .info-status");
     var status = statusEl
       ? this.statusCode(statusEl.text.trim().toLowerCase())
       : 5;
@@ -146,27 +151,21 @@ class DefaultExtension extends MProvider {
       try {
         var token = await this.encKai(aniId);
         var epRes = await this.client.get(
-          this.source.baseUrl +
-            "/ajax/episodes/list?ani_id=" +
-            aniId +
-            "&_=" +
-            token,
+          this.source.baseUrl + "/ajax/episodes/list?ani_id=" + aniId + "&_=" + token,
           this.ajaxHeaders
         );
         var epDoc = new Document(JSON.parse(epRes.body).result);
-        epDoc.select("a[num][token]").forEach((ep) => {
+        var epEls = epDoc.select("a[num][token]");
+        for (var i = 0; i < epEls.length; i++) {
+          var ep = epEls[i];
           var num = ep.attr("num");
           var epToken = ep.attr("token");
           var titleEl = ep.selectFirst("span");
           var epTitle = titleEl ? titleEl.text.trim() : "Episode " + num;
           var langs = ep.attr("langs");
-          var langTag =
-            langs === "2" || langs === "3" ? " [Sub+Dub]" : " [Sub]";
-          chapters.push({
-            name: "E" + num + ": " + epTitle + langTag,
-            url: epToken,
-          });
-        });
+          var langTag = langs === "2" || langs === "3" ? " [Sub+Dub]" : " [Sub]";
+          chapters.push({ name: "E" + num + ": " + epTitle + langTag, url: epToken });
+        }
       } catch (e) {}
     }
 
@@ -189,32 +188,26 @@ class DefaultExtension extends MProvider {
     try {
       var tokenB = await this.encKai(epToken);
       var serverRes = await this.client.get(
-        this.source.baseUrl +
-          "/ajax/links/list?token=" +
-          epToken +
-          "&_=" +
-          tokenB,
+        this.source.baseUrl + "/ajax/links/list?token=" + epToken + "&_=" + tokenB,
         this.ajaxHeaders
       );
       var serverDoc = new Document(JSON.parse(serverRes.body).result);
-
       var groups = serverDoc.select("div.server-items");
-      for (var group of groups) {
+
+      for (var g = 0; g < groups.length; g++) {
+        var group = groups[g];
         var sourceType = group.attr("data-id");
         var serverEls = group.select("span.server");
 
-        for (var serverEl of serverEls) {
+        for (var s = 0; s < serverEls.length; s++) {
+          var serverEl = serverEls[s];
           var serverId = serverEl.attr("data-lid");
           var serverName = serverEl.text.trim();
 
           try {
             var tokenC = await this.encKai(serverId);
             var linkRes = await this.client.get(
-              this.source.baseUrl +
-                "/ajax/links/view?id=" +
-                serverId +
-                "&_=" +
-                tokenC,
+              this.source.baseUrl + "/ajax/links/view?id=" + serverId + "&_=" + tokenC,
               this.ajaxHeaders
             );
             var kaiEncoded = JSON.parse(linkRes.body).result;
@@ -233,14 +226,12 @@ class DefaultExtension extends MProvider {
 
             var subtitles = [];
             if (decoded.tracks) {
-              decoded.tracks.forEach((track) => {
+              for (var t = 0; t < decoded.tracks.length; t++) {
+                var track = decoded.tracks[t];
                 if (track.kind === "captions" || track.kind === "subtitles") {
-                  subtitles.push({
-                    label: track.label || "Unknown",
-                    file: track.file,
-                  });
+                  subtitles.push({ label: track.label || "Unknown", file: track.file });
                 }
-              });
+              }
             }
 
             if (decoded.sources && decoded.sources.length > 0) {
@@ -250,6 +241,10 @@ class DefaultExtension extends MProvider {
                 originalUrl: m3u8Url,
                 quality: serverName + " [" + sourceType + "]",
                 subtitles: subtitles,
+                headers: {
+                  "User-Agent": this.ua,
+                  "Referer": "https://megaup.net/",
+                },
               });
               break;
             }
