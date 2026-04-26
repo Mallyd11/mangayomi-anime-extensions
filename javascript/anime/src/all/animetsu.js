@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -195,7 +195,7 @@ class DefaultExtension extends MProvider {
               serverName,
             );
           } else if (serverName == "kite") {
-            serverStreams = this.getKiteStreams(epData, audioType);
+            serverStreams = await this.getKiteStreams(epData, audioType);
           }
         }
 
@@ -227,32 +227,60 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  getKiteStreams(epData, audioType) {
+  async getKiteStreams(epData, audioType) {
     var hdr = this.getHeaders();
     var streams = [];
-
-    epData.sources.forEach((item) => {
-      var quality = "Auto";
-      var link = this.getProxyMediaUrl(item.url);
-      streams.push({
-        url: link,
-        originalUrl: link,
-        quality: this.streamNamer(quality, "soft" + audioType, "kite"),
-        headers: hdr,
-      });
-    });
 
     var subtitles = [];
     if (epData.hasOwnProperty("subs")) {
       epData.subs.forEach((item) => {
-        subtitles.push({
-          file: item.url,
-          label: item.lang,
-          headers: hdr,
-        });
+        subtitles.push({ file: item.url, label: item.lang, headers: hdr });
       });
     }
-    if (streams.length > 0) streams[0]["subtitles"] = subtitles;
+
+    for (var item of epData.sources) {
+      var masterUrl = this.getProxyMediaUrl(item.url);
+      var baseDir = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+      var parsed = false;
+
+      try {
+        var res = await this.client.get(masterUrl, hdr);
+        if (res.statusCode == 200) {
+          var lines = res.body.split("\n");
+          for (var i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
+              var resMatch = lines[i].match(/RESOLUTION=(\d+x\d+)/);
+              var resolution = resMatch ? resMatch[1] : "Auto";
+              var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
+              if (!nextLine) continue;
+              var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
+              var stream = {
+                url: variantUrl,
+                originalUrl: variantUrl,
+                quality: this.streamNamer(resolution, "soft" + audioType, "kite"),
+                headers: hdr,
+              };
+              if (!parsed) {
+                stream.subtitles = subtitles;
+                parsed = true;
+              }
+              streams.push(stream);
+            }
+          }
+        }
+      } catch (e) {}
+
+      if (!parsed) {
+        streams.push({
+          url: masterUrl,
+          originalUrl: masterUrl,
+          quality: this.streamNamer("Auto", "soft" + audioType, "kite"),
+          headers: hdr,
+          subtitles: subtitles,
+        });
+      }
+    }
+
     return streams;
   }
 

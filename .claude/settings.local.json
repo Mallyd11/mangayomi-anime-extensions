@@ -75,7 +75,22 @@
       "WebFetch(domain:web.archive.org)",
       "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(d['name']\\) for d in data]\")",
       "Bash(python3 -c \" import json, sys data = json.load\\(sys.stdin\\) trees = data.get\\('tree', []\\) js_files = [t['path'] for t in trees if t['path'].endswith\\('.js'\\) and 'anime' in t['path'].lower\\(\\)] print\\('\\\\n'.join\\(js_files[:40]\\)\\) \")",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "Bash(curl -s \"https://animetsu.bz/v2/api/anime/search/?q=naruto&sort=popularity&page=1&per_page=3\" -H \"Referer: https://animetsu.bz\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s \"https://animetsu.bz/v2/api/anime/oppai/6989b89f29cf95f4eb03b4ee/1?server=pahe&source_type=sub\" -H \"Referer: https://animetsu.bz\")",
+      "Bash(curl -s -L https://mega-cloud.top/proxy/oppai/pahe/Fw8cARFZQkZuChkMER0eWl4OHkYeEQYWFC1KX1BdSUdbSQNbWA8GEktNIVdXW0EaEUAfB1hQVQQWQEAiBw8HFEpHTElUCghYAEMRRnNVDFBLHUFMT1FbDQxTTBBCcwBbV10MBwEEDF0cVQ -H 'Referer: https://animetsu.bz' -o /dev/null -w 'HTTP %{http_code} | Content-Type: %{content_type} | Size: %{size_download} bytes\\\\n')",
+      "Bash(curl -s -L https://mega-cloud.top/proxy/oppai/pahe/Fw8cARFZQkZuChkMER0eWl4OHkYeEQYWFC1KX1BdSUdbSQNbWA8GEktNIVdXW0EaEUAfB1hQVQQWQEAiBw8HFEpHTElUCghYAEMRRnNVDFBLHUFMT1FbDQxTTBBCcwBbV10MBwEEDF0cVQ -H 'Referer: https://animetsu.bz')",
+      "Bash(xxd)",
+      "Bash(curl -s -L https://mega-cloud.top/proxy/oppai/pahe/Fw8cARFZQkZuChkMER0eWl4OHkYeEQYWFC1KX1BdSUdbSQNbWA8GEktNIVdXW0EaEUAfB1hQVQQWQEAiBw8HFEpHTElUCghYAEMRRnNVDFBLHUFMT1FbDQxTTBBCcwBbV10MBwEEDF0cVQ -o /dev/null -w 'No Referer: HTTP %{http_code}\\\\n')",
+      "Bash(curl -s -L https://mega-cloud.top/proxy/oppai/pahe/Fw8cARFZQkZuChkMER0eWl4OHkYeEQYWFC1KX1BdSUdbSQNbWA8GEktNIVdXW0EaEUAfB1hQVQQWQEAiBw8HFEpHTElUCghYAEMRRnNVDFBLHUFMT1FbDQxTTBBCcwBbV10MBwEEDF0cVQ -H 'Referer: https://google.com' -o /dev/null -w 'Wrong Referer: HTTP %{http_code}\\\\n')",
+      "Bash(curl -s -L https://mega-cloud.top/proxy/oppai/pahe/Fw8cARFZQkZuChkMER0eWl4OHkYeEQYWFC1KX1BdSUdbSQNbWA8GEktNIVdXW0EaEUAfB1hQVQQWQEAiBw8HFEpHTElUCghYAEMRRnNVDFBLHUFMT1FbDQxTTBBCcwBbV10MBwEEDF0cVQ -H 'Referer: https://animetsu.bz' -o /dev/null -w 'Correct Referer: HTTP %{http_code}\\\\n')",
+      "Bash(curl -s \"https://animetsu.bz/v2/api/anime/oppai/6989b89f29cf95f4eb03b4ee/1?server=meg&source_type=sub\" -H \"Referer: https://animetsu.bz\")",
+      "Bash(curl -s \"https://animetsu.bz/v2/api/anime/oppai/6989b89f29cf95f4eb03b4ee/1?server=kite&source_type=sub\" -H \"Referer: https://animetsu.bz\")",
+      "Bash(curl -s -L https://mega-cloud.top/proxy/oppai/kite/FgEaWBZaEBkvEAoBBwMKWkYOAkYMCx0eEG9SCFUUHxEVHAMMWQ9RREtFcVIMVUBLRUAYUF9fVFQWRlp0BldbEB1CFhpSXQtfBEFLFHJXV1VDThRCHAcNXAgBEVwGJQJDUl8fQVlcUEMIXEseAxI -H 'Referer: https://animetsu.bz' -o /tmp/kite_seg.bin -w 'HTTP %{http_code} | Content-Type: %{content_type} | Size: %{size_download} bytes\\\\n')",
+      "Bash(xxd /tmp/kite_seg.bin)",
+      "Bash(curl -s -L 'https://mega-cloud.top/proxy?url=/oppai/pahe/Fw8cARFZQkZuChkMER0eWl4OHkYeEQYWFC1KX1BdSUdbSQNbWA8GEktNIVdXW0EaEUAfB1hQVQQWQEAiBw8HFEpHTElUCghYAEMRRnNVDFBLHUFMT1FbDQxTTBBCcwBbV10MBwEEDF0cVQ' -H 'Referer: https://animetsu.bz' -o /dev/null -w 'Query format: HTTP %{http_code}\\\\n')",
+      "Bash(curl -s -L 'https://mega-cloud.top/api/stream?path=/oppai/pahe/Fw8cARFZQkZuChkMER0eWl4OHkYeEQYWFC1KX1BdSUdbSQNbWA8GEktNIVdXW0EaEUAfB1hQVQQWQEAiBw8HFEpHTElUCghYAEMRRnNVDFBLHUFMT1FbDQxTTBBCcwBbV10MBwEEDF0cVQ' -H 'Referer: https://animetsu.bz' -o /dev/null -w 'API format: HTTP %{http_code}\\\\n')"
     ]
   }
 }
