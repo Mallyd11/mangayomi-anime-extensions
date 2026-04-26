@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.8",
+    "version": "0.2.9",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -141,12 +141,12 @@ class DefaultExtension extends MProvider {
 
   // Extracts the streams url for different resolutions from a hls stream.
   async extractStreams(url) {
-    var proxyUrl = "https://stream.animeparadise.moe/";
+    var proxyBase = "https://stream.animeparadise.moe/";
     var streamHeaders = {
       "Referer": "https://animeparadise.moe/",
       "Origin": "https://animeparadise.moe",
     };
-    var proxiedUrl = proxyUrl + "m3u8?url=" + url;
+    var proxiedUrl = proxyBase + "m3u8?url=" + url;
     var streams = [
       {
         url: proxiedUrl,
@@ -160,12 +160,14 @@ class DefaultExtension extends MProvider {
     if (response.statusCode == 200) {
       const body = response.body;
       const lines = body.split("\n");
+      var baseUrl = url.substring(0, url.lastIndexOf("/") + 1);
 
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
           var resolution = lines[i].match(/RESOLUTION=(\d+x\d+)/)[1];
           var nextLine = lines[i + 1].trim();
-          var m3u8Url = nextLine.startsWith("http") ? nextLine : proxyUrl + nextLine;
+          var absoluteUrl = nextLine.startsWith("http") ? nextLine : baseUrl + nextLine;
+          var m3u8Url = proxyBase + "m3u8?url=" + absoluteUrl;
           streams.push({
             url: m3u8Url,
             originalUrl: m3u8Url,
