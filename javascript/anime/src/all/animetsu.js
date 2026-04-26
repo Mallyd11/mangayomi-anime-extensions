@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -183,23 +183,25 @@ class DefaultExtension extends MProvider {
 
     for (var serverName of serverPref) {
       for (var audioType of audioPref) {
-        var epSlug = `/oppai/${url}?server=${serverName}&source_type=${audioType}`;
-        var epData = await this.request(epSlug);
+        try {
+          var epSlug = `/oppai/${url}?server=${serverName}&source_type=${audioType}`;
+          var epData = await this.request(epSlug);
 
-        var serverStreams = [];
-        if (epData.hasOwnProperty("sources")) {
-          if (serverName == "pahe" || serverName == "meg") {
-            serverStreams = this.getPaheMegStreams(
-              epData.sources,
-              audioType,
-              serverName,
-            );
-          } else if (serverName == "kite") {
-            serverStreams = await this.getKiteStreams(epData, audioType);
+          var serverStreams = [];
+          if (epData.hasOwnProperty("sources")) {
+            if (serverName == "pahe" || serverName == "meg") {
+              serverStreams = this.getPaheMegStreams(
+                epData.sources,
+                audioType,
+                serverName,
+              );
+            } else if (serverName == "kite") {
+              serverStreams = await this.getKiteStreams(epData, audioType);
+            }
           }
-        }
 
-        streams = [...streams, ...serverStreams];
+          streams = [...streams, ...serverStreams];
+        } catch (e) {}
       }
     }
 
