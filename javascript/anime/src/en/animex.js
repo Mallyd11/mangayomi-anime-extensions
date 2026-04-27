@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animex.one",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "pkgPath": "anime/src/en/animex.js",
     "isManga": false,
     "isNsfw": false,
@@ -239,21 +239,31 @@ class DefaultExtension extends MProvider {
       return [];
     }
 
-    var providers = (type === "dub" ? servers.dubProviders : servers.subProviders) || [];
-    if (providers.length === 0) {
-      providers = (type === "dub" ? servers.subProviders : servers.dubProviders) || [];
-      type = type === "dub" ? "sub" : "dub";
-    }
+    // Build a flat list of {provider, type} pairs covering both sub and dub
+    var queue = [];
+    var subProviders = servers.subProviders || [];
+    var dubProviders = servers.dubProviders || [];
+    for (var i = 0; i < subProviders.length; i++) queue.push({ provider: subProviders[i], type: "sub" });
+    for (var i = 0; i < dubProviders.length; i++) queue.push({ provider: dubProviders[i], type: "dub" });
+
+    // Put the preferred type first
+    var preferred = this.getPreference("animex_pref_type") || "sub";
+    queue.sort(function(a, b) {
+      if (a.type === preferred && b.type !== preferred) return -1;
+      if (b.type === preferred && a.type !== preferred) return 1;
+      return 0;
+    });
 
     var videos = [];
 
-    for (var pi = 0; pi < providers.length; pi++) {
-      var provider = providers[pi];
+    for (var pi = 0; pi < queue.length; pi++) {
+      var provider = queue[pi].provider;
+      var srcType = queue[pi].type;
       try {
         var sourcesUrl = this.source.apiUrl + "/rest/api/sources"
           + "?id=" + internalSlug
           + "&epNum=" + epNum
-          + "&type=" + type
+          + "&type=" + srcType
           + "&providerId=" + provider.id;
 
         var sourcesRes = await this.client.get(sourcesUrl, this.headers);
@@ -261,7 +271,10 @@ class DefaultExtension extends MProvider {
 
         var sources = sourceData.sources || [];
         var tracks = sourceData.tracks || [];
-        var srcHeaders = sourceData.headers || { "Referer": this.source.baseUrl };
+        var srcHeaders = Object.assign(
+          { "Referer": this.source.baseUrl + "/", "Origin": this.source.baseUrl },
+          sourceData.headers || {}
+        );
 
         var subtitles = [];
         if (Array.isArray(tracks)) {
@@ -275,11 +288,12 @@ class DefaultExtension extends MProvider {
 
         for (var si = 0; si < sources.length; si++) {
           var s = sources[si];
-          if (!s || !s.url) continue;
+          var streamUrl = (s && (s.url || s.file)) || null;
+          if (!streamUrl) continue;
           videos.push({
-            url: s.url,
-            originalUrl: s.url,
-            quality: provider.id + " [" + (s.quality || "auto") + "]",
+            url: streamUrl,
+            originalUrl: streamUrl,
+            quality: provider.id + " " + srcType + " [" + (s.quality || "auto") + "]",
             headers: srcHeaders,
             subtitles: subtitles,
           });
