@@ -56,7 +56,7 @@
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/animex.js",
     "apiUrl": "https://pp.animex.one",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,

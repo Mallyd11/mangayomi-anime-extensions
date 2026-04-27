@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animex.one",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "pkgPath": "anime/src/en/animex.js",
     "isManga": false,
     "isNsfw": false,
@@ -106,6 +106,23 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
+  // Looks up the AniList ID for a given MAL ID via the AniList GraphQL API.
+  // animex.one URLs use AniList IDs, not MAL IDs.
+  async anilistIdFromMal(malId) {
+    try {
+      var res = await this.client.post(
+        "https://graphql.anilist.co",
+        { "Content-Type": "application/json", "Accept": "application/json" },
+        JSON.stringify({ query: "{ Media(idMal: " + malId + ", type: ANIME) { id } }" })
+      );
+      var data = JSON.parse(res.body);
+      if (data && data.data && data.data.Media && data.data.Media.id) {
+        return String(data.data.Media.id);
+      }
+    } catch (e) {}
+    return null;
+  }
+
   statusCode(status) {
     return ({
       "Currently Airing": 0,
@@ -177,8 +194,10 @@ class DefaultExtension extends MProvider {
     var genres = (anime.genres || []).map(function(g) { return g.name; });
     var episodeCount = anime.episodes || 0;
 
-    // AniList ID from Jikan's external links — used for the animex.one URL
-    var anilistId = this.anilistIdFromExternal(anime.external || []);
+    // AniList ID — animex.one URLs use AniList IDs, not MAL IDs.
+    // Try GraphQL first (most reliable), fall back to Jikan external links.
+    var anilistId = await this.anilistIdFromMal(malId);
+    if (!anilistId) anilistId = this.anilistIdFromExternal(anime.external || []);
 
     // Episode URL format: "{titleSlug}-{anilistId||malId}||{epNum}"
     // getVideoList fetches the watch page __data.json to resolve the
