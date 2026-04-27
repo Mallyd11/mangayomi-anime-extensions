@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://www.miruro.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/miruro.js",
     "isManga": false,
     "isNsfw": false,
@@ -66,38 +66,39 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // ── AniList GraphQL ──────────────────────────────────────────────────────
+  // ── AniList GraphQL (GET-based to avoid POST body issues) ───────────────
 
   async anilistQuery(query, variables) {
-    var body = JSON.stringify({ query: query, variables: variables });
-    var headers = {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-    };
-    var res = await this.client.post(this.source.apiUrl, headers, body);
-    return JSON.parse(res.body).data;
+    var url = "https://graphql.anilist.co?query="
+      + encodeURIComponent(query)
+      + "&variables="
+      + encodeURIComponent(JSON.stringify(variables));
+    var res = await this.client.get(url, { "Accept": "application/json" });
+    var json = JSON.parse(res.body);
+    return (json && json.data) || null;
   }
 
   async fetchAnimeList(sortField, page) {
-    var query = "query ($page: Int, $perPage: Int) { Page(page: $page, perPage: $perPage) { pageInfo { hasNextPage } media(type: ANIME, sort: [" + sortField + "]) { id title { romaji english userPreferred } coverImage { large } } } }";
-    var data = await this.anilistQuery(query, { page: page, perPage: 20 });
+    var query = "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(type:ANIME,sort:[" + sortField + "]){id title{romaji english}coverImage{large}}}}";
+    var data = await this.anilistQuery(query, { p: page, n: 20 });
+    if (!data || !data.Page) return { list: [], hasNextPage: false };
     return this.parseAnilistPage(data.Page);
   }
 
   parseAnilistPage(page) {
     var list = [];
-    for (var i = 0; i < page.media.length; i++) {
-      var media = page.media[i];
-      var title = media.title.english || media.title.userPreferred || media.title.romaji;
+    var media = page.media || [];
+    for (var i = 0; i < media.length; i++) {
+      var m = media[i];
       list.push({
-        name: title,
-        link: String(media.id),
-        imageUrl: media.coverImage.large,
+        name: (m.title && (m.title.english || m.title.romaji)) || "Unknown",
+        link: String(m.id),
+        imageUrl: (m.coverImage && m.coverImage.large) || "",
       });
     }
     return {
       list: list,
-      hasNextPage: page.pageInfo.hasNextPage,
+      hasNextPage: (page.pageInfo && page.pageInfo.hasNextPage) || false,
     };
   }
 
@@ -110,8 +111,9 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var gql = "query ($page: Int, $perPage: Int, $search: String) { Page(page: $page, perPage: $perPage) { pageInfo { hasNextPage } media(type: ANIME, search: $search) { id title { romaji english userPreferred } coverImage { large } } } }";
-    var data = await this.anilistQuery(gql, { page: page, perPage: 20, search: query });
+    var gql = "query($p:Int,$n:Int,$s:String){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(type:ANIME,search:$s){id title{romaji english}coverImage{large}}}}";
+    var data = await this.anilistQuery(gql, { p: page, n: 20, s: query });
+    if (!data || !data.Page) return { list: [], hasNextPage: false };
     return this.parseAnilistPage(data.Page);
   }
 
@@ -131,10 +133,10 @@ class DefaultExtension extends MProvider {
     var type = this.getPreference("miruro_pref_type") || "sub";
 
     // Fetch anime metadata from AniList
-    var gql = "query ($id: Int) { Media(id: $id, type: ANIME) { id title { english romaji userPreferred } coverImage { large } description(asHtml: false) genres status } }";
+    var gql = "query($id:Int){Media(id:$id,type:ANIME){id title{english romaji}coverImage{large}description(asHtml:false)genres status}}";
     var data = await this.anilistQuery(gql, { id: parseInt(anilistId) });
-    var media = data.Media;
-    var name = media.title.english || media.title.userPreferred || media.title.romaji;
+    var media = (data && data.Media) || {};
+    var name = (media.title && (media.title.english || media.title.romaji)) || anilistId;
 
     // Fetch episodes from miruro (tries all domains)
     var epData = await this.miruroGet("/api/episodes?anilistId=" + anilistId);
@@ -178,8 +180,8 @@ class DefaultExtension extends MProvider {
 
     return {
       name: name,
-      imageUrl: media.coverImage.large,
-      description: (media.description || "").replace(/<[^>]*>/g, ""),
+      imageUrl: (media.coverImage && media.coverImage.large) || "",
+      description: ((media.description || "").replace(/<[^>]*>/g, "")),
       genre: media.genres || [],
       status: this.statusCode(media.status),
       link: this.source.baseUrl + "/info/" + anilistId,
