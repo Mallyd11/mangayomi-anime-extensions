@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animex.one",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/animex.js",
     "isManga": false,
     "isNsfw": false,
@@ -34,6 +34,7 @@ class DefaultExtension extends MProvider {
     return {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
       "Referer": this.source.baseUrl + "/",
+      "Accept": "*/*",
     };
   }
 
@@ -85,20 +86,7 @@ class DefaultExtension extends MProvider {
     return this.parseJikanList(json);
   }
 
-  // ── AniList ID extraction from Jikan external links ──────────────────────
-
-  anilistIdFromExternal(external) {
-    for (var i = 0; i < external.length; i++) {
-      var name = (external[i].name || "").toLowerCase();
-      if (name === "anilist") {
-        var parts = (external[i].url || "").split("/anime/");
-        if (parts.length > 1 && parts[1]) return parts[1].split("/")[0];
-      }
-    }
-    return null;
-  }
-
-  // ── Animex SvelteKit __data.json parsing ─────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   titleToSlug(title) {
     return (title || "")
@@ -107,6 +95,26 @@ class DefaultExtension extends MProvider {
       .trim()
       .replace(/\s+/g, "-");
   }
+
+  anilistIdFromExternal(external) {
+    for (var i = 0; i < external.length; i++) {
+      if ((external[i].name || "").toLowerCase() === "anilist") {
+        var parts = (external[i].url || "").split("/anime/");
+        if (parts.length > 1 && parts[1]) return parts[1].split("/")[0];
+      }
+    }
+    return null;
+  }
+
+  statusCode(status) {
+    return ({
+      "Currently Airing": 0,
+      "Finished Airing": 1,
+      "Not yet aired": 4,
+    }[status]) ?? 5;
+  }
+
+  // ── SvelteKit __data.json parser ─────────────────────────────────────────
 
   parseSkData(body) {
     var json = JSON.parse(body);
@@ -119,58 +127,35 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  extractAnimeFromArr(arr) {
+  // Extracts the internal animex slug from the flat SvelteKit data array.
+  // Works on both /anime/ and /watch/ page data — both have the anime
+  // field map at arr[rootMap.anime] with a slug field pointing to the value.
+  extractInternalSlug(arr) {
     if (!arr || arr.length < 2) return null;
     var rootMap = arr[0];
     if (!rootMap || typeof rootMap !== "object") return null;
-
     var animeIdx = (rootMap.anime !== undefined) ? rootMap.anime : 1;
     var animeMap = arr[animeIdx];
     if (!animeMap || typeof animeMap !== "object") return null;
-
-    var get = function(idx) {
-      return (typeof idx === "number" && idx >= 0) ? arr[idx] : null;
-    };
-
-    var slug = get(animeMap.slug);
-    var episodeCount = get(animeMap.episodeCount) || get(animeMap.episodes) || get(animeMap.totalEpisodes);
-
-    return { slug: slug, episodeCount: episodeCount };
-  }
-
-  async fetchAnimexDetail(anilistId, title) {
-    var slug = this.titleToSlug(title) || "anime";
-    var path = "/anime/" + slug + "-" + anilistId + "/__data.json";
-    try {
-      var res = await this.client.get(this.source.baseUrl + path, this.headers);
-      if (res.statusCode === 200 && res.body) {
-        return this.parseSkData(res.body);
-      }
-    } catch (e) {}
-    return null;
+    var slugIdx = animeMap.slug;
+    if (typeof slugIdx !== "number" || slugIdx < 0) return null;
+    return arr[slugIdx] || null;
   }
 
   // ── Detail ────────────────────────────────────────────────────────────────
 
-  statusCode(status) {
-    return ({
-      "Currently Airing": 0,
-      "Finished Airing": 1,
-      "Not yet aired": 4,
-    }[status]) ?? 5;
-  }
-
   async getDetail(url) {
-    // Extract MAL ID — handle bare ID or full animex URL
+    // Extract MAL ID from bare ID or stored animex URL
     var malId;
     var prefix = this.source.baseUrl + "/anime/";
     if (url.startsWith(prefix)) {
+      // Last hyphen-separated segment is the ID we stored (malId)
       malId = url.slice(prefix.length).split("-").pop();
     } else {
       malId = url;
     }
 
-    // Get metadata + external links from Jikan
+    // Metadata from Jikan
     var json = await this.jikanGet("/anime/" + malId + "/full");
     var anime = (json && json.data) || {};
 
@@ -178,33 +163,19 @@ class DefaultExtension extends MProvider {
     var imageUrl = (anime.images && anime.images.jpg && anime.images.jpg.large_image_url) || "";
     var description = anime.synopsis || "";
     var genres = (anime.genres || []).map(function(g) { return g.name; });
-    var jikanEpisodeCount = anime.episodes || 0;
+    var episodeCount = anime.episodes || 0;
 
-    // Get AniList ID from Jikan external links
+    // AniList ID from Jikan's external links — used for the animex.one URL
     var anilistId = this.anilistIdFromExternal(anime.external || []);
 
-    // Get internal animex slug + episode count from animex.one __data.json
-    var internalSlug = null;
-    var episodeCount = jikanEpisodeCount;
-
-    if (anilistId) {
-      var arr = await this.fetchAnimexDetail(anilistId, title);
-      if (arr) {
-        var axData = this.extractAnimeFromArr(arr);
-        if (axData) {
-          if (axData.slug) internalSlug = axData.slug;
-          if (axData.episodeCount) episodeCount = axData.episodeCount;
-        }
-      }
-    }
-
-    if (!internalSlug) {
-      internalSlug = this.titleToSlug(title) + "-" + (anilistId || malId);
-    }
+    // Episode URL format: "{titleSlug}-{anilistId||malId}||{epNum}"
+    // getVideoList fetches the watch page __data.json to resolve the
+    // real internal slug at play time, so we only need the public slug here.
+    var publicSlug = this.titleToSlug(title) + "-" + (anilistId || malId);
 
     var chapters = [];
     for (var i = 1; i <= episodeCount; i++) {
-      chapters.push({ name: "Episode " + i, url: internalSlug + "||" + i });
+      chapters.push({ name: "Episode " + i, url: publicSlug + "||" + i });
     }
 
     return {
@@ -213,7 +184,8 @@ class DefaultExtension extends MProvider {
       description: description,
       genre: genres,
       status: this.statusCode(anime.status || ""),
-      link: this.source.baseUrl + "/anime/" + this.titleToSlug(title) + "-" + (anilistId || malId),
+      // Store malId at end so re-opens still use Jikan correctly
+      link: this.source.baseUrl + "/anime/" + this.titleToSlug(title) + "-" + malId,
       chapters: chapters.reverse(),
     };
   }
@@ -221,17 +193,37 @@ class DefaultExtension extends MProvider {
   // ── Video sources ─────────────────────────────────────────────────────────
 
   async getVideoList(url) {
+    // url format: "{publicSlug}||{epNum}"  e.g. "one-piece-21||2"
     var parts = url.split("||");
-    var internalSlug = parts[0];
-    var epNum = parts[1];
+    var publicSlug = parts[0]; // e.g. "one-piece-21"
+    var epNum = parts[1];      // e.g. "2"
     var type = this.getPreference("animex_pref_type") || "sub";
 
+    // Fetch the animex.one watch page __data.json to get the real internal
+    // slug (e.g. "one-piece-p8k27").  The ?x-sveltekit-invalidated=01 param
+    // is required for SvelteKit to return JSON instead of full HTML.
+    var watchPath = "/watch/" + publicSlug + "-episode-" + epNum
+      + "/__data.json?x-sveltekit-invalidated=01";
+
+    var internalSlug = null;
+    try {
+      var watchRes = await this.client.get(this.source.baseUrl + watchPath, this.headers);
+      if (watchRes.statusCode === 200 && watchRes.body) {
+        var arr = this.parseSkData(watchRes.body);
+        internalSlug = this.extractInternalSlug(arr);
+      }
+    } catch (e) {}
+
+    if (!internalSlug) return [];
+
+    // Fetch available sub/dub server list
     var serversUrl = this.source.apiUrl + "/rest/api/servers?id=" + internalSlug + "&epNum=" + epNum;
     var serversRes = await this.client.get(serversUrl, this.headers);
     var servers = JSON.parse(serversRes.body);
 
     var providers = (type === "dub" ? servers.dubProviders : servers.subProviders) || [];
     if (providers.length === 0) {
+      // Fall back to the other type if preferred has no providers
       providers = (type === "dub" ? servers.subProviders : servers.dubProviders) || [];
       type = type === "dub" ? "sub" : "dub";
     }
