@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animex.one",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "pkgPath": "anime/src/en/animex.js",
     "isManga": false,
     "isNsfw": false,
@@ -230,13 +230,17 @@ class DefaultExtension extends MProvider {
     if (!internalSlug) internalSlug = publicSlug;
 
     // Fetch available sub/dub server list
-    var serversUrl = this.source.apiUrl + "/rest/api/servers?id=" + internalSlug + "&epNum=" + epNum;
-    var serversRes = await this.client.get(serversUrl, this.headers);
-    var servers = JSON.parse(serversRes.body);
+    var servers;
+    try {
+      var serversUrl = this.source.apiUrl + "/rest/api/servers?id=" + internalSlug + "&epNum=" + epNum;
+      var serversRes = await this.client.get(serversUrl, this.headers);
+      servers = JSON.parse(serversRes.body);
+    } catch (e) {
+      return [];
+    }
 
     var providers = (type === "dub" ? servers.dubProviders : servers.subProviders) || [];
     if (providers.length === 0) {
-      // Fall back to the other type if preferred has no providers
       providers = (type === "dub" ? servers.subProviders : servers.dubProviders) || [];
       type = type === "dub" ? "sub" : "dub";
     }
@@ -271,6 +275,7 @@ class DefaultExtension extends MProvider {
 
         for (var si = 0; si < sources.length; si++) {
           var s = sources[si];
+          if (!s || !s.url) continue;
           videos.push({
             url: s.url,
             originalUrl: s.url,
