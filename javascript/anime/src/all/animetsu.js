@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -218,10 +218,14 @@ class DefaultExtension extends MProvider {
     epData.forEach((item) => {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
+      var isMp4 = item.type === "video/mp4" || item.old_hls === false;
+      var label = isMp4
+        ? this.streamNamer(quality + " [DL]", audioType, serverName)
+        : this.streamNamer(quality, audioType, serverName);
       streams.push({
         url: link,
         originalUrl: link,
-        quality: this.streamNamer(quality, audioType, serverName),
+        quality: label,
         headers: hdr,
       });
     });
