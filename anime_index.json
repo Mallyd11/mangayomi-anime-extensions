@@ -44,6 +44,28 @@
     "notes": ""
   },
   {
+    "name": "Miruro",
+    "id": 879461035,
+    "baseUrl": "https://www.miruro.to",
+    "lang": "en",
+    "typeSource": "single",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://www.miruro.to",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
+    "apiUrl": "https://graphql.anilist.co",
+    "version": "0.1.2",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": ""
+  },
+  {
     "name": "AnimeKai",
     "id": 753902841,
     "baseUrl": "https://anikai.to",
