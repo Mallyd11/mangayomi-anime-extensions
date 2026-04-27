@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://www.miruro.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "pkgPath": "anime/src/en/miruro.js",
     "isManga": false,
     "isNsfw": false,
@@ -158,7 +158,9 @@ class DefaultExtension extends MProvider {
   }
 
   async getDetail(url) {
-    var malId = url;
+    // Strip base URL prefix if Mangayomi passes back the stored detail link
+    var infoPrefix = this.source.baseUrl + "/info/";
+    var malId = url.startsWith(infoPrefix) ? url.slice(infoPrefix.length) : url;
     var provider = this.getPreference("miruro_pref_provider") || "zoro";
     var type = this.getPreference("miruro_pref_type") || "sub";
 
@@ -211,7 +213,7 @@ class DefaultExtension extends MProvider {
       description: description,
       genre: genres,
       status: this.statusCode(anime.status || ""),
-      link: this.source.baseUrl + "/info/" + (anilistId || malId),
+      link: this.source.baseUrl + "/info/" + malId,
       chapters: chapters.reverse(),
     };
   }

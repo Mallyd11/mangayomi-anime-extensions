@@ -56,7 +56,7 @@
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "https://api.jikan.moe/v4",
-    "version": "0.1.8",
+    "version": "0.1.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
