@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animex.one",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "pkgPath": "anime/src/en/animex.js",
     "isManga": false,
     "isNsfw": false,
@@ -207,97 +207,81 @@ class DefaultExtension extends MProvider {
   async getVideoList(url) {
     // url format: "{publicSlug}||{epNum}"  e.g. "one-piece-21||2"
     var parts = url.split("||");
-    var publicSlug = parts[0]; // e.g. "one-piece-21"
-    var epNum = parts[1];      // e.g. "2"
-    var type = this.getPreference("animex_pref_type") || "sub";
+    var publicSlug = parts[0];
+    var epNum = parts[1];
 
-    // Fetch the animex.one watch page __data.json to get the real internal
-    // slug (e.g. "one-piece-p8k27").  The ?x-sveltekit-invalidated=01 param
-    // is required for SvelteKit to return JSON instead of full HTML.
-    var watchPath = "/watch/" + publicSlug + "-episode-" + epNum
-      + "/__data.json?x-sveltekit-invalidated=01";
-
+    // Try __data.json for the internal slug; fall back to publicSlug
     var internalSlug = null;
     try {
+      var watchPath = "/watch/" + publicSlug + "-episode-" + epNum
+        + "/__data.json?x-sveltekit-invalidated=01";
       var watchRes = await this.client.get(this.source.baseUrl + watchPath, this.headers);
       if (watchRes.statusCode === 200 && watchRes.body) {
         var arr = this.parseSkData(watchRes.body);
         internalSlug = this.extractInternalSlug(arr);
       }
     } catch (e) {}
-
-    // Fall back to the public slug when __data.json is unavailable or unparseable
     if (!internalSlug) internalSlug = publicSlug;
 
-    // Fetch available sub/dub server list
-    var servers;
+    // Fetch server list
+    var servers = null;
     try {
-      var serversUrl = this.source.apiUrl + "/rest/api/servers?id=" + internalSlug + "&epNum=" + epNum;
-      var serversRes = await this.client.get(serversUrl, this.headers);
+      var serversRes = await this.client.get(
+        this.source.apiUrl + "/rest/api/servers?id=" + internalSlug + "&epNum=" + epNum,
+        this.headers
+      );
       servers = JSON.parse(serversRes.body);
-    } catch (e) {
-      return [];
-    }
-
-    // Build a flat list of {provider, type} pairs covering both sub and dub
-    var queue = [];
-    var subProviders = servers.subProviders || [];
-    var dubProviders = servers.dubProviders || [];
-    for (var si2 = 0; si2 < subProviders.length; si2++) queue.push({ provider: subProviders[si2], type: "sub" });
-    for (var di2 = 0; di2 < dubProviders.length; di2++) queue.push({ provider: dubProviders[di2], type: "dub" });
-
-    // Put the preferred type first
-    var preferred = this.getPreference("animex_pref_type") || "sub";
-    queue.sort(function(a, b) {
-      if (a.type === preferred && b.type !== preferred) return -1;
-      if (b.type === preferred && a.type !== preferred) return 1;
-      return 0;
-    });
+    } catch (e) {}
+    if (!servers) return [];
 
     var videos = [];
+    var type = this.getPreference("animex_pref_type") || "sub";
+    // Run preferred type first, then the other
+    var types = type === "dub" ? ["dub", "sub"] : ["sub", "dub"];
 
-    for (var pi = 0; pi < queue.length; pi++) {
-      var provider = queue[pi].provider;
-      var srcType = queue[pi].type;
-      try {
-        var sourcesUrl = this.source.apiUrl + "/rest/api/sources"
-          + "?id=" + internalSlug
-          + "&epNum=" + epNum
-          + "&type=" + srcType
-          + "&providerId=" + provider.id;
+    for (var ti = 0; ti < types.length; ti++) {
+      var curType = types[ti];
+      var providers = (curType === "dub" ? servers.dubProviders : servers.subProviders) || [];
 
-        var sourcesRes = await this.client.get(sourcesUrl, this.headers);
-        var sourceData = JSON.parse(sourcesRes.body);
-
-        var sources = sourceData.sources || [];
-        var tracks = sourceData.tracks || [];
-        var srcHeaders = { "Referer": this.source.baseUrl + "/", "Origin": this.source.baseUrl };
-        var apiHeaders = sourceData.headers || {};
-        for (var hk in apiHeaders) { srcHeaders[hk] = apiHeaders[hk]; }
-
-        var subtitles = [];
-        if (Array.isArray(tracks)) {
-          for (var ti = 0; ti < tracks.length; ti++) {
-            var t = tracks[ti];
-            if (t && t.file && t.label) {
-              subtitles.push({ label: t.label, file: t.file });
-            }
+      for (var pi = 0; pi < providers.length; pi++) {
+        var provider = providers[pi];
+        try {
+          var sourcesRes = await this.client.get(
+            this.source.apiUrl + "/rest/api/sources"
+              + "?id=" + internalSlug
+              + "&epNum=" + epNum
+              + "&type=" + curType
+              + "&providerId=" + provider.id,
+            this.headers
+          );
+          var sourceData = JSON.parse(sourcesRes.body);
+          var sources = sourceData.sources || [];
+          var tracks = sourceData.tracks || [];
+          var srcHeaders = { "Referer": this.source.baseUrl + "/" };
+          if (sourceData.headers && sourceData.headers.Referer) {
+            srcHeaders["Referer"] = sourceData.headers.Referer;
           }
-        }
 
-        for (var si = 0; si < sources.length; si++) {
-          var s = sources[si];
-          var streamUrl = (s && (s.url || s.file)) || null;
-          if (!streamUrl) continue;
-          videos.push({
-            url: streamUrl,
-            originalUrl: streamUrl,
-            quality: provider.id + " " + srcType + " [" + (s.quality || "auto") + "]",
-            headers: srcHeaders,
-            subtitles: subtitles,
-          });
-        }
-      } catch (e) {}
+          var subtitles = [];
+          for (var sti = 0; sti < tracks.length; sti++) {
+            var t = tracks[sti];
+            if (t && t.file && t.label) subtitles.push({ label: t.label, file: t.file });
+          }
+
+          for (var si = 0; si < sources.length; si++) {
+            var s = sources[si];
+            var streamUrl = s && (s.url || s.file);
+            if (!streamUrl) continue;
+            videos.push({
+              url: streamUrl,
+              originalUrl: streamUrl,
+              quality: provider.id + " " + curType + " [" + (s.quality || "auto") + "]",
+              headers: srcHeaders,
+              subtitles: subtitles,
+            });
+          }
+        } catch (e) {}
+      }
     }
 
     return videos;
