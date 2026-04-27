@@ -4,11 +4,11 @@ const mangayomiSources = [
     "id": 879461035,
     "lang": "en",
     "baseUrl": "https://www.miruro.to",
-    "apiUrl": "https://graphql.anilist.co",
+    "apiUrl": "https://api.jikan.moe/v4",
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://www.miruro.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "pkgPath": "anime/src/en/miruro.js",
     "isManga": false,
     "isNsfw": false,
@@ -28,7 +28,6 @@ class DefaultExtension extends MProvider {
   constructor() {
     super();
     this.client = new Client();
-    // All known miruro domains share the same backend
     this.miruroDomains = [
       "https://www.miruro.to",
       "https://www.miruro.tv",
@@ -40,6 +39,8 @@ class DefaultExtension extends MProvider {
     return new SharedPreferences().get(key);
   }
 
+  // ── Miruro API (tries all domains) ───────────────────────────────────────
+
   miruroHeaders(domain) {
     return {
       "Origin": domain,
@@ -49,8 +50,6 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Try each miruro domain in order, return the first 200 response body parsed as JSON.
-  // Returns null if all domains fail.
   async miruroGet(path) {
     for (var i = 0; i < this.miruroDomains.length; i++) {
       var domain = this.miruroDomains[i];
@@ -59,130 +58,138 @@ class DefaultExtension extends MProvider {
         if (res.statusCode === 200) {
           return JSON.parse(res.body);
         }
-      } catch (e) {
-        // Try next domain
-      }
+      } catch (e) {}
     }
     return null;
   }
 
-  // ── AniList GraphQL (inline GET — no variables, no POST needed) ─────────
+  // ── Jikan (MyAnimeList) — GET only, no auth ──────────────────────────────
 
-  async anilistGet(query) {
-    var url = "https://graphql.anilist.co?query=" + encodeURIComponent(query);
-    var res = await this.client.get(url, { "Accept": "application/json" });
-    var json = JSON.parse(res.body);
-    return (json && json.data) || null;
+  async jikanGet(path) {
+    var res = await this.client.get(
+      this.source.apiUrl + path,
+      { "Accept": "application/json" }
+    );
+    return JSON.parse(res.body);
   }
 
-  async fetchAnimeList(sortField, page) {
-    var query = "{Page(page:" + page + ",perPage:20){pageInfo{hasNextPage}media(type:ANIME,sort:[" + sortField + "]){id title{romaji english}coverImage{large}}}}";
-    var data = await this.anilistGet(query);
-    if (!data || !data.Page) return { list: [], hasNextPage: false };
-    return this.parseAnilistPage(data.Page);
-  }
-
-  parseAnilistPage(page) {
+  parseJikanList(json) {
+    var items = (json && json.data) || [];
     var list = [];
-    var media = page.media || [];
-    for (var i = 0; i < media.length; i++) {
-      var m = media[i];
-      list.push({
-        name: (m.title && (m.title.english || m.title.romaji)) || "Unknown",
-        link: String(m.id),
-        imageUrl: (m.coverImage && m.coverImage.large) || "",
-      });
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var title = item.title_english || item.title || "";
+      var img = (item.images && item.images.jpg && item.images.jpg.large_image_url) || "";
+      list.push({ name: title, link: String(item.mal_id), imageUrl: img });
     }
-    return {
-      list: list,
-      hasNextPage: (page.pageInfo && page.pageInfo.hasNextPage) || false,
-    };
+    var hasNextPage = !!(json && json.pagination && json.pagination.has_next_page);
+    return { list: list, hasNextPage: hasNextPage };
   }
 
   async getPopular(page) {
-    return this.fetchAnimeList("POPULARITY_DESC", page);
+    var json = await this.jikanGet("/top/anime?page=" + page + "&limit=20");
+    return this.parseJikanList(json);
   }
 
   async getLatestUpdates(page) {
-    return this.fetchAnimeList("UPDATED_AT_DESC", page);
+    var json = await this.jikanGet(
+      "/anime?status=airing&order_by=start_date&sort=desc&page=" + page + "&limit=20"
+    );
+    return this.parseJikanList(json);
   }
 
   async search(query, page, filters) {
-    var escaped = query.replace(/"/g, "\\\"");
-    var gql = "{Page(page:" + page + ",perPage:20){pageInfo{hasNextPage}media(type:ANIME,search:\"" + escaped + "\"){id title{romaji english}coverImage{large}}}}";
-    var data = await this.anilistGet(gql);
-    if (!data || !data.Page) return { list: [], hasNextPage: false };
-    return this.parseAnilistPage(data.Page);
+    var json = await this.jikanGet(
+      "/anime?q=" + encodeURIComponent(query) + "&page=" + page + "&limit=20"
+    );
+    return this.parseJikanList(json);
   }
 
   // ── Detail + Episodes ────────────────────────────────────────────────────
 
   statusCode(status) {
     return ({
-      "RELEASING": 0,
-      "FINISHED": 1,
-      "NOT_YET_RELEASED": 4,
+      "Currently Airing": 0,
+      "Finished Airing": 1,
+      "Not yet aired": 4,
     }[status] ?? 5);
   }
 
+  anilistIdFromExternal(external) {
+    for (var i = 0; i < external.length; i++) {
+      if (external[i].name === "AniList") {
+        var parts = (external[i].url || "").split("/anime/");
+        if (parts.length > 1 && parts[1]) return parts[1].split("/")[0];
+      }
+    }
+    return null;
+  }
+
   async getDetail(url) {
-    var anilistId = url;
+    var malId = url;
     var provider = this.getPreference("miruro_pref_provider") || "zoro";
     var type = this.getPreference("miruro_pref_type") || "sub";
 
-    // Fetch anime metadata from AniList
-    var gql = "{Media(id:" + parseInt(anilistId) + ",type:ANIME){title{english romaji}coverImage{large}description(asHtml:false)genres status}}";
-    var data = await this.anilistGet(gql);
-    var media = (data && data.Media) || {};
-    var name = (media.title && (media.title.english || media.title.romaji)) || anilistId;
+    // Fetch anime metadata + external links from Jikan
+    var res = await this.jikanGet("/anime/" + malId);
+    var anime = (res && res.data) || {};
 
-    // Fetch episodes from miruro (tries all domains)
-    var epData = await this.miruroGet("/api/episodes?anilistId=" + anilistId);
+    var name = anime.title_english || anime.title || malId;
+    var imageUrl = (anime.images && anime.images.jpg && anime.images.jpg.large_image_url) || "";
+    var description = anime.synopsis || "";
+    var genres = [];
+    var genreList = anime.genres || [];
+    for (var g = 0; g < genreList.length; g++) {
+      genres.push(genreList[g].name);
+    }
+
+    // Get AniList ID from the external links Jikan provides
+    var anilistId = this.anilistIdFromExternal(anime.external || []);
+
     var chapters = [];
-
-    if (epData) {
-      var providers = epData.providers || epData || {};
-
-      // Try preferred provider first, then fall back to any available
-      var providerKeys = [provider];
-      var allKeys = Object.keys(providers);
-      for (var i = 0; i < allKeys.length; i++) {
-        if (providerKeys.indexOf(allKeys[i]) === -1) providerKeys.push(allKeys[i]);
-      }
-
-      for (var p = 0; p < providerKeys.length; p++) {
-        var provKey = providerKeys[p];
-        var providerData = providers[provKey];
-        if (!providerData) continue;
-
-        var episodes = (providerData.episodes && providerData.episodes[type])
-          || (providerData.episodes && providerData.episodes["sub"])
-          || providerData[type]
-          || providerData["sub"]
-          || [];
-
-        if (!Array.isArray(episodes) || episodes.length === 0) continue;
-
-        for (var e = 0; e < episodes.length; e++) {
-          var ep = episodes[e];
-          var epNum = ep.number || ep.num || (e + 1);
-          var epTitle = ep.title || ep.name || "";
-          var epName = epTitle ? "E" + epNum + ": " + epTitle : "Episode " + epNum;
-          // Encode provider and type alongside the episode ID for getVideoList
-          var epId = ep.id || ep.episodeId || String(epNum);
-          chapters.push({ name: epName, url: epId + "||" + provKey + "||" + type });
+    if (anilistId) {
+      var epData = await this.miruroGet("/api/episodes?anilistId=" + anilistId);
+      if (epData) {
+        var providers = epData.providers || epData || {};
+        var providerKeys = [provider];
+        var allKeys = Object.keys(providers);
+        for (var k = 0; k < allKeys.length; k++) {
+          if (providerKeys.indexOf(allKeys[k]) === -1) providerKeys.push(allKeys[k]);
         }
-        break; // Used first working provider
+
+        for (var p = 0; p < providerKeys.length; p++) {
+          var provKey = providerKeys[p];
+          var provData = providers[provKey];
+          if (!provData) continue;
+
+          var episodes = (provData.episodes && provData.episodes[type])
+            || (provData.episodes && provData.episodes["sub"])
+            || provData[type]
+            || provData["sub"]
+            || [];
+
+          if (!Array.isArray(episodes) || episodes.length === 0) continue;
+
+          for (var e = 0; e < episodes.length; e++) {
+            var ep = episodes[e];
+            var epNum = ep.number || ep.num || (e + 1);
+            var epTitle = ep.title || ep.name || "";
+            var epName = epTitle ? "E" + epNum + ": " + epTitle : "Episode " + epNum;
+            var epId = ep.id || ep.episodeId || String(epNum);
+            chapters.push({ name: epName, url: epId + "||" + provKey + "||" + type });
+          }
+          break;
+        }
       }
     }
 
     return {
       name: name,
-      imageUrl: (media.coverImage && media.coverImage.large) || "",
-      description: ((media.description || "").replace(/<[^>]*>/g, "")),
-      genre: media.genres || [],
-      status: this.statusCode(media.status),
-      link: this.source.baseUrl + "/info/" + anilistId,
+      imageUrl: imageUrl,
+      description: description,
+      genre: genres,
+      status: this.statusCode(anime.status || ""),
+      link: this.source.baseUrl + "/info/" + (anilistId || malId),
       chapters: chapters.reverse(),
     };
   }
