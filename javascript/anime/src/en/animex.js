@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animex.one",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "pkgPath": "anime/src/en/animex.js",
     "isManga": false,
     "isNsfw": false,
@@ -243,8 +243,8 @@ class DefaultExtension extends MProvider {
     var queue = [];
     var subProviders = servers.subProviders || [];
     var dubProviders = servers.dubProviders || [];
-    for (var i = 0; i < subProviders.length; i++) queue.push({ provider: subProviders[i], type: "sub" });
-    for (var i = 0; i < dubProviders.length; i++) queue.push({ provider: dubProviders[i], type: "dub" });
+    for (var si2 = 0; si2 < subProviders.length; si2++) queue.push({ provider: subProviders[si2], type: "sub" });
+    for (var di2 = 0; di2 < dubProviders.length; di2++) queue.push({ provider: dubProviders[di2], type: "dub" });
 
     // Put the preferred type first
     var preferred = this.getPreference("animex_pref_type") || "sub";
@@ -271,10 +271,9 @@ class DefaultExtension extends MProvider {
 
         var sources = sourceData.sources || [];
         var tracks = sourceData.tracks || [];
-        var srcHeaders = Object.assign(
-          { "Referer": this.source.baseUrl + "/", "Origin": this.source.baseUrl },
-          sourceData.headers || {}
-        );
+        var srcHeaders = { "Referer": this.source.baseUrl + "/", "Origin": this.source.baseUrl };
+        var apiHeaders = sourceData.headers || {};
+        for (var hk in apiHeaders) { srcHeaders[hk] = apiHeaders[hk]; }
 
         var subtitles = [];
         if (Array.isArray(tracks)) {
