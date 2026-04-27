@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://www.miruro.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "pkgPath": "anime/src/en/miruro.js",
     "isManga": false,
     "isNsfw": false,
@@ -117,12 +117,44 @@ class DefaultExtension extends MProvider {
 
   anilistIdFromExternal(external) {
     for (var i = 0; i < external.length; i++) {
-      if (external[i].name === "AniList") {
+      var name = (external[i].name || "").toLowerCase();
+      if (name === "anilist") {
         var parts = (external[i].url || "").split("/anime/");
         if (parts.length > 1 && parts[1]) return parts[1].split("/")[0];
       }
     }
     return null;
+  }
+
+  async anilistIdFromMal(malId) {
+    try {
+      var res = await this.client.post(
+        "https://graphql.anilist.co",
+        { "Content-Type": "application/json", "Accept": "application/json" },
+        JSON.stringify({
+          query: "query($id:Int){Media(idMal:$id,type:ANIME){id}}",
+          variables: { id: parseInt(malId) },
+        })
+      );
+      var data = JSON.parse(res.body);
+      var id = data && data.data && data.data.Media && data.data.Media.id;
+      return id ? String(id) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  extractEpisodes(provData, type) {
+    if (Array.isArray(provData)) return provData;
+    if (!provData) return [];
+    if (Array.isArray(provData[type])) return provData[type];
+    if (Array.isArray(provData["sub"])) return provData["sub"];
+    if (provData.episodes) {
+      if (Array.isArray(provData.episodes)) return provData.episodes;
+      if (Array.isArray(provData.episodes[type])) return provData.episodes[type];
+      if (Array.isArray(provData.episodes["sub"])) return provData.episodes["sub"];
+    }
+    return [];
   }
 
   async getDetail(url) {
@@ -143,32 +175,22 @@ class DefaultExtension extends MProvider {
       genres.push(genreList[g].name);
     }
 
-    // Get AniList ID from the external links Jikan provides
+    // Get AniList ID — try Jikan external links first, then AniList GraphQL
     var anilistId = this.anilistIdFromExternal(anime.external || []);
+    if (!anilistId) anilistId = await this.anilistIdFromMal(malId);
 
     var chapters = [];
     if (anilistId) {
       var epData = await this.miruroGet("/api/episodes?anilistId=" + anilistId);
       if (epData) {
-        var providers = epData.providers || epData || {};
-        var providerKeys = [provider];
+        var providers = epData.providers || epData;
         var allKeys = Object.keys(providers);
-        for (var k = 0; k < allKeys.length; k++) {
-          if (providerKeys.indexOf(allKeys[k]) === -1) providerKeys.push(allKeys[k]);
-        }
+        var providerKeys = [provider].concat(allKeys.filter(function(k) { return k !== provider; }));
 
         for (var p = 0; p < providerKeys.length; p++) {
           var provKey = providerKeys[p];
-          var provData = providers[provKey];
-          if (!provData) continue;
-
-          var episodes = (provData.episodes && provData.episodes[type])
-            || (provData.episodes && provData.episodes["sub"])
-            || provData[type]
-            || provData["sub"]
-            || [];
-
-          if (!Array.isArray(episodes) || episodes.length === 0) continue;
+          var episodes = this.extractEpisodes(providers[provKey], type);
+          if (episodes.length === 0) continue;
 
           for (var e = 0; e < episodes.length; e++) {
             var ep = episodes[e];
