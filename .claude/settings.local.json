@@ -133,7 +133,16 @@
       "WebFetch(domain:anifydocs.eltik.cc)",
       "WebFetch(domain:api.consumet.org)",
       "WebFetch(domain:consumet.kyoo.moe)",
-      "WebFetch(domain:api-aniwatch.onrender.com)"
+      "WebFetch(domain:api-aniwatch.onrender.com)",
+      "WebFetch(domain:consumet.ahmedrangel.com)",
+      "WebFetch(domain:consumet.app)",
+      "WebFetch(domain:aniwatch-api.vercel.app)",
+      "WebFetch(domain:api.allanime.day)",
+      "WebFetch(domain:hianime.onrender.com)",
+      "WebFetch(domain:animex.one)",
+      "WebFetch(domain:webcache.googleusercontent.com)",
+      "WebFetch(domain:chromewebstore.google.com)",
+      "mcp__Claude_in_Chrome__list_connected_browsers"
     ]
   }
 }
