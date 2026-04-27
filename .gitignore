@@ -178,3 +178,4 @@ prev_*.json
 
 # Remove extension
 removed/
+.claude/worktrees/hungry-burnell-13546d/
