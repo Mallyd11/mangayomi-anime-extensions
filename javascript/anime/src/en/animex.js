@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animex.one",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/animex.js",
     "isManga": false,
     "isNsfw": false,
@@ -128,18 +128,30 @@ class DefaultExtension extends MProvider {
   }
 
   // Extracts the internal animex slug from the flat SvelteKit data array.
-  // Works on both /anime/ and /watch/ page data — both have the anime
-  // field map at arr[rootMap.anime] with a slug field pointing to the value.
   extractInternalSlug(arr) {
     if (!arr || arr.length < 2) return null;
+
+    // Try the structured path first: arr[0] is the root map
     var rootMap = arr[0];
-    if (!rootMap || typeof rootMap !== "object") return null;
-    var animeIdx = (rootMap.anime !== undefined) ? rootMap.anime : 1;
-    var animeMap = arr[animeIdx];
-    if (!animeMap || typeof animeMap !== "object") return null;
-    var slugIdx = animeMap.slug;
-    if (typeof slugIdx !== "number" || slugIdx < 0) return null;
-    return arr[slugIdx] || null;
+    if (rootMap && typeof rootMap === "object") {
+      var animeIdx = (rootMap.anime !== undefined) ? rootMap.anime : 1;
+      var animeMap = arr[animeIdx];
+      if (animeMap && typeof animeMap === "object") {
+        var slugIdx = animeMap.slug;
+        if (typeof slugIdx === "number" && slugIdx >= 0 && arr[slugIdx]) {
+          return arr[slugIdx];
+        }
+      }
+    }
+
+    // Fallback: scan the array for a string matching {slug}-{number}
+    for (var i = 0; i < arr.length; i++) {
+      if (typeof arr[i] === "string" && /^[a-z0-9][a-z0-9-]+-\d+$/.test(arr[i])) {
+        return arr[i];
+      }
+    }
+
+    return null;
   }
 
   // ── Detail ────────────────────────────────────────────────────────────────
@@ -214,7 +226,8 @@ class DefaultExtension extends MProvider {
       }
     } catch (e) {}
 
-    if (!internalSlug) return [];
+    // Fall back to the public slug when __data.json is unavailable or unparseable
+    if (!internalSlug) internalSlug = publicSlug;
 
     // Fetch available sub/dub server list
     var serversUrl = this.source.apiUrl + "/rest/api/servers?id=" + internalSlug + "&epNum=" + epNum;

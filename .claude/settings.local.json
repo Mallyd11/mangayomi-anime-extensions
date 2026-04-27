@@ -142,7 +142,8 @@
       "WebFetch(domain:animex.one)",
       "WebFetch(domain:webcache.googleusercontent.com)",
       "WebFetch(domain:chromewebstore.google.com)",
-      "mcp__Claude_in_Chrome__list_connected_browsers"
+      "mcp__Claude_in_Chrome__list_connected_browsers",
+      "WebFetch(domain:pp.animex.one)"
     ]
   }
 }
