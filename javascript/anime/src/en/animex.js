@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animex.one",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/animex.js",
     "isManga": false,
     "isNsfw": false,
@@ -41,60 +41,65 @@ class DefaultExtension extends MProvider {
     return new SharedPreferences().get(key);
   }
 
-  // ── AniList GraphQL (listings + metadata) ────────────────────────────────
+  // ── Jikan (MyAnimeList) — simple GET, no auth ────────────────────────────
 
-  async anilistPost(query, variables) {
-    var res = await this.client.post(
-      "https://graphql.anilist.co",
-      { "Content-Type": "application/json", "Accept": "application/json" },
-      JSON.stringify({ query: query, variables: variables })
+  async jikanGet(path) {
+    var res = await this.client.get(
+      "https://api.jikan.moe/v4" + path,
+      { "Accept": "application/json" }
     );
     return JSON.parse(res.body);
   }
 
-  parseAnilistPage(json) {
-    var page = (json && json.data && json.data.Page) || {};
-    var media = page.media || [];
-    var hasNextPage = (page.pageInfo && page.pageInfo.hasNextPage) || false;
+  parseJikanList(json) {
+    var items = (json && json.data) || [];
+    var hasNextPage = !!(json && json.pagination && json.pagination.has_next_page);
     var list = [];
-    for (var i = 0; i < media.length; i++) {
-      var m = media[i];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
       list.push({
-        name: (m.title && (m.title.english || m.title.romaji)) || String(m.id),
-        link: String(m.id),
-        imageUrl: (m.coverImage && m.coverImage.large) || "",
+        name: item.title_english || item.title || "",
+        link: String(item.mal_id),
+        imageUrl: (item.images && item.images.jpg && item.images.jpg.large_image_url) || "",
       });
     }
     return { list: list, hasNextPage: hasNextPage };
   }
 
   async getPopular(page) {
-    var json = await this.anilistPost(
-      "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(sort:POPULARITY_DESC,type:ANIME,isAdult:false){id title{english romaji}coverImage{large}}}}",
-      { p: page, n: 20 }
-    );
-    return this.parseAnilistPage(json);
+    var json = await this.jikanGet("/top/anime?page=" + page + "&limit=20");
+    return this.parseJikanList(json);
   }
 
   async getLatestUpdates(page) {
-    var json = await this.anilistPost(
-      "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(sort:START_DATE_DESC,type:ANIME,isAdult:false,status:RELEASING){id title{english romaji}coverImage{large}}}}",
-      { p: page, n: 20 }
+    var json = await this.jikanGet(
+      "/anime?status=airing&order_by=start_date&sort=desc&page=" + page + "&limit=20"
     );
-    return this.parseAnilistPage(json);
+    return this.parseJikanList(json);
   }
 
   async search(query, page, filters) {
-    var json = await this.anilistPost(
-      "query($p:Int,$n:Int,$q:String){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(search:$q,type:ANIME,isAdult:false){id title{english romaji}coverImage{large}}}}",
-      { p: page, n: 20, q: query }
+    var json = await this.jikanGet(
+      "/anime?q=" + encodeURIComponent(query) + "&page=" + page + "&limit=20"
     );
-    return this.parseAnilistPage(json);
+    return this.parseJikanList(json);
+  }
+
+  // ── AniList ID extraction from Jikan external links ──────────────────────
+
+  anilistIdFromExternal(external) {
+    for (var i = 0; i < external.length; i++) {
+      var name = (external[i].name || "").toLowerCase();
+      if (name === "anilist") {
+        var parts = (external[i].url || "").split("/anime/");
+        if (parts.length > 1 && parts[1]) return parts[1].split("/")[0];
+      }
+    }
+    return null;
   }
 
   // ── Animex SvelteKit __data.json parsing ─────────────────────────────────
 
-  // Convert a title to an animex.one URL slug
   titleToSlug(title) {
     return (title || "")
       .toLowerCase()
@@ -103,7 +108,6 @@ class DefaultExtension extends MProvider {
       .replace(/\s+/g, "-");
   }
 
-  // Parse the SvelteKit flat-array data format
   parseSkData(body) {
     var json = JSON.parse(body);
     var nodes = json.nodes || [];
@@ -115,13 +119,11 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // Resolve anime fields from the flat array
   extractAnimeFromArr(arr) {
     if (!arr || arr.length < 2) return null;
     var rootMap = arr[0];
     if (!rootMap || typeof rootMap !== "object") return null;
 
-    // Root map has { anime: N } where N is index of the anime field map
     var animeIdx = (rootMap.anime !== undefined) ? rootMap.anime : 1;
     var animeMap = arr[animeIdx];
     if (!animeMap || typeof animeMap !== "object") return null;
@@ -132,58 +134,19 @@ class DefaultExtension extends MProvider {
 
     var slug = get(animeMap.slug);
     var episodeCount = get(animeMap.episodeCount) || get(animeMap.episodes) || get(animeMap.totalEpisodes);
-    var titleEnglish = get(animeMap.titleEnglish) || get(animeMap.englishTitle);
-    var titleRomaji = get(animeMap.titleRomaji) || get(animeMap.romajiTitle);
-    var anilistId = get(animeMap.anilistId);
-    var description = get(animeMap.description) || get(animeMap.synopsis);
-    var statusStr = get(animeMap.status);
 
-    // coverImage is itself an object with large/extraLarge indices
-    var coverObj = get(animeMap.coverImage);
-    var imageUrl = null;
-    if (coverObj && typeof coverObj === "object") {
-      imageUrl = get(coverObj.large) || get(coverObj.extraLarge);
-    }
-
-    // genres is an array of indices pointing to strings
-    var genreArr = get(animeMap.genres);
-    var genres = [];
-    if (Array.isArray(genreArr)) {
-      for (var i = 0; i < genreArr.length; i++) {
-        var g = arr[genreArr[i]];
-        if (g) genres.push(g);
-      }
-    }
-
-    return {
-      slug: slug,
-      episodeCount: episodeCount,
-      title: titleEnglish || titleRomaji,
-      anilistId: anilistId,
-      description: description,
-      imageUrl: imageUrl,
-      genres: genres,
-      status: statusStr,
-    };
+    return { slug: slug, episodeCount: episodeCount };
   }
 
-  // Fetch the animex.one __data.json for an anime
   async fetchAnimexDetail(anilistId, title) {
-    var slugAttempts = [];
-    if (title) slugAttempts.push(this.titleToSlug(title));
-    // Also try without articles
-    slugAttempts.push("anime");
-
-    for (var i = 0; i < slugAttempts.length; i++) {
-      var path = "/anime/" + slugAttempts[i] + "-" + anilistId + "/__data.json";
-      try {
-        var res = await this.client.get(this.source.baseUrl + path, this.headers);
-        if (res.statusCode === 200 && res.body) {
-          var arr = this.parseSkData(res.body);
-          if (arr) return arr;
-        }
-      } catch (e) {}
-    }
+    var slug = this.titleToSlug(title) || "anime";
+    var path = "/anime/" + slug + "-" + anilistId + "/__data.json";
+    try {
+      var res = await this.client.get(this.source.baseUrl + path, this.headers);
+      if (res.statusCode === 200 && res.body) {
+        return this.parseSkData(res.body);
+      }
+    } catch (e) {}
     return null;
   }
 
@@ -191,64 +154,57 @@ class DefaultExtension extends MProvider {
 
   statusCode(status) {
     return ({
-      "RELEASING": 0,
-      "FINISHED": 1,
-      "NOT_YET_RELEASED": 4,
-      "CANCELLED": 5,
-      "HIATUS": 6,
+      "Currently Airing": 0,
+      "Finished Airing": 1,
+      "Not yet aired": 4,
     }[status]) ?? 5;
   }
 
   async getDetail(url) {
-    var type = this.getPreference("animex_pref_type") || "sub";
-
-    // Extract anilist ID — handle bare ID or full animex URL
-    var anilistId;
+    // Extract MAL ID — handle bare ID or full animex URL
+    var malId;
     var prefix = this.source.baseUrl + "/anime/";
     if (url.startsWith(prefix)) {
-      var slug = url.slice(prefix.length);
-      anilistId = slug.split("-").pop();
+      malId = url.slice(prefix.length).split("-").pop();
     } else {
-      anilistId = url;
+      malId = url;
     }
 
-    // Get metadata from AniList
-    var alJson = await this.anilistPost(
-      "query($id:Int){Media(id:$id,type:ANIME){id title{english romaji}coverImage{large}description(asHtml:false)genres status episodes}}",
-      { id: parseInt(anilistId) }
-    );
-    var media = (alJson && alJson.data && alJson.data.Media) || {};
-    var title = (media.title && (media.title.english || media.title.romaji)) || String(anilistId);
-    var imageUrl = (media.coverImage && media.coverImage.large) || "";
-    var description = (media.description || "").replace(/<[^>]*>/g, "");
-    var genres = media.genres || [];
-    var alEpisodeCount = media.episodes || 0;
+    // Get metadata + external links from Jikan
+    var json = await this.jikanGet("/anime/" + malId + "/full");
+    var anime = (json && json.data) || {};
 
-    // Get internal slug + episode count from animex.one
+    var title = anime.title_english || anime.title || malId;
+    var imageUrl = (anime.images && anime.images.jpg && anime.images.jpg.large_image_url) || "";
+    var description = anime.synopsis || "";
+    var genres = (anime.genres || []).map(function(g) { return g.name; });
+    var jikanEpisodeCount = anime.episodes || 0;
+
+    // Get AniList ID from Jikan external links
+    var anilistId = this.anilistIdFromExternal(anime.external || []);
+
+    // Get internal animex slug + episode count from animex.one __data.json
     var internalSlug = null;
-    var episodeCount = alEpisodeCount;
+    var episodeCount = jikanEpisodeCount;
 
-    var arr = await this.fetchAnimexDetail(anilistId, title);
-    if (arr) {
-      var axData = this.extractAnimeFromArr(arr);
-      if (axData) {
-        if (axData.slug) internalSlug = axData.slug;
-        if (axData.episodeCount) episodeCount = axData.episodeCount;
+    if (anilistId) {
+      var arr = await this.fetchAnimexDetail(anilistId, title);
+      if (arr) {
+        var axData = this.extractAnimeFromArr(arr);
+        if (axData) {
+          if (axData.slug) internalSlug = axData.slug;
+          if (axData.episodeCount) episodeCount = axData.episodeCount;
+        }
       }
     }
 
-    // Fallback slug if animex page wasn't reachable
     if (!internalSlug) {
-      internalSlug = this.titleToSlug(title) + "-" + anilistId;
+      internalSlug = this.titleToSlug(title) + "-" + (anilistId || malId);
     }
 
-    // Build episode list
     var chapters = [];
     for (var i = 1; i <= episodeCount; i++) {
-      chapters.push({
-        name: "Episode " + i,
-        url: internalSlug + "||" + i,
-      });
+      chapters.push({ name: "Episode " + i, url: internalSlug + "||" + i });
     }
 
     return {
@@ -256,8 +212,8 @@ class DefaultExtension extends MProvider {
       imageUrl: imageUrl,
       description: description,
       genre: genres,
-      status: this.statusCode(media.status || ""),
-      link: this.source.baseUrl + "/anime/" + this.titleToSlug(title) + "-" + anilistId,
+      status: this.statusCode(anime.status || ""),
+      link: this.source.baseUrl + "/anime/" + this.titleToSlug(title) + "-" + (anilistId || malId),
       chapters: chapters.reverse(),
     };
   }
@@ -265,20 +221,17 @@ class DefaultExtension extends MProvider {
   // ── Video sources ─────────────────────────────────────────────────────────
 
   async getVideoList(url) {
-    // url format: "{internalSlug}||{episodeNum}"
     var parts = url.split("||");
     var internalSlug = parts[0];
     var epNum = parts[1];
     var type = this.getPreference("animex_pref_type") || "sub";
 
-    // Fetch available servers
     var serversUrl = this.source.apiUrl + "/rest/api/servers?id=" + internalSlug + "&epNum=" + epNum;
     var serversRes = await this.client.get(serversUrl, this.headers);
     var servers = JSON.parse(serversRes.body);
 
     var providers = (type === "dub" ? servers.dubProviders : servers.subProviders) || [];
     if (providers.length === 0) {
-      // Fall back to the other type if preferred is empty
       providers = (type === "dub" ? servers.subProviders : servers.dubProviders) || [];
       type = type === "dub" ? "sub" : "dub";
     }
