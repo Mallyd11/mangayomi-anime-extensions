@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.9",
+    "version": "0.3.0",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -36,12 +36,12 @@ class DefaultExtension extends MProvider {
   }
 
   async formList(slug, page = 1) {
-    var limit = 30;
+    var isEpisodeList = slug.includes("recently-added");
+    var limit = isEpisodeList ? 10 : 30;
     var separator = slug.includes("?") ? "&" : "?";
     var pagedSlug = slug + `${separator}page=${page}&limit=${limit}`;
     var jsonData = await this.requestAPI(pagedSlug);
     var list = [];
-    var isEpisodeList = slug.includes("recently-added");
     if (isEpisodeList) {
       jsonData.data.forEach((item) => {
         list.push({

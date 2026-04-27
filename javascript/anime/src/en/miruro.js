@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://www.miruro.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "pkgPath": "anime/src/en/miruro.js",
     "isManga": false,
     "isNsfw": false,
@@ -130,8 +130,8 @@ class DefaultExtension extends MProvider {
     var provider = this.getPreference("miruro_pref_provider") || "zoro";
     var type = this.getPreference("miruro_pref_type") || "sub";
 
-    // Fetch anime metadata + external links from Jikan
-    var res = await this.jikanGet("/anime/" + malId);
+    // /full includes the external[] array (has AniList link) — plain /anime/{id} omits it
+    var res = await this.jikanGet("/anime/" + malId + "/full");
     var anime = (res && res.data) || {};
 
     var name = anime.title_english || anime.title || malId;
