@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -175,8 +175,8 @@ class DefaultExtension extends MProvider {
               originalUrl: streamUrl,
               quality: "animepahe " + type + " [" + (s.quality || "auto") + "p]",
               headers: {
+                "Referer": "https://kwik.cx/",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-                "Referer": "https://uwucdn.top/",
               },
               subtitles: [],
             });
