@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.5",
+    "version": "0.0.6",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -110,14 +110,19 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var data = await this.apiGet("/search?query=" + encodeURIComponent(query) + "&page=" + page);
-    var items = data.data || data.results || data.anime || [];
-    // Fall back to suggestions if full search returned nothing
+    var items = [];
+    var hasNextPage = false;
+    try {
+      var data = await this.apiGet("/search?query=" + encodeURIComponent(query) + "&page=" + page);
+      items = data.data || data.results || data.anime || [];
+      hasNextPage = !!(data.hasNextPage || (data.pagination && data.pagination.hasNextPage));
+    } catch (e) {}
     if (items.length === 0) {
-      var sugg = await this.apiGet("/search/suggestions?query=" + encodeURIComponent(query));
-      items = sugg.data || [];
+      try {
+        var sugg = await this.apiGet("/search/suggestions?query=" + encodeURIComponent(query));
+        items = sugg.data || sugg.results || [];
+      } catch (e) {}
     }
-    var hasNextPage = !!(data.hasNextPage || (data.pagination && data.pagination.hasNextPage));
     return { list: this.parseAnimeList(items), hasNextPage: hasNextPage };
   }
 
@@ -161,14 +166,23 @@ class DefaultExtension extends MProvider {
     var animeId = parts[0];
     var epNum = parts[1];
 
+    var providers = [
+      { name: "zoro",       referer: "https://megacloud.blog/" },
+      { name: "gogoanime",  referer: "https://gogoanime3.net/" },
+      { name: "animepahe",  referer: "https://kwik.cx/" },
+    ];
+
     var subVideos = [];
     var dubVideos = [];
+    var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
 
-    try {
-      var data = await this.apiGet(
-        "/watch/" + animeId + "/episode/" + epNum + "/animepahe"
-      );
-      if (data && !data.error) {
+    for (var pi = 0; pi < providers.length; pi++) {
+      var provider = providers[pi];
+      try {
+        var data = await this.apiGet(
+          "/watch/" + animeId + "/episode/" + epNum + "/" + provider.name
+        );
+        if (!data || data.error) continue;
         var types = ["sub", "dub"];
         for (var ti = 0; ti < types.length; ti++) {
           var type = types[ti];
@@ -182,11 +196,8 @@ class DefaultExtension extends MProvider {
             var entry = {
               url: streamUrl,
               originalUrl: streamUrl,
-              quality: "animepahe " + type + " [" + (s.quality || "auto") + "p]",
-              headers: {
-                "Referer": "https://kwik.cx/",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-              },
+              quality: provider.name + " " + type + " [" + (s.quality || "auto") + "p]",
+              headers: { "Referer": provider.referer, "User-Agent": ua },
               subtitles: [],
             };
             if (type === "dub") {
@@ -196,8 +207,8 @@ class DefaultExtension extends MProvider {
             }
           }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
     // Put preferred audio type first so it is the default for downloads
     var pref = new SharedPreferences().get("justanime_pref_audio");
