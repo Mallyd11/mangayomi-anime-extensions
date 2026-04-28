@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.4",
+    "version": "0.0.5",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -48,7 +48,9 @@ class DefaultExtension extends MProvider {
   }
 
   animeTitle(item) {
-    return (item.title && (item.title.english || item.title.romaji)) || "";
+    if (!item.title) return item.name || "";
+    if (typeof item.title === "string") return item.title;
+    return item.title.english || item.title.romaji || "";
   }
 
   parseAnimeList(items) {
@@ -108,9 +110,15 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var data = await this.apiGet("/search/suggestions?query=" + encodeURIComponent(query));
-    var items = data.data || [];
-    return { list: this.parseAnimeList(items), hasNextPage: false };
+    var data = await this.apiGet("/search?query=" + encodeURIComponent(query) + "&page=" + page);
+    var items = data.data || data.results || data.anime || [];
+    // Fall back to suggestions if full search returned nothing
+    if (items.length === 0) {
+      var sugg = await this.apiGet("/search/suggestions?query=" + encodeURIComponent(query));
+      items = sugg.data || [];
+    }
+    var hasNextPage = !!(data.hasNextPage || (data.pagination && data.pagination.hasNextPage));
+    return { list: this.parseAnimeList(items), hasNextPage: hasNextPage };
   }
 
   // ── Detail ────────────────────────────────────────────────────────────────
