@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.3",
+    "version": "0.0.4",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -153,7 +153,8 @@ class DefaultExtension extends MProvider {
     var animeId = parts[0];
     var epNum = parts[1];
 
-    var videos = [];
+    var subVideos = [];
+    var dubVideos = [];
 
     try {
       var data = await this.apiGet(
@@ -170,7 +171,7 @@ class DefaultExtension extends MProvider {
             var s = sources[si];
             var streamUrl = s && (s.url || s.file);
             if (!streamUrl) continue;
-            videos.push({
+            var entry = {
               url: streamUrl,
               originalUrl: streamUrl,
               quality: "animepahe " + type + " [" + (s.quality || "auto") + "p]",
@@ -179,13 +180,23 @@ class DefaultExtension extends MProvider {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
               },
               subtitles: [],
-            });
+            };
+            if (type === "dub") {
+              dubVideos.push(entry);
+            } else {
+              subVideos.push(entry);
+            }
           }
         }
       }
     } catch (e) {}
 
-    return videos;
+    // Put preferred audio type first so it is the default for downloads
+    var pref = new SharedPreferences().get("justanime_pref_audio");
+    if (pref === "dub") {
+      return dubVideos.concat(subVideos);
+    }
+    return subVideos.concat(dubVideos);
   }
 
   // ── Preferences ───────────────────────────────────────────────────────────
@@ -195,6 +206,17 @@ class DefaultExtension extends MProvider {
   }
 
   getSourcePreferences() {
-    return [];
+    return [
+      {
+        key: "justanime_pref_audio",
+        listPreference: {
+          title: "Preferred audio",
+          summary: "Which audio track appears first for streaming and downloads",
+          valueIndex: 0,
+          entries: ["Sub", "Dub"],
+          entryValues: ["sub", "dub"],
+        },
+      },
+    ];
   }
 }
