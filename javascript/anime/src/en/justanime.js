@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -25,11 +25,6 @@ const mangayomiSources = [
 ];
 
 class DefaultExtension extends MProvider {
-  constructor() {
-    super();
-    this.client = new Client();
-  }
-
   get headers() {
     return {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
@@ -40,7 +35,7 @@ class DefaultExtension extends MProvider {
   }
 
   async apiGet(path) {
-    var res = await this.client.get(this.source.apiUrl + path, this.headers);
+    var res = await new Client().get(this.source.apiUrl + path, this.headers);
     return JSON.parse(res.body);
   }
 
@@ -83,10 +78,17 @@ class DefaultExtension extends MProvider {
     return (str || "").replace(/<[^>]*>/g, " ").replace(/\s{2,}/g, " ").trim();
   }
 
+  // Accepts: bare AniList ID, /anime/{id}/{slug}, or legacy /{slug}-{id}
   extractId(url) {
-    var prefix = this.source.baseUrl + "/";
-    if (url.startsWith(prefix)) {
-      return url.slice(prefix.length).split("-").pop();
+    var base = this.source.baseUrl;
+    if (url.startsWith(base)) {
+      var path = url.slice(base.length).replace(/^\//, "");
+      // /anime/{id}/... format
+      if (path.startsWith("anime/")) {
+        return path.split("/")[1];
+      }
+      // legacy /{slug}-{id} — take the last dash-segment
+      return path.split("-").pop();
     }
     return url;
   }
@@ -124,7 +126,6 @@ class DefaultExtension extends MProvider {
     var description = this.stripHtml(anime.description || "");
     var genres = anime.genres || [];
 
-    // Episode count — use episodes API for accurate total on ongoing series
     var epData = await this.apiGet("/anime/" + id + "/episodes");
     var totalEpisodes = epData.totalEpisodes || anime.episodes || 0;
 
@@ -139,7 +140,7 @@ class DefaultExtension extends MProvider {
       description: description,
       genre: genres,
       status: this.statusCode(anime.status || ""),
-      link: this.source.baseUrl + "/" + this.titleToSlug(title) + "-" + id,
+      link: this.source.baseUrl + "/anime/" + id + "/" + this.titleToSlug(title),
       chapters: chapters.reverse(),
     };
   }
@@ -153,16 +154,12 @@ class DefaultExtension extends MProvider {
     var epNum = parts[1];
 
     var videos = [];
-    var providers = ["animepahe", "hianime"];
 
-    for (var pi = 0; pi < providers.length; pi++) {
-      var provider = providers[pi];
-      try {
-        var data = await this.apiGet(
-          "/watch/" + animeId + "/episode/" + epNum + "/" + provider
-        );
-        if (!data || data.error) continue;
-
+    try {
+      var data = await this.apiGet(
+        "/watch/" + animeId + "/episode/" + epNum + "/animepahe"
+      );
+      if (data && !data.error) {
         var types = ["sub", "dub"];
         for (var ti = 0; ti < types.length; ti++) {
           var type = types[ti];
@@ -176,14 +173,17 @@ class DefaultExtension extends MProvider {
             videos.push({
               url: streamUrl,
               originalUrl: streamUrl,
-              quality: provider + " " + type + " [" + (s.quality || "auto") + "p]",
-              headers: { "Referer": "https://justanime.to/" },
+              quality: "animepahe " + type + " [" + (s.quality || "auto") + "p]",
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+                "Referer": "https://uwucdn.top/",
+              },
               subtitles: [],
             });
           }
         }
-      } catch (e) {}
-    }
+      }
+    } catch (e) {}
 
     return videos;
   }
