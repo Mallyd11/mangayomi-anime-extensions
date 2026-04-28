@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.2",
+    "version": "1.0.3",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -38,10 +38,14 @@ class DefaultExtension extends MProvider {
     };
   }
 
+  get encDecHeaders() {
+    return { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" };
+  }
+
   async encKai(text) {
     var res = await this.client.get(
       "https://enc-dec.app/api/enc-kai?text=" + encodeURIComponent(text),
-      {}
+      this.encDecHeaders
     );
     return JSON.parse(res.body).result;
   }
@@ -49,7 +53,7 @@ class DefaultExtension extends MProvider {
   async decKai(text) {
     var res = await this.client.get(
       "https://enc-dec.app/api/dec-kai?text=" + encodeURIComponent(text),
-      {}
+      this.encDecHeaders
     );
     return JSON.parse(res.body).result;
   }
@@ -57,7 +61,7 @@ class DefaultExtension extends MProvider {
   async decMega(text) {
     var res = await this.client.post(
       "https://enc-dec.app/api/dec-mega",
-      { "Content-Type": "application/json" },
+      { "Content-Type": "application/json", "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" },
       JSON.stringify({ text: text, agent: this.ua })
     );
     return JSON.parse(res.body).result;
@@ -91,7 +95,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var doc = await this.fetchDoc("/browser?page=" + page);
+    var doc = await this.fetchDoc("/browser?sort=trending&page=" + page);
     return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
   }
 
@@ -100,7 +104,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getLatestUpdates(page) {
-    var doc = await this.fetchDoc("/updates?page=" + page);
+    var doc = await this.fetchDoc("/recently-updated?page=" + page);
     return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
   }
 
@@ -184,71 +188,69 @@ class DefaultExtension extends MProvider {
     var epToken = url;
     var streams = [];
 
-    try {
-      var tokenB = await this.encKai(epToken);
-      var serverRes = await this.client.get(
-        this.source.baseUrl + "/ajax/links/list?token=" + epToken + "&_=" + tokenB,
-        this.ajaxHeaders
-      );
-      var serverDoc = new Document(JSON.parse(serverRes.body).result);
-      var groups = serverDoc.select("div.server-items");
+    var tokenB = await this.encKai(epToken);
+    var serverRes = await this.client.get(
+      this.source.baseUrl + "/ajax/links/list?token=" + epToken + "&_=" + tokenB,
+      this.ajaxHeaders
+    );
+    var serverDoc = new Document(JSON.parse(serverRes.body).result);
+    var groups = serverDoc.select("div.server-items");
 
-      for (var group of groups) {
-        var sourceType = group.attr("data-id");
-        var serverEls = group.select("span.server");
+    for (var group of groups) {
+      var sourceType = group.attr("data-id");
+      var serverEls = group.select("span.server");
 
-        for (var serverEl of serverEls) {
-          var serverId = serverEl.attr("data-lid");
-          var serverName = serverEl.text.trim();
+      for (var serverEl of serverEls) {
+        var serverId = serverEl.attr("data-lid");
+        var serverName = serverEl.text.trim();
 
-          try {
-            var tokenC = await this.encKai(serverId);
-            var linkRes = await this.client.get(
-              this.source.baseUrl + "/ajax/links/view?id=" + serverId + "&_=" + tokenC,
-              this.ajaxHeaders
-            );
-            var kaiEncoded = JSON.parse(linkRes.body).result;
-            var decrypted = await this.decKai(kaiEncoded);
-            var megaUrl = decrypted.url;
+        try {
+          var tokenC = await this.encKai(serverId);
+          var linkRes = await this.client.get(
+            this.source.baseUrl + "/ajax/links/view?id=" + serverId + "&_=" + tokenC,
+            this.ajaxHeaders
+          );
+          var kaiEncoded = JSON.parse(linkRes.body).result;
+          var decrypted = await this.decKai(kaiEncoded);
+          var megaUrl = decrypted.url;
 
-            var parts = megaUrl.replace(/\/$/, "").split("/");
-            var megaToken = parts[parts.length - 1];
+          var parts = megaUrl.replace(/\/$/, "").split("/");
+          var megaToken = parts[parts.length - 1];
 
-            var megaRes = await this.client.get(
-              "https://megaup.net/media/" + megaToken,
-              { "User-Agent": this.ua, "Referer": megaUrl }
-            );
-            var megaEncoded = JSON.parse(megaRes.body).result;
-            var decoded = await this.decMega(megaEncoded);
+          var megaRes = await this.client.get(
+            "https://megaup.net/media/" + megaToken,
+            { "User-Agent": this.ua, "Referer": megaUrl }
+          );
+          var megaEncoded = JSON.parse(megaRes.body).result;
+          var decoded = await this.decMega(megaEncoded);
 
-            var subtitles = [];
-            if (decoded.tracks) {
-              for (var t = 0; t < decoded.tracks.length; t++) {
-                var track = decoded.tracks[t];
-                if (track.kind === "captions" || track.kind === "subtitles") {
-                  subtitles.push({ label: track.label || "Unknown", file: track.file });
-                }
+          var subtitles = [];
+          if (decoded.tracks) {
+            for (var t = 0; t < decoded.tracks.length; t++) {
+              var track = decoded.tracks[t];
+              if (track.kind === "captions" || track.kind === "subtitles") {
+                subtitles.push({ label: track.label || "Unknown", file: track.file });
               }
             }
+          }
 
-            if (decoded.sources && decoded.sources.length > 0) {
-              var m3u8Url = decoded.sources[0].file;
-              streams.push({
-                url: m3u8Url,
-                originalUrl: m3u8Url,
-                quality: serverName + " [" + sourceType + "]",
-                subtitles: subtitles,
-                headers: {
-                  "User-Agent": this.ua,
-                  "Referer": "https://megaup.net/",
-                },
-              });
-              break;
-            }
-          } catch (e) {}
-        }
+          if (decoded.sources && decoded.sources.length > 0) {
+            var m3u8Url = decoded.sources[0].file;
+            streams.push({
+              url: m3u8Url,
+              originalUrl: m3u8Url,
+              quality: serverName + " [" + sourceType + "]",
+              subtitles: subtitles,
+              headers: {
+                "User-Agent": this.ua,
+                "Referer": "https://megaup.net/",
+              },
+            });
+            break;
+          }
+        } catch (e) {}
       }
-    } catch (e) {}
+    }
 
     return streams;
   }
