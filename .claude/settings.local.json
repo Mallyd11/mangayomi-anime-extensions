@@ -222,7 +222,9 @@
       "Bash(curl -s \"https://core.justanime.to/api/watch/101922/episode/1/animepahe\" -H \"Origin: https://justanime.to\")",
       "Bash(curl -s \"https://core.justanime.to/api/watch/21856/episode/1/animepahe\" -H \"Origin: https://justanime.to\")",
       "WebFetch(domain:megaup.net)",
-      "PowerShell(gh api \"search/code?q=anikai.to+recently-updated&per_page=5\" --jq '.items[] | {repo: .repository.full_name, path: .path}' 2>$null)"
+      "PowerShell(gh api \"search/code?q=anikai.to+recently-updated&per_page=5\" --jq '.items[] | {repo: .repository.full_name, path: .path}' 2>$null)",
+      "Bash(git pull *)",
+      "WebFetch(domain:core.justanime.to)"
     ]
   }
 }
