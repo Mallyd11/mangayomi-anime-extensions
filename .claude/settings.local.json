@@ -276,7 +276,11 @@
       "Bash(curl -s -L --max-time 15 -A \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\" \"https://hianime.ws/browser?keyword=naruto&page=1\")",
       "Bash(curl -s -L --max-time 15 -A \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\" \"https://hianime.ws/trending?page=1\")",
       "Bash(grep -oE '.{0,80}c4C4868.{0,80}')",
-      "Bash(curl -s -L --max-time 15 -A \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\" \"https://hianime.ws/browser?sort=most_popular&page=1\")"
+      "Bash(curl -s -L --max-time 15 -A \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\" \"https://hianime.ws/browser?sort=most_popular&page=1\")",
+      "Bash(curl -s -L --max-time 15 -c /tmp/hianime_cookies.txt -A 'Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' https://hianime.ws/watch/one-piece-x2p0 -o /dev/null)",
+      "Bash(curl -s -L --max-time 10 -b /tmp/hianime_cookies.txt -A 'Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/135.0.0.0 Safari/537.36' -H 'X-Requested-With: XMLHttpRequest' -H 'Referer: https://hianime.ws/watch/one-piece-x2p0' https://hianime.ws/ajax/v2/episode/list/x2p0)",
+      "Bash(curl -s -L --max-time 10 -A 'Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36' -H 'X-Requested-With: XMLHttpRequest' -H 'Referer: https://hianime.ms/' https://hianime.ms/ajax/v2/episode/list/100)",
+      "Bash(curl -s -L --max-time 10 -A \"Mozilla/5.0\" \"https://hianime.ms/watch/one-piece-100\")"
     ]
   }
 }
