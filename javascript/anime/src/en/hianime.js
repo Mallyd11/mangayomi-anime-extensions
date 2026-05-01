@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ws",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -78,11 +78,12 @@ class DefaultExtension extends MProvider {
   }
 
   hasNextPage(doc) {
-    return !!doc.selectFirst(".pagination li:last-child:not(.disabled) a");
+    return !!doc.selectFirst("ul.pagination a[rel=next]");
   }
 
   extractAnimeId(url) {
-    var match = url.match(/-(\d+)(?:\?.*)?$/);
+    // URL format: /watch/{slug}-{id} where id is alphanumeric e.g. x2p0, vnw5, 5626
+    var match = url.match(/\/watch\/[^?#]*-([a-zA-Z0-9]+)(?:[?#].*)?$/);
     return match ? match[1] : "";
   }
 
@@ -91,17 +92,17 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var doc = await this.fetchDoc("/most-popular?page=" + page);
+    var doc = await this.fetchDoc("/browser?sort=most_popular&page=" + page);
     return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
   }
 
   async getLatestUpdates(page) {
-    var doc = await this.fetchDoc("/recently-updated?page=" + page);
+    var doc = await this.fetchDoc("/browser?sort=recently_updated&page=" + page);
     return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
   }
 
   async search(query, page, filters) {
-    var doc = await this.fetchDoc("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
+    var doc = await this.fetchDoc("/browser?keyword=" + encodeURIComponent(query) + "&page=" + page);
     return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
   }
 
