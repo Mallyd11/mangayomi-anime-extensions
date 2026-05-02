@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -296,42 +296,71 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // Resolve a master HLS playlist to one stream per variant.
-  // The Mangayomi downloader parses segments directly from the first m3u8 it
-  // receives, so we have to expand the master ourselves — otherwise the
-  // variant playlist URL gets treated as a single video segment.
-  async expandMasterPlaylist(masterUrl, baseHeaders) {
-    var variants = [];
-    try {
-      var res = await this.client.get(masterUrl, baseHeaders);
-      if (!res || !res.body) return variants;
-      var body = res.body;
-      var lastSlash = masterUrl.lastIndexOf("/");
-      var baseDir = lastSlash > 0 ? masterUrl.substring(0, lastSlash + 1) : masterUrl;
-
-      var lines = body.split("\n");
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
-        // Pull resolution / bandwidth for labeling
-        var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-        var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-        var resolution = resMatch ? resMatch[2] + "p" : null;
-        // Find the next non-empty, non-comment line: that's the variant URL
-        for (var j = i + 1; j < lines.length; j++) {
-          var u = lines[j].trim();
-          if (!u) continue;
-          if (u.charAt(0) === "#") continue;
-          var variantUrl = u.indexOf("http") === 0 ? u : baseDir + u;
-          variants.push({
-            url: variantUrl,
-            label: resolution || (bwMatch ? Math.round(bwMatch[1] / 1000) + "kbps" : "Auto"),
-          });
-          break;
-        }
+  async _fetchWithRetry(url, headers, attempts) {
+    var maxAttempts = attempts || 3;
+    var lastErr = null;
+    for (var n = 0; n < maxAttempts; n++) {
+      try {
+        var res = await this.client.get(url, headers);
+        if (res && res.body) return res.body;
+      } catch (e) {
+        lastErr = e;
       }
-    } catch (e) {}
-    return variants;
+    }
+    return null;
+  }
+
+  // Resolve an HLS playlist URL to one stream entry per variant.
+  // The Mangayomi downloader parses segments directly from the first m3u8 it
+  // receives, so we have to fetch and inspect the playlist ourselves.
+  //
+  // Returns one of:
+  //   { kind: "master", variants: [{url, label}, ...] }  — fan out to one stream per quality
+  //   { kind: "flat" }                                    — already-flat playlist; caller emits URL as-is
+  //   { kind: "fetch-failed" }                            — could not fetch the playlist after retries
+  //   { kind: "empty-master" }                            — master with no parseable variants
+  async resolveHlsPlaylist(playlistUrl, baseHeaders) {
+    var body = await this._fetchWithRetry(playlistUrl, baseHeaders, 3);
+    if (!body) return { kind: "fetch-failed" };
+
+    var hasStreamInf = body.indexOf("#EXT-X-STREAM-INF") >= 0;
+    var hasExtinf = body.indexOf("#EXTINF") >= 0;
+
+    if (hasExtinf && !hasStreamInf) return { kind: "flat" };
+    if (!hasStreamInf) return { kind: "empty-master" };
+
+    // Master playlist: parse every variant.
+    var lastSlash = playlistUrl.lastIndexOf("/");
+    var baseDir = lastSlash > 0 ? playlistUrl.substring(0, lastSlash + 1) : playlistUrl;
+    var variants = [];
+    var lines = body.split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+      var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+      var bwMatch = line.match(/BANDWIDTH=(\d+)/);
+      var resolution = resMatch ? resMatch[2] + "p" : null;
+      for (var j = i + 1; j < lines.length; j++) {
+        var u = lines[j].trim();
+        if (!u) continue;
+        if (u.charAt(0) === "#") continue;
+        var variantUrl = u.indexOf("http") === 0 ? u : baseDir + u;
+        variants.push({
+          url: variantUrl,
+          label: resolution || (bwMatch ? Math.round(bwMatch[1] / 1000) + "kbps" : "Auto"),
+        });
+        break;
+      }
+    }
+    if (variants.length === 0) return { kind: "empty-master" };
+
+    // Sort variants high → low so the user gets the best quality first.
+    variants.sort(function(a, b) {
+      var aRes = parseInt((a.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
+      var bRes = parseInt((b.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
+      return bRes - aRes;
+    });
+    return { kind: "master", variants: variants };
   }
 
   // Extract HLS sources from the megaplay.buzz getSources API
@@ -373,6 +402,7 @@ class DefaultExtension extends MProvider {
       var streamHeaders = {
         "User-Agent": this.ua,
         "Referer": "https://megaplay.buzz/",
+        "Origin": "https://megaplay.buzz",
       };
 
       for (var s = 0; s < sourceList.length; s++) {
@@ -380,24 +410,38 @@ class DefaultExtension extends MProvider {
         var fileUrl = src.file || src.url;
         if (!fileUrl) continue;
 
-        // If this is an HLS master playlist, expand it into one entry per
-        // variant so downloads parse segments correctly. Otherwise (raw mp4
-        // or already-flat playlist) just emit it as-is.
-        var emittedVariants = false;
+        // For HLS, resolve the master playlist so Mangayomi sees segments
+        // directly. For mp4 or non-m3u8, just emit as-is.
+        var emitted = false;
         if (fileUrl.indexOf(".m3u8") >= 0) {
-          var variants = await this.expandMasterPlaylist(fileUrl, streamHeaders);
-          for (var v = 0; v < variants.length; v++) {
+          var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
+          if (resolved.kind === "master") {
+            for (var v = 0; v < resolved.variants.length; v++) {
+              streams.push({
+                url: resolved.variants[v].url,
+                originalUrl: fileUrl,
+                quality: resolved.variants[v].label + " - MegaPlay [" + audioLabel + "]",
+                headers: streamHeaders,
+                subtitles: subtitles,
+              });
+              emitted = true;
+            }
+          } else if (resolved.kind === "flat") {
+            // Already a flat playlist with segments — emit as-is.
             streams.push({
-              url: variants[v].url,
+              url: fileUrl,
               originalUrl: fileUrl,
-              quality: variants[v].label + " - MegaPlay [" + audioLabel + "]",
+              quality: "MegaPlay [" + audioLabel + "]",
               headers: streamHeaders,
               subtitles: subtitles,
             });
-            emittedVariants = true;
+            emitted = true;
           }
-        }
-        if (!emittedVariants) {
+          // For "empty-master" or "fetch-failed", deliberately skip emitting:
+          // an unresolved master URL would make Mangayomi treat the variant
+          // playlist line as a single video segment, breaking downloads.
+        } else {
+          // Non-HLS (mp4 etc.) — emit as-is.
           streams.push({
             url: fileUrl,
             originalUrl: fileUrl,
@@ -405,6 +449,7 @@ class DefaultExtension extends MProvider {
             headers: streamHeaders,
             subtitles: subtitles,
           });
+          emitted = true;
         }
       }
     } catch (e) {}
