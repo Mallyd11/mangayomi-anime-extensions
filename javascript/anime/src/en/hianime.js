@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -296,6 +296,44 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
+  // Resolve a master HLS playlist to one stream per variant.
+  // The Mangayomi downloader parses segments directly from the first m3u8 it
+  // receives, so we have to expand the master ourselves — otherwise the
+  // variant playlist URL gets treated as a single video segment.
+  async expandMasterPlaylist(masterUrl, baseHeaders) {
+    var variants = [];
+    try {
+      var res = await this.client.get(masterUrl, baseHeaders);
+      if (!res || !res.body) return variants;
+      var body = res.body;
+      var lastSlash = masterUrl.lastIndexOf("/");
+      var baseDir = lastSlash > 0 ? masterUrl.substring(0, lastSlash + 1) : masterUrl;
+
+      var lines = body.split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+        // Pull resolution / bandwidth for labeling
+        var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
+        var bwMatch = line.match(/BANDWIDTH=(\d+)/);
+        var resolution = resMatch ? resMatch[2] + "p" : null;
+        // Find the next non-empty, non-comment line: that's the variant URL
+        for (var j = i + 1; j < lines.length; j++) {
+          var u = lines[j].trim();
+          if (!u) continue;
+          if (u.charAt(0) === "#") continue;
+          var variantUrl = u.indexOf("http") === 0 ? u : baseDir + u;
+          variants.push({
+            url: variantUrl,
+            label: resolution || (bwMatch ? Math.round(bwMatch[1] / 1000) + "kbps" : "Auto"),
+          });
+          break;
+        }
+      }
+    } catch (e) {}
+    return variants;
+  }
+
   // Extract HLS sources from the megaplay.buzz getSources API
   async extractMegaplaySources(realEpId, audioType, audioLabel) {
     var streams = [];
@@ -341,13 +379,33 @@ class DefaultExtension extends MProvider {
         var src = sourceList[s];
         var fileUrl = src.file || src.url;
         if (!fileUrl) continue;
-        streams.push({
-          url: fileUrl,
-          originalUrl: fileUrl,
-          quality: "MegaPlay [" + audioLabel + "]",
-          headers: streamHeaders,
-          subtitles: subtitles,
-        });
+
+        // If this is an HLS master playlist, expand it into one entry per
+        // variant so downloads parse segments correctly. Otherwise (raw mp4
+        // or already-flat playlist) just emit it as-is.
+        var emittedVariants = false;
+        if (fileUrl.indexOf(".m3u8") >= 0) {
+          var variants = await this.expandMasterPlaylist(fileUrl, streamHeaders);
+          for (var v = 0; v < variants.length; v++) {
+            streams.push({
+              url: variants[v].url,
+              originalUrl: fileUrl,
+              quality: variants[v].label + " - MegaPlay [" + audioLabel + "]",
+              headers: streamHeaders,
+              subtitles: subtitles,
+            });
+            emittedVariants = true;
+          }
+        }
+        if (!emittedVariants) {
+          streams.push({
+            url: fileUrl,
+            originalUrl: fileUrl,
+            quality: "MegaPlay [" + audioLabel + "]",
+            headers: streamHeaders,
+            subtitles: subtitles,
+          });
+        }
       }
     } catch (e) {}
 
