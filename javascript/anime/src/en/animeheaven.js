@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -89,16 +89,23 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    // Site shows the entire popular list on one page (no pagination).
-    if (page > 1) return { list: [], hasNextPage: false };
+    // The site returns all items on one HTML page. We slice client-side so
+    // Mangayomi only receives 30 items at a time and can load more on scroll.
     var html = await this.fetchHtml("popular.php");
-    return { list: this.parseList(html), hasNextPage: false };
+    var all = this.parseList(html);
+    var pageSize = 30;
+    var start = (page - 1) * pageSize;
+    var slice = all.slice(start, start + pageSize);
+    return { list: slice, hasNextPage: (start + pageSize) < all.length };
   }
 
   async getLatestUpdates(page) {
-    if (page > 1) return { list: [], hasNextPage: false };
     var html = await this.fetchHtml("new.php");
-    return { list: this.parseList(html), hasNextPage: false };
+    var all = this.parseList(html);
+    var pageSize = 30;
+    var start = (page - 1) * pageSize;
+    var slice = all.slice(start, start + pageSize);
+    return { list: slice, hasNextPage: (start + pageSize) < all.length };
   }
 
   async search(query, page, filters) {
@@ -229,9 +236,12 @@ class DefaultExtension extends MProvider {
     var seen = {};
     var rx = /['"](https?:\/\/[\w\-]+\.animeheaven\.me\/video\.mp4\?[^'"\s]+)['"]/g;
     var m;
+    // Include the session cookie with stream/download requests so the server
+    // can validate the token the same way it does for gate.php.
     var streamHeaders = {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
+      "Cookie": "key=" + hash,
     };
     while ((m = rx.exec(html)) !== null) {
       var u = m[1];
