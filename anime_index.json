@@ -22,6 +22,28 @@
     "notes": ""
   },
   {
+    "name": "AnimeHeaven",
+    "id": -1744325818,
+    "baseUrl": "https://animeheaven.me",
+    "lang": "en",
+    "typeSource": "single",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/animeheaven.js",
+    "apiUrl": "",
+    "version": "0.0.1",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": ""
+  },
+  {
     "name": "AnimeParadise",
     "id": 419768715,
     "baseUrl": "https://animeparadise.moe",
