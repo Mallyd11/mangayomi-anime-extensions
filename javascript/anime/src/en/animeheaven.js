@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -245,19 +245,23 @@ class DefaultExtension extends MProvider {
     };
     while ((m = rx.exec(html)) !== null) {
       var u = m[1];
-      // Strip the trailing "&error" / "&error2" / "&d" markers used by the
-      // site's player to switch fallbacks — they don't change which file is
-      // served, just how the player labels it.
-      var clean = u.replace(/&(error2?|d)$/, "");
-      // The cleaned url may now be a duplicate of another entry.
+      // The player embeds three kinds of URL suffix:
+      //   &error  → Server 2 fallback
+      //   &error2 → Server 3 fallback
+      //   &d      → "download alias" — INTENTIONALLY omits the access token,
+      //             making it a different (broken) URL that returns HTTP 404.
+      //             Skip it; the full-token Server 1–3 URLs are downloadable.
+      if (/&d(\b|$)/.test(u)) continue;
+
+      // Strip &error / &error2 to get the clean URL with the access token.
+      var clean = u.replace(/&error2?$/, "");
       if (seen[clean]) continue;
       seen[clean] = true;
 
-      // Label by suffix so users can pick a fallback if the primary 404s.
+      // Label by suffix so users can pick a fallback if the primary fails.
       var label;
       if (/&error2(\b|$)/.test(u)) label = "Server 3";
       else if (/&error(\b|$)/.test(u)) label = "Server 2";
-      else if (/&d(\b|$)/.test(u)) label = "Download";
       else label = "Server 1";
 
       streams.push({
