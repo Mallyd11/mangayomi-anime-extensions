@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.3",
+    "version": "0.0.4",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -131,15 +131,17 @@ class DefaultExtension extends MProvider {
     var nameMatch = html.match(/<div class='infotitle c'>([^<]+)<\/div>/);
     if (nameMatch) name = this._decodeHtml(nameMatch[1].trim());
 
-    // Cover image (look for cover-style img after the title)
+    // Cover image.
+    // The detail page uses class='posterimg' for the main anime poster.
+    // Do NOT use 'coverimg' — those are thumbnails for related/recommended
+    // anime that appear further down the page and would give the wrong image.
+    // Fall back to the og:image meta tag which always points to the correct art.
     var imageUrl = "";
-    var coverMatch = html.match(/<img[^>]+class='[^']*infoimg[^']*'[^>]+src='([^']+)'/);
-    if (!coverMatch) coverMatch = html.match(/<img[^>]+class='[^']*coverimg[^']*'[^>]+src='([^']+)'/);
-    if (coverMatch) {
-      var rel = coverMatch[1];
+    var posterMatch = html.match(/<img[^>]+class='[^']*posterimg[^']*'[^>]+src='([^']+)'/);
+    if (posterMatch) {
+      var rel = posterMatch[1];
       imageUrl = rel.indexOf("http") === 0 ? rel : this.source.baseUrl + "/" + rel.replace(/^\/+/, "");
     }
-    // Fall back to og:image
     if (!imageUrl) {
       var og = html.match(/<meta property='og:image' content='([^']+)'/);
       if (og) imageUrl = og[1];
@@ -236,12 +238,12 @@ class DefaultExtension extends MProvider {
     var seen = {};
     var rx = /['"](https?:\/\/[\w\-]+\.animeheaven\.me\/video\.mp4\?[^'"\s]+)['"]/g;
     var m;
-    // Include the session cookie with stream/download requests so the server
-    // can validate the token the same way it does for gate.php.
+    // The video CDN validates access via the token embedded in the URL query
+    // string, not via cookies. Sending only UA + Referer keeps the request
+    // clean and avoids any cookie-related rejection by the CDN or downloader.
     var streamHeaders = {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
-      "Cookie": "key=" + hash,
     };
     while ((m = rx.exec(html)) !== null) {
       var u = m[1];
