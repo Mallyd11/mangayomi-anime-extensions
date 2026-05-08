@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -99,7 +99,7 @@ class DefaultExtension extends MProvider {
 
   async getLatestUpdates(page) {
     return await this.searchAnime({
-      sort: "date_desc",
+      sort: "updated_at",
       status: "RELEASING",
       page: page,
     });
