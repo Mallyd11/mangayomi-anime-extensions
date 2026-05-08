@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -59,7 +59,7 @@ class DefaultExtension extends MProvider {
 
   async searchAnime({
     query = "",
-    sort = "popularity",
+    sort = "popular",
     status = "",
     page = "1",
   }) {
