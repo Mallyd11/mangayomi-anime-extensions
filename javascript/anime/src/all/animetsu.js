@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -179,33 +179,34 @@ class DefaultExtension extends MProvider {
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
     if (audioPref.length < 1) audioPref.push("sub");
 
-    var streams = [];
-
+    var combinations = [];
     for (var serverName of serverPref) {
       for (var audioType of audioPref) {
+        combinations.push({ serverName, audioType });
+      }
+    }
+
+    var results = await Promise.all(
+      combinations.map(async ({ serverName, audioType }) => {
         try {
           var epSlug = `/oppai/${url}?server=${serverName}&source_type=${audioType}`;
           var epData = await this.request(epSlug);
 
-          var serverStreams = [];
-          if (epData.hasOwnProperty("sources")) {
-            if (serverName == "pahe" || serverName == "meg") {
-              serverStreams = this.getPaheMegStreams(
-                epData.sources,
-                audioType,
-                serverName,
-              );
-            } else if (serverName == "kite") {
-              serverStreams = await this.getKiteStreams(epData, audioType);
-            }
+          if (!epData.hasOwnProperty("sources")) return [];
+
+          if (serverName == "pahe" || serverName == "meg") {
+            return this.getPaheMegStreams(epData.sources, audioType, serverName);
+          } else if (serverName == "kite") {
+            return await this.getKiteStreams(epData, audioType);
           }
+          return [];
+        } catch (e) {
+          return [];
+        }
+      })
+    );
 
-          streams = [...streams, ...serverStreams];
-        } catch (e) {}
-      }
-    }
-
-    return streams;
+    return results.flat();
   }
 
   streamNamer(res, dubType, serverName) {
