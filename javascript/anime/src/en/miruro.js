@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.3",
+    "version": "2.0.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -163,12 +163,59 @@ class DefaultExtension extends MProvider {
     } catch (e) { return null; }
   }
 
+  scoreTitle(a, b) {
+    if (!a || !b) return 0;
+    if (a === b) return 3;
+    var longer = Math.max(a.length, b.length);
+    var shorter = Math.min(a.length, b.length);
+    var ratio = shorter / longer;
+    if (a.startsWith(b) || b.startsWith(a)) return ratio >= 0.5 ? 2 : 0;
+    if (a.includes(b) || b.includes(a)) return ratio >= 0.65 ? 1 : 0;
+    return 0;
+  }
+
+  slugFromHref(href) {
+    if (!href) return "";
+    if (href.includes("/details/")) {
+      return href.split("/details/")[1].split("?")[0].split("#")[0];
+    }
+    var m = href.match(/\/watch-(.+)-episode-\d+-([\w]+)/);
+    if (m) return m[1] + "-" + m[2];
+    return "";
+  }
+
   async findHiAnimeSlug(englishTitle, romajiTitle) {
     var norm = function(s) { return (s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); };
     var titles = [];
     if (englishTitle) titles.push(englishTitle);
     if (romajiTitle && romajiTitle !== englishTitle) titles.push(romajiTitle);
+
     for (var title of titles) {
+      var normTitle = norm(title);
+      if (!normTitle) continue;
+
+      // Method 1: AJAX suggest API — compact JSON, more stable than full search page
+      try {
+        var sRes = await this.client.get(
+          this.hiAnimeBase + "/ajax/search/suggest?keyword=" + encodeURIComponent(title),
+          Object.assign({}, this.hiHeaders, { "X-Requested-With": "XMLHttpRequest" })
+        );
+        var sJson = JSON.parse(sRes.body);
+        if (sJson && sJson.html) {
+          var sDoc = new Document(sJson.html);
+          var sLinks = sDoc.select("a[href]");
+          for (var j = 0; j < sLinks.length; j++) {
+            var sHref = sLinks[j].attr("href") || "";
+            var sSlug = this.slugFromHref(sHref);
+            if (!sSlug) continue;
+            var sTitleEl = sLinks[j].selectFirst("h5, .d-title, .title, strong, .film-name");
+            var sTitle = sTitleEl ? sTitleEl.text.trim() : (sLinks[j].attr("title") || sLinks[j].text.trim());
+            if (this.scoreTitle(norm(sTitle), normTitle) >= 1) return sSlug;
+          }
+        }
+      } catch (e) {}
+
+      // Method 2: HTML search results page
       try {
         var res = await this.client.get(
           this.hiAnimeBase + "/search?keyword=" + encodeURIComponent(title),
@@ -176,23 +223,17 @@ class DefaultExtension extends MProvider {
         );
         var doc = new Document(res.body);
         var items = doc.select(".flw-item");
-        var normTitle = norm(title);
-        var bestSlug = null;
-        var bestScore = 0;
+        var bestSlug = null, bestScore = 0;
         for (var i = 0; i < items.length && i < 8; i++) {
           var item = items[i];
-          var anchor = item.selectFirst(".film-poster-ahref");
+          var anchor = item.selectFirst(".film-poster-ahref, .film-name a");
           if (!anchor) continue;
           var href = anchor.attr("href") || "";
-          var slug = href.replace(/^\/details\//, "").replace(/[?#].*$/, "");
+          var slug = this.slugFromHref(href);
           if (!slug) continue;
           var nameEl = item.selectFirst(".dynamic-name, .film-name a");
           var resultTitle = nameEl ? (nameEl.attr("data-ename") || nameEl.text || "").trim() : "";
-          var normResult = norm(resultTitle);
-          var score = 0;
-          if (normResult === normTitle) score = 3;
-          else if (normResult.startsWith(normTitle) || normTitle.startsWith(normResult)) score = 2;
-          else if (normResult.includes(normTitle) || normTitle.includes(normResult)) score = 1;
+          var score = this.scoreTitle(norm(resultTitle), normTitle);
           if (score > bestScore) { bestScore = score; bestSlug = slug; }
           if (score === 3) break;
         }
@@ -202,37 +243,60 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
+  parseEpisodeTokens(doc) {
+    var chapters = [];
+    var anchors = doc.select("a[data-stream-token]");
+    for (var i = 0; i < anchors.length; i++) {
+      var ep = anchors[i];
+      var token = ep.attr("data-stream-token");
+      var realEpId = this.decodeStreamToken(token);
+      if (!realEpId) continue;
+      var epNum = ep.attr("data-number") || ep.attr("data-episode") || String(i + 1);
+      var hasSub = ep.attr("data-has-sub") === "1";
+      var hasDub = ep.attr("data-has-dub") === "1";
+      if (!hasSub && !hasDub) hasSub = true;
+      var titleSpan = ep.selectFirst(".ws-ep__title, .ep-name, .ep-title");
+      var epTitle = titleSpan ? titleSpan.text.trim() : "";
+      var label = "E" + epNum + (epTitle ? ": " + epTitle : "");
+      var langs = [];
+      if (hasSub) langs.push("Sub");
+      if (hasDub) langs.push("Dub");
+      if (langs.length) label += " [" + langs.join("+") + "]";
+      chapters.push({
+        name: label,
+        url: realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0"),
+        isFiller: false,
+      });
+    }
+    return chapters;
+  }
+
   async getHiAnimeEpisodes(slug) {
+    var lastDash = slug.lastIndexOf("-");
+    if (lastDash < 0) return [];
+    var hiAnimeId = slug.substring(lastDash + 1);
+
+    // Method 1: AJAX episode list API (same data, no full-page overhead)
+    if (/^\d+$/.test(hiAnimeId)) {
+      try {
+        var apiRes = await this.client.get(
+          this.hiAnimeBase + "/ajax/v2/episode/list/" + hiAnimeId,
+          Object.assign({}, this.hiHeaders, { "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" })
+        );
+        var apiData = JSON.parse(apiRes.body);
+        if (apiData && apiData.html) {
+          var chapters = this.parseEpisodeTokens(new Document(apiData.html));
+          if (chapters.length > 0) return chapters;
+        }
+      } catch (e) {}
+    }
+
+    // Method 2: Watch page
     var watchPath = this.buildWatchUrl(slug, 1);
     if (!watchPath) return [];
     try {
       var res = await this.client.get(this.hiAnimeBase + watchPath, this.hiHeaders);
-      var doc = new Document(res.body);
-      var chapters = [];
-      var anchors = doc.select("a[data-stream-token]");
-      for (var i = 0; i < anchors.length; i++) {
-        var ep = anchors[i];
-        var token = ep.attr("data-stream-token");
-        var realEpId = this.decodeStreamToken(token);
-        if (!realEpId) continue;
-        var epNum = ep.attr("data-episode") || String(i + 1);
-        var hasSub = ep.attr("data-has-sub") === "1";
-        var hasDub = ep.attr("data-has-dub") === "1";
-        if (!hasSub && !hasDub) hasSub = true;
-        var titleSpan = ep.selectFirst(".ws-ep__title, .ep-name");
-        var epTitle = titleSpan ? titleSpan.text.trim() : "";
-        var label = "E" + epNum + (epTitle ? ": " + epTitle : "");
-        var langs = [];
-        if (hasSub) langs.push("Sub");
-        if (hasDub) langs.push("Dub");
-        if (langs.length) label += " [" + langs.join("+") + "]";
-        chapters.push({
-          name: label,
-          url: realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0"),
-          isFiller: false,
-        });
-      }
-      return chapters;
+      return this.parseEpisodeTokens(new Document(res.body));
     } catch (e) { return []; }
   }
 
