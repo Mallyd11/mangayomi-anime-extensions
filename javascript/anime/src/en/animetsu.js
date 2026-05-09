@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.0.9",
+    "version": "1.1.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -47,7 +47,7 @@ class DefaultExtension extends MProvider {
   }
 
   getProxyMediaUrl(url) {
-    return "https://mega-cloud.top/proxy" + url;
+    return "https://swiftstream.top/proxy" + url;
   }
 
   async request(slug) {
@@ -196,7 +196,7 @@ class DefaultExtension extends MProvider {
           if (!epData.hasOwnProperty("sources")) return [];
 
           if (serverName == "pahe" || serverName == "meg") {
-            return this.getPaheMegStreams(epData.sources, audioType, serverName);
+            return await this.getPaheMegStreams(epData.sources, audioType, serverName);
           } else if (serverName == "kite") {
             return await this.getKiteStreams(epData, audioType);
           }
@@ -214,23 +214,62 @@ class DefaultExtension extends MProvider {
     return `${res.toUpperCase()} - ${dubType.toUpperCase()} : ${serverName.toUpperCase()}`;
   }
 
-  getPaheMegStreams(epData, audioType, serverName) {
+  async getPaheMegStreams(epData, audioType, serverName) {
     var hdr = this.getHeaders();
     var streams = [];
-    epData.forEach((item) => {
+
+    for (var item of epData) {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
       var isMp4 = item.type === "video/mp4" || item.old_hls === false;
-      var label = isMp4
-        ? this.streamNamer(quality + " [DL]", audioType, serverName)
-        : this.streamNamer(quality, audioType, serverName);
-      streams.push({
-        url: link,
-        originalUrl: link,
-        quality: label,
-        headers: hdr,
-      });
-    });
+
+      if (isMp4) {
+        // Direct MP4 — downloadable as-is
+        streams.push({
+          url: link,
+          originalUrl: link,
+          quality: this.streamNamer(quality + " [DL]", audioType, serverName),
+          headers: hdr,
+        });
+      } else {
+        // HLS — resolve master playlist so the downloader gets segment-level URLs
+        var baseDir = link.substring(0, link.lastIndexOf("/") + 1);
+        var parsed = false;
+
+        try {
+          var res = await this.client.get(link, hdr);
+          if (res.statusCode == 200) {
+            var lines = res.body.split("\n");
+            for (var i = 0; i < lines.length; i++) {
+              if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
+                var resMatch = lines[i].match(/RESOLUTION=(\d+x\d+)/);
+                var resolution = resMatch ? resMatch[1] : quality;
+                var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
+                if (!nextLine) continue;
+                var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
+                streams.push({
+                  url: variantUrl,
+                  originalUrl: variantUrl,
+                  quality: this.streamNamer(resolution, audioType, serverName),
+                  headers: hdr,
+                });
+                parsed = true;
+              }
+            }
+          }
+        } catch (e) {}
+
+        if (!parsed) {
+          // Fall back: emit master URL as-is (streaming may still work)
+          streams.push({
+            url: link,
+            originalUrl: link,
+            quality: this.streamNamer(quality, audioType, serverName),
+            headers: hdr,
+          });
+        }
+      }
+    }
 
     return streams;
   }
