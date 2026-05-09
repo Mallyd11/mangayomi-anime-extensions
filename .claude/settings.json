@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Agent(*)",
+      "mcp__Claude_in_Chrome__*",
+      "mcp__ccd_session__*",
+      "WebFetch(*)",
+      "WebSearch(*)"
+    ]
+  }
+}

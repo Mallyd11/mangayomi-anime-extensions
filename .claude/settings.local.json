@@ -411,7 +411,14 @@
       "Bash(timeout 45)",
       "Bash(python ah_diagnose2.py)",
       "Bash(python hi_latest_check.py)",
-      "Bash(python hi_pages.py)"
+      "Bash(python hi_pages.py)",
+      "Bash(python hi_home_latest.py)",
+      "Bash(python hi_ajax_latest.py)",
+      "Bash(python hi_js_scan.py)",
+      "Bash(python hi_home_full.py)",
+      "Bash(python hi_browse.py)",
+      "Bash(python hi_ws_latest.py)",
+      "Bash(python hi_ws_ajax.py)"
     ]
   }
 }
