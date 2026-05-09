@@ -31,7 +31,7 @@ def formatExtenstionInfo(info):
             else ItemType.anime if "anime/" in pkgPath else ItemType.novel
         )
         bkInfo["sourceCodeUrl"] = (
-            "https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/javascript/"
+            "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/"
             + pkgPath
         )
         rd.append(Source.fromJSON(bkInfo).toJSON())
