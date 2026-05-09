@@ -1,7 +1,7 @@
 const mangayomiSources = [
   {
     "name": "Animetsu",
-    "id": 2115224012,
+    "id": 802511794,
     "baseUrl": "https://animetsu.bz",
     "lang": "en",
     "typeSource": "single",
