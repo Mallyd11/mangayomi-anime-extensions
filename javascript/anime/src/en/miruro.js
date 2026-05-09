@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -164,6 +164,7 @@ class DefaultExtension extends MProvider {
   }
 
   async findHiAnimeSlug(englishTitle, romajiTitle) {
+    var norm = function(s) { return (s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); };
     var titles = [];
     if (englishTitle) titles.push(englishTitle);
     if (romajiTitle && romajiTitle !== englishTitle) titles.push(romajiTitle);
@@ -174,15 +175,29 @@ class DefaultExtension extends MProvider {
           this.hiHeaders
         );
         var doc = new Document(res.body);
-        var first = doc.selectFirst(".flw-item");
-        if (first) {
-          var anchor = first.selectFirst(".film-poster-ahref");
-          if (anchor) {
-            var href = anchor.attr("href") || "";
-            var slug = href.replace(/^\/details\//, "").replace(/[?#].*$/, "");
-            if (slug) return slug;
-          }
+        var items = doc.select(".flw-item");
+        var normTitle = norm(title);
+        var bestSlug = null;
+        var bestScore = -1;
+        for (var i = 0; i < items.length && i < 6; i++) {
+          var item = items[i];
+          var anchor = item.selectFirst(".film-poster-ahref");
+          if (!anchor) continue;
+          var href = anchor.attr("href") || "";
+          var slug = href.replace(/^\/details\//, "").replace(/[?#].*$/, "");
+          if (!slug) continue;
+          var nameEl = item.selectFirst(".dynamic-name, .film-name a");
+          var resultTitle = nameEl ? (nameEl.attr("data-ename") || nameEl.text || "").trim() : "";
+          var normResult = norm(resultTitle);
+          var score = 0;
+          if (normResult === normTitle) score = 3;
+          else if (normResult.startsWith(normTitle) || normTitle.startsWith(normResult)) score = 2;
+          else if (normResult.includes(normTitle) || normTitle.includes(normResult)) score = 1;
+          else if (i === 0) score = 0; // fallback to first result
+          if (score > bestScore) { bestScore = score; bestSlug = slug; }
+          if (score === 3) break;
         }
+        if (bestSlug) return bestSlug;
       } catch (e) {}
     }
     return null;
@@ -204,6 +219,7 @@ class DefaultExtension extends MProvider {
         var epNum = ep.attr("data-episode") || String(i + 1);
         var hasSub = ep.attr("data-has-sub") === "1";
         var hasDub = ep.attr("data-has-dub") === "1";
+        if (!hasSub && !hasDub) hasSub = true;
         var titleSpan = ep.selectFirst(".ws-ep__title, .ep-name");
         var epTitle = titleSpan ? titleSpan.text.trim() : "";
         var label = "E" + epNum + (epTitle ? ": " + epTitle : "");
@@ -344,6 +360,7 @@ class DefaultExtension extends MProvider {
     var realEpId = parts[0];
     var hasSub = parts[1] === "1";
     var hasDub = parts[2] === "1";
+    if (!hasSub && !hasDub) hasSub = true;
     var pref = this.getPreference("miruro_pref_audio") || "sub";
     var subStreams = hasSub ? await this.extractMegaplaySources(realEpId, "sub", "Sub") : [];
     var dubStreams = hasDub ? await this.extractMegaplaySources(realEpId, "dub", "Dub") : [];
