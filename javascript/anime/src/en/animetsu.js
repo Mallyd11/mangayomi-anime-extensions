@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -54,7 +54,7 @@ class DefaultExtension extends MProvider {
   async request(slug) {
     var baseUrl = this.getBaseUrl();
     var hdr = this.getHeaders(baseUrl);
-    var url = baseUrl + "/v2/api/anime" + slug;
+    var url = baseUrl + "/v2/api" + slug;
     var res = await this.client.get(url, hdr);
     if (res.statusCode != 200) {
       throw new Error("Request failed: HTTP " + res.statusCode);
