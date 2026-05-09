@@ -3,7 +3,7 @@ const mangayomiSources = [
     "name": "Animetsu",
     "id": 2115224012,
     "baseUrl": "https://animetsu.bz",
-    "lang": "all",
+    "lang": "en",
     "typeSource": "single",
     "iconUrl":
       "https://www.google.com/s2/favicons?sz=256&domain=https://animetsu.bz/",
