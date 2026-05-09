@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.2",
+    "version": "2.0.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -178,8 +178,8 @@ class DefaultExtension extends MProvider {
         var items = doc.select(".flw-item");
         var normTitle = norm(title);
         var bestSlug = null;
-        var bestScore = -1;
-        for (var i = 0; i < items.length && i < 6; i++) {
+        var bestScore = 0;
+        for (var i = 0; i < items.length && i < 8; i++) {
           var item = items[i];
           var anchor = item.selectFirst(".film-poster-ahref");
           if (!anchor) continue;
@@ -193,11 +193,10 @@ class DefaultExtension extends MProvider {
           if (normResult === normTitle) score = 3;
           else if (normResult.startsWith(normTitle) || normTitle.startsWith(normResult)) score = 2;
           else if (normResult.includes(normTitle) || normTitle.includes(normResult)) score = 1;
-          else if (i === 0) score = 0; // fallback to first result
           if (score > bestScore) { bestScore = score; bestSlug = slug; }
           if (score === 3) break;
         }
-        if (bestSlug) return bestSlug;
+        if (bestScore >= 1 && bestSlug) return bestSlug;
       } catch (e) {}
     }
     return null;
