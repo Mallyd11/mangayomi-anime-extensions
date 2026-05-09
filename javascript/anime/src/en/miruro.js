@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -54,7 +54,7 @@ class DefaultExtension extends MProvider {
     var res = await this.client.post(
       "https://graphql.anilist.co",
       { "Content-Type": "application/json", "Accept": "application/json" },
-      JSON.stringify({ query: query, variables: variables })
+      { query: query, variables: variables }
     );
     var data = JSON.parse(res.body);
     if (data.errors) throw new Error(data.errors[0].message);
@@ -89,13 +89,13 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var q = "query($page:Int,$perPage:Int){Page(page:$page,perPage:$perPage){pageInfo{hasNextPage}media(sort:TRENDING_DESC,type:ANIME,isAdult:false){id title{romaji english native userPreferred}coverImage{large}}}}";
+    var q = "query($page:Int,$perPage:Int){Page(page:$page,perPage:$perPage){pageInfo{hasNextPage}media(sort:[TRENDING_DESC],type:ANIME,isAdult:false){id title{romaji english native userPreferred}coverImage{large}}}}";
     var data = await this.anilist(q, { page: page, perPage: 20 });
     return this.parseAnilistPage(data);
   }
 
   async getLatestUpdates(page) {
-    var q = "query($page:Int,$perPage:Int){Page(page:$page,perPage:$perPage){pageInfo{hasNextPage}media(sort:UPDATED_AT_DESC,type:ANIME,status:RELEASING,isAdult:false){id title{romaji english native userPreferred}coverImage{large}}}}";
+    var q = "query($page:Int,$perPage:Int){Page(page:$page,perPage:$perPage){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,status:RELEASING,isAdult:false){id title{romaji english native userPreferred}coverImage{large}}}}";
     var data = await this.anilist(q, { page: page, perPage: 20 });
     return this.parseAnilistPage(data);
   }
@@ -121,7 +121,7 @@ class DefaultExtension extends MProvider {
           else if (f.name === "Format" && v) { conditions.push("format:$format"); args += ",$format:MediaFormat"; variables.format = v; }
           else if (f.name === "Status" && v) { conditions.push("status:$status"); args += ",$status:MediaStatus"; variables.status = v; }
           else if (f.name === "Year" && v) { conditions.push("seasonYear:$year"); args += ",$year:Int"; variables.year = parseInt(v); }
-          else if (f.name === "Sort" && v) { conditions.push("sort:[$sort]"); args += ",$sort:MediaSort"; variables.sort = v; }
+          else if (f.name === "Sort" && v) { conditions.push("sort:[$sort]"); args += ",$sort:[MediaSort]"; variables.sort = [v]; }
         } else if (f.type_name === "GroupFilter") {
           var genres = [];
           for (var item of f.state) { if (item.state === true) genres.push(item.value); }
@@ -227,7 +227,7 @@ class DefaultExtension extends MProvider {
     var animeId = parseInt(url.replace(/\D/g, ""), 10);
     if (!animeId) throw new Error("Invalid Anilist ID: " + url);
 
-    var q = "query($id:Int){Media(id:$id,type:ANIME){id title{romaji english native userPreferred}coverImage{large extraLarge}description(asHtml:false)status genres episodes format}}";
+    var q = "query($id:Int){Media(id:$id,type:ANIME){id title{romaji english native userPreferred}coverImage{large extraLarge}description status genres episodes format}}";
     var data = await this.anilist(q, { id: animeId });
     var m = data.Media;
 
