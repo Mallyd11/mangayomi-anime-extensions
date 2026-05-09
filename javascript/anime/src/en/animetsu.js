@@ -10,10 +10,10 @@ const mangayomiSources = [
     "dateFormat": "",
     "dateFormatLocale": "",
     "isNsfw": false,
-    "hasCloudflare": false,
+    "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -43,6 +43,7 @@ class DefaultExtension extends MProvider {
     return {
       "Referer": url,
       "n1": "1",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     };
   }
 
@@ -55,6 +56,9 @@ class DefaultExtension extends MProvider {
     var hdr = this.getHeaders(baseUrl);
     var url = baseUrl + "/v2/api/anime" + slug;
     var res = await this.client.get(url, hdr);
+    if (res.statusCode != 200) {
+      throw new Error("Request failed: HTTP " + res.statusCode);
+    }
     return JSON.parse(res.body);
   }
 
