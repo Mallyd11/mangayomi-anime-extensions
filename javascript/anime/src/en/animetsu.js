@@ -21,7 +21,7 @@ const mangayomiSources = [
     "additionalParams": "",
     "sourceCodeLanguage": 1,
     "notes": "",
-    "pkgPath": "anime/src/all/animetsu.js",
+    "pkgPath": "anime/src/en/animetsu.js",
   },
 ];
 class DefaultExtension extends MProvider {
