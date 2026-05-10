@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.5",
+    "version": "2.0.6",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -257,10 +257,44 @@ class DefaultExtension extends MProvider {
   }
 
   async getHiAnimeEpisodes(slug) {
+    var lastDash = slug.lastIndexOf("-");
+    if (lastDash < 0) return [];
+    var hiAnimeId = slug.substring(lastDash + 1);
     var watchPath = this.buildWatchUrl(slug, 1);
+    var watchUrl = watchPath ? this.hiAnimeBase + watchPath : this.hiAnimeBase;
+
+    // HiAnime loads episode tokens via AJAX — must send X-Requested-With header
+    // The watch page URL as Referer is required for the endpoint to respond
+    if (/^\d+$/.test(hiAnimeId)) {
+      var ajaxHeaders = {
+        "User-Agent": this.ua,
+        "Referer": watchUrl,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json, text/javascript, */*",
+      };
+      // Try v2 endpoint first, then without version prefix
+      var ajaxPaths = [
+        "/ajax/v2/episode/list/" + hiAnimeId,
+        "/ajax/episode/list/" + hiAnimeId,
+      ];
+      for (var p = 0; p < ajaxPaths.length; p++) {
+        try {
+          var apiRes = await this.client.get(this.hiAnimeBase + ajaxPaths[p], ajaxHeaders);
+          if (apiRes.statusCode === 200) {
+            var apiData = JSON.parse(apiRes.body);
+            if (apiData && apiData.html) {
+              var chapters = this.parseEpisodeTokens(new Document(apiData.html));
+              if (chapters.length > 0) return chapters;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    // Fallback: watch page (works if Mangayomi's client executes JS)
     if (!watchPath) return [];
     try {
-      var res = await this.client.get(this.hiAnimeBase + watchPath, this.hiHeaders);
+      var res = await this.client.get(watchUrl, this.hiHeaders);
       return this.parseEpisodeTokens(new Document(res.body));
     } catch (e) { return []; }
   }
