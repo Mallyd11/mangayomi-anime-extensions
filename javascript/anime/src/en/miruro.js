@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.6",
+    "version": "2.0.7",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -237,16 +237,13 @@ class DefaultExtension extends MProvider {
       var realEpId = this.decodeStreamToken(token);
       if (!realEpId) continue;
       var epNum = ep.attr("data-number") || ep.attr("data-episode") || String(i + 1);
-      var hasSub = ep.attr("data-has-sub") === "1";
+      var hasSub = ep.attr("data-has-sub") !== "0";  // default true
       var hasDub = ep.attr("data-has-dub") === "1";
-      if (!hasSub && !hasDub) hasSub = true;
       var titleSpan = ep.selectFirst(".ws-ep__title, .ep-name, .ep-title");
       var epTitle = titleSpan ? titleSpan.text.trim() : "";
+      // Do NOT add [Sub/Dub] to the label — HiAnime sets data-has-dub at show level,
+      // so it shows "1" even for episodes whose dub hasn't been uploaded yet.
       var label = "E" + epNum + (epTitle ? ": " + epTitle : "");
-      var langs = [];
-      if (hasSub) langs.push("Sub");
-      if (hasDub) langs.push("Dub");
-      if (langs.length) label += " [" + langs.join("+") + "]";
       chapters.push({
         name: label,
         url: realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0"),
@@ -263,16 +260,17 @@ class DefaultExtension extends MProvider {
     var watchPath = this.buildWatchUrl(slug, 1);
     var watchUrl = watchPath ? this.hiAnimeBase + watchPath : this.hiAnimeBase;
 
-    // HiAnime loads episode tokens via AJAX — must send X-Requested-With header
-    // The watch page URL as Referer is required for the endpoint to respond
-    if (/^\d+$/.test(hiAnimeId)) {
+    // HiAnime loads episode tokens via AJAX — must send X-Requested-With header.
+    // IDs can be numeric ("72553") or alphanumeric ("72qpm") — try both endpoints
+    // regardless of format. Do NOT check statusCode: Mangayomi's client.get() does
+    // not reliably expose it; just try to parse whatever body is returned.
+    if (hiAnimeId) {
       var ajaxHeaders = {
         "User-Agent": this.ua,
         "Referer": watchUrl,
         "X-Requested-With": "XMLHttpRequest",
         "Accept": "application/json, text/javascript, */*",
       };
-      // Try v2 endpoint first, then without version prefix
       var ajaxPaths = [
         "/ajax/v2/episode/list/" + hiAnimeId,
         "/ajax/episode/list/" + hiAnimeId,
@@ -280,7 +278,7 @@ class DefaultExtension extends MProvider {
       for (var p = 0; p < ajaxPaths.length; p++) {
         try {
           var apiRes = await this.client.get(this.hiAnimeBase + ajaxPaths[p], ajaxHeaders);
-          if (apiRes.statusCode === 200) {
+          if (apiRes && apiRes.body) {
             var apiData = JSON.parse(apiRes.body);
             if (apiData && apiData.html) {
               var chapters = this.parseEpisodeTokens(new Document(apiData.html));
