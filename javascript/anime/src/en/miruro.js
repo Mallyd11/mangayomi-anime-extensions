@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.7",
+    "version": "2.0.8",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -169,7 +169,9 @@ class DefaultExtension extends MProvider {
     var longer = Math.max(a.length, b.length);
     var shorter = Math.min(a.length, b.length);
     var ratio = shorter / longer;
-    if (a.startsWith(b) || b.startsWith(a)) return ratio >= 0.5 ? 2 : 0;
+    // startsWith: one title is a prefix of the other (e.g. "Nippon Sangoku" vs
+    // "Nippon Sangoku: The Three Nations of the Crimson Sun"). Always at least 1.
+    if (a.startsWith(b) || b.startsWith(a)) return ratio >= 0.5 ? 2 : 1;
     if (a.includes(b) || b.includes(a)) return ratio >= 0.65 ? 1 : 0;
     return 0;
   }
@@ -185,43 +187,66 @@ class DefaultExtension extends MProvider {
   }
 
   async findHiAnimeSlug(englishTitle, romajiTitle) {
+    var self = this;
     var norm = function(s) { return (s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); };
     var titles = [];
     if (englishTitle) titles.push(englishTitle);
     if (romajiTitle && romajiTitle !== englishTitle) titles.push(romajiTitle);
 
-    for (var title of titles) {
+    for (var ti = 0; ti < titles.length; ti++) {
+      var title = titles[ti];
       var normTitle = norm(title);
       if (!normTitle) continue;
 
-      // HTML search results page
       try {
-        var res = await this.client.get(
-          this.hiAnimeBase + "/search?keyword=" + encodeURIComponent(title),
-          this.hiHeaders
+        var res = await self.client.get(
+          self.hiAnimeBase + "/search?keyword=" + encodeURIComponent(title),
+          self.hiHeaders
         );
         var doc = new Document(res.body);
-        var items = doc.select(".flw-item");
         var bestSlug = null, bestScore = 0;
-        for (var i = 0; i < items.length && i < 8; i++) {
-          var item = items[i];
-          var anchor = item.selectFirst(".film-poster-ahref, .film-name a");
-          if (!anchor) continue;
-          var href = anchor.attr("href") || "";
-          var slug = this.slugFromHref(href);
+
+        // ── Method A: .flw-item card structure (old HiAnime layout) ──────────
+        var cards = doc.select(".flw-item");
+        for (var ci = 0; ci < cards.length && ci < 10; ci++) {
+          var card = cards[ci];
+          var aEl = card.selectFirst("a[href*='/details/'], .film-poster-ahref");
+          if (!aEl) continue;
+          var href = aEl.attr("href") || "";
+          var slug = self.slugFromHref(href);
           if (!slug) continue;
-          var nameEl = item.selectFirst(".dynamic-name, .film-name a");
-          // Score against BOTH the English data-ename AND the displayed text —
-          // HiAnime stores English title in data-ename but displays the romaji title
-          var titleEn = nameEl ? (nameEl.attr("data-ename") || "").trim() : "";
-          var titleDisplay = nameEl ? (nameEl.text || "").trim() : "";
+          var nameEl = card.selectFirst(".dynamic-name, .film-name a, a[href*='/details/']");
+          var t1 = nameEl ? (nameEl.attr("data-ename") || nameEl.attr("data-jname") || nameEl.attr("title") || "").trim() : "";
+          var t2 = nameEl ? (nameEl.text || "").trim() : "";
           var score = Math.max(
-            this.scoreTitle(norm(titleEn), normTitle),
-            this.scoreTitle(norm(titleDisplay), normTitle)
+            t1 ? self.scoreTitle(norm(t1), normTitle) : 0,
+            t2 ? self.scoreTitle(norm(t2), normTitle) : 0
           );
           if (score > bestScore) { bestScore = score; bestSlug = slug; }
           if (score === 3) break;
         }
+
+        // ── Method B: plain a[href*='/details/'] links (new / simplified layout) ─
+        // WebFetch confirmed this structure exists even without .flw-item classes.
+        if (bestScore < 1) {
+          var seen = {};
+          var links = doc.select("a[href*='/details/']");
+          for (var li = 0; li < links.length && li < 20; li++) {
+            var lnk = links[li];
+            var lhref = lnk.attr("href") || "";
+            var lslug = self.slugFromHref(lhref);
+            if (!lslug || seen[lslug]) continue;
+            seen[lslug] = true;
+            // Gather every possible title hint from the anchor
+            var lTitle = (lnk.attr("data-ename") || lnk.attr("data-jname") ||
+                          lnk.attr("title") || lnk.text || "").trim();
+            if (!lTitle) continue;
+            var lscore = self.scoreTitle(norm(lTitle), normTitle);
+            if (lscore > bestScore) { bestScore = lscore; bestSlug = lslug; }
+            if (lscore === 3) break;
+          }
+        }
+
         if (bestScore >= 1 && bestSlug) return bestSlug;
       } catch (e) {}
     }
@@ -230,11 +255,17 @@ class DefaultExtension extends MProvider {
 
   parseEpisodeTokens(doc) {
     var chapters = [];
-    var anchors = doc.select("a[data-stream-token]");
+    // Select episode anchors that have a stream token OR a data-id.
+    // Older/completed anime use data-stream-token (decodes to megaplay realEpId).
+    // Newer/ongoing anime may only expose data-id; we pass it through directly
+    // to megaplay.buzz as a best-effort fallback.
+    var anchors = doc.select("a[data-stream-token], a[data-id][data-number]");
     for (var i = 0; i < anchors.length; i++) {
       var ep = anchors[i];
       var token = ep.attr("data-stream-token");
-      var realEpId = this.decodeStreamToken(token);
+      var realEpId = token ? this.decodeStreamToken(token) : null;
+      // Fallback: use raw data-id value (may or may not work with megaplay)
+      if (!realEpId) realEpId = (ep.attr("data-id") || "").trim() || null;
       if (!realEpId) continue;
       var epNum = ep.attr("data-number") || ep.attr("data-episode") || String(i + 1);
       var hasSub = ep.attr("data-has-sub") !== "0";  // default true
