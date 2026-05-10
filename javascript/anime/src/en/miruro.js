@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.4",
+    "version": "2.0.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -194,28 +194,7 @@ class DefaultExtension extends MProvider {
       var normTitle = norm(title);
       if (!normTitle) continue;
 
-      // Method 1: AJAX suggest API — compact JSON, more stable than full search page
-      try {
-        var sRes = await this.client.get(
-          this.hiAnimeBase + "/ajax/search/suggest?keyword=" + encodeURIComponent(title),
-          Object.assign({}, this.hiHeaders, { "X-Requested-With": "XMLHttpRequest" })
-        );
-        var sJson = JSON.parse(sRes.body);
-        if (sJson && sJson.html) {
-          var sDoc = new Document(sJson.html);
-          var sLinks = sDoc.select("a[href]");
-          for (var j = 0; j < sLinks.length; j++) {
-            var sHref = sLinks[j].attr("href") || "";
-            var sSlug = this.slugFromHref(sHref);
-            if (!sSlug) continue;
-            var sTitleEl = sLinks[j].selectFirst("h5, .d-title, .title, strong, .film-name");
-            var sTitle = sTitleEl ? sTitleEl.text.trim() : (sLinks[j].attr("title") || sLinks[j].text.trim());
-            if (this.scoreTitle(norm(sTitle), normTitle) >= 1) return sSlug;
-          }
-        }
-      } catch (e) {}
-
-      // Method 2: HTML search results page
+      // HTML search results page
       try {
         var res = await this.client.get(
           this.hiAnimeBase + "/search?keyword=" + encodeURIComponent(title),
@@ -232,8 +211,14 @@ class DefaultExtension extends MProvider {
           var slug = this.slugFromHref(href);
           if (!slug) continue;
           var nameEl = item.selectFirst(".dynamic-name, .film-name a");
-          var resultTitle = nameEl ? (nameEl.attr("data-ename") || nameEl.text || "").trim() : "";
-          var score = this.scoreTitle(norm(resultTitle), normTitle);
+          // Score against BOTH the English data-ename AND the displayed text —
+          // HiAnime stores English title in data-ename but displays the romaji title
+          var titleEn = nameEl ? (nameEl.attr("data-ename") || "").trim() : "";
+          var titleDisplay = nameEl ? (nameEl.text || "").trim() : "";
+          var score = Math.max(
+            this.scoreTitle(norm(titleEn), normTitle),
+            this.scoreTitle(norm(titleDisplay), normTitle)
+          );
           if (score > bestScore) { bestScore = score; bestSlug = slug; }
           if (score === 3) break;
         }
@@ -272,26 +257,6 @@ class DefaultExtension extends MProvider {
   }
 
   async getHiAnimeEpisodes(slug) {
-    var lastDash = slug.lastIndexOf("-");
-    if (lastDash < 0) return [];
-    var hiAnimeId = slug.substring(lastDash + 1);
-
-    // Method 1: AJAX episode list API (same data, no full-page overhead)
-    if (/^\d+$/.test(hiAnimeId)) {
-      try {
-        var apiRes = await this.client.get(
-          this.hiAnimeBase + "/ajax/v2/episode/list/" + hiAnimeId,
-          Object.assign({}, this.hiHeaders, { "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" })
-        );
-        var apiData = JSON.parse(apiRes.body);
-        if (apiData && apiData.html) {
-          var chapters = this.parseEpisodeTokens(new Document(apiData.html));
-          if (chapters.length > 0) return chapters;
-        }
-      } catch (e) {}
-    }
-
-    // Method 2: Watch page
     var watchPath = this.buildWatchUrl(slug, 1);
     if (!watchPath) return [];
     try {
