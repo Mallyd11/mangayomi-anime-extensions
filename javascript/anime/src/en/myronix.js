@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.4",
+    "version": "0.0.5",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -83,11 +83,12 @@ class DefaultExtension extends MProvider {
   }
 
   // POST to the site's AniList GraphQL proxy and return json.data
+  // Body must be a plain object — the Mangayomi client serialises it to JSON internally.
   async gql(query, variables) {
     var res = await this.client.post(
       this.source.baseUrl + "/api/v2/anilist/graphql",
       this.gqlHeaders,
-      JSON.stringify({ query: query, variables: variables })
+      { query: query, variables: variables }
     );
     if (res.statusCode !== 200) throw new Error("HTTP " + res.statusCode);
     var json = JSON.parse(res.body);
