@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -44,7 +44,7 @@ var PAGE_MEDIA_QUERY = [
   "startDate{year month day} endDate{year month day}",
   "studios{nodes{name isAnimationStudio}}",
   "}}}"
-].join("");
+].join("\n");
 
 // Compact query for single-anime detail by AniList ID
 var MEDIA_DETAIL_QUERY = [
@@ -58,7 +58,7 @@ var MEDIA_DETAIL_QUERY = [
   "startDate{year month day} endDate{year month day}",
   "studios{nodes{name isAnimationStudio}}",
   "}}"
-].join("");
+].join("\n");
 
 // ─── Extension ────────────────────────────────────────────────────────────────
 
