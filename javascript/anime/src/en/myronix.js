@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.6",
+    "version": "0.0.7",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -25,7 +25,6 @@ const mangayomiSources = [
 
 // ─── GraphQL queries ───────────────────────────────────────────────────────────
 
-// Compact query used for all list/search pages
 var PAGE_MEDIA_QUERY = [
   "query PageMedia(",
   "$page:Int,$perPage:Int,$search:String,",
@@ -46,7 +45,6 @@ var PAGE_MEDIA_QUERY = [
   "}}}"
 ].join("\n");
 
-// Compact query for single-anime detail by AniList ID
 var MEDIA_DETAIL_QUERY = [
   "query MediaDetail($id:Int){",
   "Media(id:$id,type:ANIME){",
@@ -72,6 +70,7 @@ class DefaultExtension extends MProvider {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
   }
 
+  // Headers for POST GraphQL requests
   get gqlHeaders() {
     return {
       "User-Agent": this.ua,
@@ -82,7 +81,16 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // POST to the site's AniList GraphQL proxy and return json.data
+  // Lightweight headers for plain GET API requests
+  get getHeaders() {
+    return {
+      "User-Agent": this.ua,
+      "Accept": "application/json",
+      "Referer": this.source.baseUrl + "/",
+    };
+  }
+
+  // POST to the AniList GraphQL proxy
   async gql(query, variables) {
     var res = await this.client.post(
       this.source.baseUrl + "/api/v2/anilist/graphql",
@@ -93,38 +101,6 @@ class DefaultExtension extends MProvider {
     var json = JSON.parse(res.body);
     if (json.errors && json.errors.length) throw new Error(json.errors[0].message);
     return json.data;
-  }
-
-  // Fetch AllAnime episode list for an AniList ID.
-  // Returns [{number, episodeId, title}, ...] or [] on failure.
-  async fetchAllanimeEpisodes(anilistId) {
-    try {
-      var url = this.source.baseUrl + "/api/v2/allanime/episodes/" +
-        anilistId + "?provider=anilist&mode=sub";
-      var res = await this.client.get(url, this.gqlHeaders);
-      if (res.statusCode !== 200) return [];
-      var json = JSON.parse(res.body);
-      return (json.data && json.data.episodes) || [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  // Fetch stream sources from AllAnime for one episode + server + category.
-  // Returns the sources array or [] on failure/no data.
-  async fetchAllanimeSource(episodeId, server, category) {
-    try {
-      var url = this.source.baseUrl + "/api/v2/allanime/episode/sources" +
-        "?animeEpisodeId=" + encodeURIComponent(episodeId) +
-        "&server=" + server +
-        "&category=" + category;
-      var res = await this.client.get(url, this.gqlHeaders);
-      if (res.statusCode !== 200) return { sources: [], tracks: [], headers: {} };
-      var json = JSON.parse(res.body);
-      return json.data || { sources: [], tracks: [], headers: {} };
-    } catch (e) {
-      return { sources: [], tracks: [], headers: {} };
-    }
   }
 
   // Map AniList media objects → Mangayomi list items
@@ -148,9 +124,7 @@ class DefaultExtension extends MProvider {
 
   async getPopular(page) {
     var data = await this.gql(PAGE_MEDIA_QUERY, {
-      page: page,
-      perPage: 24,
-      sort: ["POPULARITY_DESC"],
+      page: page, perPage: 24, sort: ["POPULARITY_DESC"],
     });
     var p = (data && data.Page) || {};
     return {
@@ -161,9 +135,7 @@ class DefaultExtension extends MProvider {
 
   async getLatestUpdates(page) {
     var data = await this.gql(PAGE_MEDIA_QUERY, {
-      page: page,
-      perPage: 24,
-      sort: ["UPDATED_AT_DESC"],
+      page: page, perPage: 24, sort: ["UPDATED_AT_DESC"],
     });
     var p = (data && data.Page) || {};
     return {
@@ -174,10 +146,7 @@ class DefaultExtension extends MProvider {
 
   async search(query, page, filters) {
     var data = await this.gql(PAGE_MEDIA_QUERY, {
-      page: page,
-      perPage: 24,
-      search: query,
-      sort: ["SEARCH_MATCH"],
+      page: page, perPage: 24, search: query, sort: ["SEARCH_MATCH"],
     });
     var p = (data && data.Page) || {};
     return {
@@ -186,23 +155,21 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // AniList status → Mangayomi status code
   statusCode(s) {
     switch ((s || "").toUpperCase()) {
-      case "RELEASING":         return 0;
-      case "FINISHED":          return 1;
-      case "NOT_YET_RELEASED":  return 4;
-      case "CANCELLED":         return 5;
-      default:                  return 5;
+      case "RELEASING":        return 0;
+      case "FINISHED":         return 1;
+      case "NOT_YET_RELEASED": return 4;
+      case "CANCELLED":        return 5;
+      default:                 return 5;
     }
   }
 
   async getDetail(url) {
-    // url is a bare AniList ID ("16498") or a full URL ending in the ID
     var anilistId = parseInt(url.replace(/[^0-9]/g, ""), 10);
     if (!anilistId) throw new Error("Cannot parse AniList ID from: " + url);
 
-    // ── AniList metadata ─────────────────────────────────────────────────────
+    // ── AniList metadata ────────────────────────────────────────────────────
     var data = await this.gql(MEDIA_DETAIL_QUERY, { id: anilistId });
     var m = (data && data.Media) || {};
 
@@ -213,32 +180,49 @@ class DefaultExtension extends MProvider {
     var status = this.statusCode(m.status);
     var epCount = m.episodes || 0;
 
-    // ── Episode list from AllAnime ───────────────────────────────────────────
+    // ── Episode list from AllAnime ──────────────────────────────────────────
+    // Endpoint: GET /api/v2/allanime/episodes/{anilistId}?provider=anilist&mode=sub
+    // Returns: { data: { episodes: [{ number, episodeId: "allanime:{showId}:{epNum}", title }] } }
+    //
+    // Chapter URL format: "{showId}|{epNum}"  (pipe-separated, no colons)
+    // This avoids Mangayomi treating "allanime:" as a URL scheme.
+    // getVideoList reconstructs the full AllAnime ID before calling the API.
     var chapters = [];
-    var episodes = await this.fetchAllanimeEpisodes(anilistId);
-
-    if (episodes.length > 0) {
-      // AllAnime episode IDs are the authoritative chapter URLs:
-      // format "allanime:{showId}:{epNum}" — getVideoList uses these directly.
-      for (var i = 0; i < episodes.length; i++) {
-        var ep = episodes[i];
-        chapters.push({
-          name: ep.title || ("Episode " + ep.number),
-          url: ep.episodeId,
-        });
+    try {
+      var epUrl = this.source.baseUrl + "/api/v2/allanime/episodes/" +
+        anilistId + "?provider=anilist&mode=sub";
+      var epRes = await this.client.get(epUrl, this.getHeaders);
+      if (epRes.statusCode === 200) {
+        var epJson = JSON.parse(epRes.body);
+        var episodes = (epJson.data && epJson.data.episodes) || [];
+        for (var i = 0; i < episodes.length; i++) {
+          var ep = episodes[i];
+          // Parse "allanime:{showId}:{epNum}" → showId, epNum
+          // The episodeId always has exactly 2 colons after "allanime:"
+          var rawId = ep.episodeId || "";          // rawId = "allanime:wbnpCxPu3fyk9XSaZ:1"
+          var firstColon = rawId.indexOf(":");     // 8  (after "allanime")
+          var secondColon = rawId.indexOf(":", firstColon + 1); // after showId
+          if (firstColon < 0 || secondColon < 0) continue;
+          var showId = rawId.substring(firstColon + 1, secondColon); // "wbnpCxPu3fyk9XSaZ"
+          var epNum  = rawId.substring(secondColon + 1);             // "1"
+          chapters.push({
+            name: ep.title || ("Episode " + ep.number),
+            url: showId + "|" + epNum,  // "wbnpCxPu3fyk9XSaZ|1"
+          });
+        }
       }
-    } else {
-      // Fallback: build stub episodes from AniList count
+    } catch (e) {
+      // Fall through to AniList fallback
+    }
+
+    // Fallback: generate stub episodes from AniList count when AllAnime fails
+    if (chapters.length === 0 && epCount > 0) {
       for (var j = 1; j <= epCount; j++) {
-        chapters.push({
-          name: "Episode " + j,
-          url: anilistId + "|" + j,
-        });
+        chapters.push({ name: "Episode " + j, url: "stub|" + anilistId + "|" + j });
       }
     }
 
-    // Reverse so newest episode is at the top (Mangayomi convention)
-    chapters.reverse();
+    chapters.reverse(); // newest first (Mangayomi convention)
 
     return {
       name: name,
@@ -252,18 +236,22 @@ class DefaultExtension extends MProvider {
   }
 
   async getVideoList(url) {
-    // url is "allanime:{showId}:{epNum}" (from AllAnime episodes API)
-    // Legacy fallback stub URLs like "{anilistId}|{epNum}" are not streamable.
-    if (!url.startsWith("allanime:")) {
-      return [];
-    }
+    // Chapter URL formats:
+    //   "{showId}|{epNum}"           — AllAnime episode (e.g. "wbnpCxPu3fyk9XSaZ|1")
+    //   "stub|{anilistId}|{epNum}"   — AniList fallback, cannot stream
+    if (!url || url.startsWith("stub|")) return [];
+
+    var pipeIdx = url.indexOf("|");
+    if (pipeIdx < 0) return [];
+
+    var showId = url.substring(0, pipeIdx);
+    var epNum  = url.substring(pipeIdx + 1);
+    // Reconstruct the full AllAnime episode ID for the API call
+    var episodeId = "allanime:" + showId + ":" + epNum;
 
     var streams = [];
     var seen = {};
 
-    // Try the two available servers with both sub and dub.
-    // The API deduplicates on the CDN side; we dedup by URL here to avoid
-    // surfacing identical links with different labels.
     var servers = ["hd-1", "hd-2"];
     var categories = ["sub", "dub"];
 
@@ -271,50 +259,51 @@ class DefaultExtension extends MProvider {
       for (var ci = 0; ci < categories.length; ci++) {
         var server = servers[si];
         var category = categories[ci];
+        try {
+          var apiUrl = this.source.baseUrl + "/api/v2/allanime/episode/sources" +
+            "?animeEpisodeId=" + encodeURIComponent(episodeId) +
+            "&server=" + server +
+            "&category=" + category;
+          var res = await this.client.get(apiUrl, this.getHeaders);
+          if (res.statusCode !== 200) continue;
+          var json = JSON.parse(res.body);
+          if (!json.data || !json.data.sources) continue;
 
-        var result = await this.fetchAllanimeSource(url, server, category);
-        if (!result.sources || !result.sources.length) continue;
-
-        // Build subtitles list from tracks (if any)
-        var subtitles = [];
-        if (result.tracks && result.tracks.length) {
-          for (var ti = 0; ti < result.tracks.length; ti++) {
-            var track = result.tracks[ti];
+          // Subtitle tracks (optional)
+          var subtitles = [];
+          var tracks = json.data.tracks || [];
+          for (var ti = 0; ti < tracks.length; ti++) {
+            var track = tracks[ti];
             if (track && track.file) {
               subtitles.push({ file: track.file, label: track.label || "Unknown" });
             }
           }
-        }
 
-        // Merge any extra CDN headers returned by the API
-        var streamHeaders = {
-          "User-Agent": this.ua,
-          "Referer": this.source.baseUrl + "/",
-        };
-        if (result.headers) {
-          var extraKeys = Object.keys(result.headers);
-          for (var hk = 0; hk < extraKeys.length; hk++) {
-            streamHeaders[extraKeys[hk]] = result.headers[extraKeys[hk]];
+          var streamHeaders = {
+            "User-Agent": this.ua,
+            "Referer": this.source.baseUrl + "/",
+          };
+
+          var sources = json.data.sources;
+          for (var k = 0; k < sources.length; k++) {
+            var src = sources[k];
+            var srcUrl = src && src.url;
+            if (!srcUrl) continue;
+            // Dedup: same URL can come from both hd-1 and hd-2
+            var dedupeKey = srcUrl + "|" + category;
+            if (seen[dedupeKey]) continue;
+            seen[dedupeKey] = true;
+
+            streams.push({
+              url: srcUrl,
+              originalUrl: srcUrl,
+              quality: (src.quality || "Auto") + " [" + category.toUpperCase() + "]",
+              headers: streamHeaders,
+              subtitles: subtitles,
+            });
           }
-        }
-
-        for (var k = 0; k < result.sources.length; k++) {
-          var src = result.sources[k];
-          var srcUrl = src.url;
-          if (!srcUrl) continue;
-          // Dedup by URL so identical CDN links from different servers only appear once
-          var dedupeKey = srcUrl + "|" + category;
-          if (seen[dedupeKey]) continue;
-          seen[dedupeKey] = true;
-
-          var qualLabel = (src.quality || "Auto") + " [" + category.toUpperCase() + "]";
-          streams.push({
-            url: srcUrl,
-            originalUrl: srcUrl,
-            quality: qualLabel,
-            headers: streamHeaders,
-            subtitles: subtitles,
-          });
+        } catch (e) {
+          // skip this server/category combination on any error
         }
       }
     }
