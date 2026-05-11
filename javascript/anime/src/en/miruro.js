@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.1.1",
+    "version": "2.1.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -25,7 +25,7 @@ const mangayomiSources = [
 ];
 
 // Metadata: AniList GraphQL API
-// Streaming:  AllAnime (api.allanime.day) — GraphQL + XOR-decoded source URLs
+// Streaming:  AllAnime (api.allanime.day) — GraphQL + XOR / AES-256-CTR decryption
 class DefaultExtension extends MProvider {
   constructor() {
     super();
@@ -305,7 +305,8 @@ class DefaultExtension extends MProvider {
     }
     if (types.length === 0) types.push("sub");
 
-    var gqlQuery = "query($showId: String!, $episodeString: String!, $translationType: VaildTranslationTypeEnumType!) { episode(showId: $showId, episodeString: $episodeString, translationType: $translationType) { sourceUrls } }";
+    // Request both sourceUrls (old XOR format) and tobeparsed (new AES-256-CTR format)
+    var gqlQuery = "query($showId: String!, $episodeString: String!, $translationType: VaildTranslationTypeEnumType!) { episode(showId: $showId, episodeString: $episodeString, translationType: $translationType) { sourceUrls tobeparsed } }";
 
     for (var ti = 0; ti < types.length; ti++) {
       var translationType = types[ti];
@@ -315,13 +316,46 @@ class DefaultExtension extends MProvider {
           episodeString: ep,
           translationType: translationType,
         });
-        var sourceUrls = (data.data && data.data.episode && data.data.episode.sourceUrls) || [];
+        var episodeData = data.data && data.data.episode;
+        if (!episodeData) continue;
 
-        for (var si = 0; si < sourceUrls.length; si++) {
-          var src = sourceUrls[si];
+        // Collect source objects from whichever format is available
+        var sourceObjects = [];
+
+        // New format: tobeparsed (AES-256-CTR encrypted)
+        var tobeparsed = episodeData.tobeparsed;
+        if (tobeparsed && typeof tobeparsed === "string" && tobeparsed.length > 0) {
+          try {
+            var decrypted = this.decodeTobeparsed(tobeparsed);
+            for (var di = 0; di < decrypted.length; di++) {
+              sourceObjects.push(decrypted[di]);
+            }
+          } catch (e) {}
+        }
+
+        // Old format: sourceUrls array
+        var sourceUrls = episodeData.sourceUrls;
+        if (sourceUrls && Array.isArray(sourceUrls)) {
+          for (var si = 0; si < sourceUrls.length; si++) {
+            sourceObjects.push(sourceUrls[si]);
+          }
+        } else if (sourceUrls && typeof sourceUrls === "string") {
+          // Sometimes sourceUrls is a JSON string
+          try {
+            var parsed = JSON.parse(sourceUrls);
+            if (Array.isArray(parsed)) {
+              for (var pi = 0; pi < parsed.length; pi++) sourceObjects.push(parsed[pi]);
+            }
+          } catch (e) {}
+        }
+
+        // Process each source object
+        for (var si = 0; si < sourceObjects.length; si++) {
+          var src = sourceObjects[si];
           var decoded = this.decryptAllAnimeUrl(src.sourceUrl || "").trim();
           if (!decoded) continue;
-          // Accept both https:// external URLs and /apivtwo/ internal AllAnime CDN paths
+
+          // Accept https:// external URLs and /apivtwo/ internal AllAnime CDN paths
           var isExternal = decoded.startsWith("http");
           var isInternal = decoded.startsWith("/");
           if (!isExternal && !isInternal) continue;
@@ -369,24 +403,12 @@ class DefaultExtension extends MProvider {
 
   // AllAnime internal CDN player.
   // Decoded sourceUrl is a relative path like /apivtwo/clock?id=XXXX.
-  // We fetch /getVersion to find the CDN base endpoint, then hit clock.json.
+  // CDN base is hardcoded as https://allanime.day (confirmed via ani-cli source).
   async extractAllAnimeInternal(url, qualityLabel) {
     var streams = [];
     try {
-      // Try both known AllAnime base domains for /getVersion
-      var endPoint = null;
-      var versionUrls = ["https://allanime.to/getVersion", "https://allmanga.to/getVersion"];
-      for (var vi = 0; vi < versionUrls.length; vi++) {
-        try {
-          var vr = await this.client.get(versionUrls[vi], {
-            "Referer": "https://allmanga.to",
-            "User-Agent": this.ua,
-          });
-          var vd = JSON.parse(vr.body);
-          if (vd && vd.episodeIframeHead) { endPoint = vd.episodeIframeHead; break; }
-        } catch (e) {}
-      }
-      if (!endPoint) return streams;
+      // Hardcoded CDN base — /getVersion no longer returns episodeIframeHead
+      var endPoint = "https://allanime.day";
 
       // Build clock.json URL: relative path → prepend endPoint
       var clockUrl;
@@ -449,6 +471,231 @@ class DefaultExtension extends MProvider {
     } catch (e) {}
     return streams;
   }
+
+  // ── AES-256-CTR crypto (for AllAnime tobeparsed) ───────────────────────────
+
+  // Base64 decode → byte array
+  base64Decode(b64) {
+    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var lookup = {};
+    for (var i = 0; i < 64; i++) lookup[chars[i]] = i;
+    b64 = b64.replace(/[^A-Za-z0-9+/=]/g, "");
+    var out = [];
+    for (var i = 0; i < b64.length; i += 4) {
+      var a = lookup[b64[i]] !== undefined ? lookup[b64[i]] : 0;
+      var b = lookup[b64[i+1]] !== undefined ? lookup[b64[i+1]] : 0;
+      var c = lookup[b64[i+2]] !== undefined ? lookup[b64[i+2]] : 0;
+      var d = lookup[b64[i+3]] !== undefined ? lookup[b64[i+3]] : 0;
+      out.push((a << 2) | (b >> 4));
+      if (b64[i+2] !== "=") out.push(((b & 0xf) << 4) | (c >> 2));
+      if (b64[i+3] !== "=") out.push(((c & 0x3) << 6) | d);
+    }
+    return out;
+  }
+
+  // 32-bit unsigned right-rotate
+  rotr32(x, n) { return ((x >>> n) | (x << (32 - n))) >>> 0; }
+
+  // SHA-256: returns 32 bytes as array
+  sha256bytes(msg) {
+    var K = [
+      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+    ];
+    var H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    var bytes = [];
+    for (var i = 0; i < msg.length; i++) bytes.push(msg.charCodeAt(i) & 0xff);
+    var len = bytes.length;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    var bl = len * 8;
+    bytes.push(0, 0, 0, 0, (bl >>> 24) & 0xff, (bl >>> 16) & 0xff, (bl >>> 8) & 0xff, bl & 0xff);
+    for (var blk = 0; blk < bytes.length; blk += 64) {
+      var W = new Array(64);
+      for (var i = 0; i < 16; i++) {
+        W[i] = ((bytes[blk+i*4]<<24)|(bytes[blk+i*4+1]<<16)|(bytes[blk+i*4+2]<<8)|bytes[blk+i*4+3]) >>> 0;
+      }
+      for (var i = 16; i < 64; i++) {
+        var s0 = this.rotr32(W[i-15],7) ^ this.rotr32(W[i-15],18) ^ (W[i-15] >>> 3);
+        var s1 = this.rotr32(W[i-2],17) ^ this.rotr32(W[i-2],19) ^ (W[i-2] >>> 10);
+        W[i] = (W[i-16] + s0 + W[i-7] + s1) >>> 0;
+      }
+      var a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+      for (var i = 0; i < 64; i++) {
+        var S1 = this.rotr32(e,6) ^ this.rotr32(e,11) ^ this.rotr32(e,25);
+        var ch = ((e & f) ^ (~e & g)) >>> 0;
+        var t1 = (h + S1 + ch + K[i] + W[i]) >>> 0;
+        var S0 = this.rotr32(a,2) ^ this.rotr32(a,13) ^ this.rotr32(a,22);
+        var mj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+        var t2 = (S0 + mj) >>> 0;
+        h=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=b; b=a; a=(t1+t2)>>>0;
+      }
+      H[0]=(H[0]+a)>>>0; H[1]=(H[1]+b)>>>0; H[2]=(H[2]+c)>>>0; H[3]=(H[3]+d)>>>0;
+      H[4]=(H[4]+e)>>>0; H[5]=(H[5]+f)>>>0; H[6]=(H[6]+g)>>>0; H[7]=(H[7]+h)>>>0;
+    }
+    var result = [];
+    for (var i = 0; i < 8; i++) {
+      result.push((H[i]>>>24)&0xff, (H[i]>>>16)&0xff, (H[i]>>>8)&0xff, H[i]&0xff);
+    }
+    return result;
+  }
+
+  // AES S-box (standard)
+  get aesSbox() {
+    return [99,124,119,123,242,107,111,197,48,1,103,43,254,215,171,118,202,130,201,125,250,89,71,240,173,212,162,175,156,164,114,192,183,253,147,38,54,63,247,204,52,165,229,241,113,216,49,21,4,199,35,195,24,150,5,154,7,18,128,226,235,39,178,117,9,131,44,26,27,110,90,160,82,59,214,179,41,227,47,132,83,209,0,237,32,252,177,91,106,203,190,57,74,76,88,207,208,239,170,251,67,77,51,133,69,249,2,127,80,60,159,168,81,163,64,143,146,157,56,245,188,182,218,33,16,255,243,210,205,12,19,236,95,151,68,23,196,167,126,61,100,93,25,115,96,129,79,220,34,42,144,136,70,238,184,20,222,94,11,219,224,50,58,10,73,6,36,92,194,211,172,98,145,149,228,121,231,200,55,109,141,213,78,169,108,86,244,234,101,122,174,8,186,120,37,46,28,166,180,198,232,221,116,31,75,189,139,138,112,62,181,102,72,3,246,14,97,53,87,185,134,193,29,158,225,248,152,17,105,217,142,148,155,30,135,233,206,85,40,223,140,161,137,13,191,230,66,104,65,153,45,15,176,84,187,22];
+  }
+
+  // GF(2^8) multiply by 2
+  aesXtime(x) { return ((x << 1) ^ (x & 0x80 ? 0x1b : 0)) & 0xff; }
+
+  // AES-256 key expansion: 32-byte key → 60 4-byte words
+  aesKeyExpand(keyBytes) {
+    var sb = this.aesSbox;
+    var rc = [0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36];
+    var w = [];
+    for (var i = 0; i < 8; i++) {
+      w.push([keyBytes[i*4], keyBytes[i*4+1], keyBytes[i*4+2], keyBytes[i*4+3]]);
+    }
+    for (var i = 8; i < 60; i++) {
+      var tmp = w[i-1].slice();
+      if (i % 8 === 0) {
+        // RotWord + SubWord + Rcon
+        tmp = [sb[w[i-1][1]] ^ rc[i/8-1], sb[w[i-1][2]], sb[w[i-1][3]], sb[w[i-1][0]]];
+      } else if (i % 8 === 4) {
+        tmp = [sb[tmp[0]], sb[tmp[1]], sb[tmp[2]], sb[tmp[3]]];
+      }
+      w.push([w[i-8][0]^tmp[0], w[i-8][1]^tmp[1], w[i-8][2]^tmp[2], w[i-8][3]^tmp[3]]);
+    }
+    return w;
+  }
+
+  // AES encrypt one 16-byte block (forward cipher, 14 rounds for AES-256)
+  // State layout: s[row][col], input byte (r + 4c) → s[r][c]
+  aesEncryptBlock(inp, w) {
+    var sb = this.aesSbox;
+    var xt = this.aesXtime.bind(this);
+    // Load state column-major
+    var s = [
+      [inp[0],inp[4],inp[8],inp[12]],   // row 0
+      [inp[1],inp[5],inp[9],inp[13]],   // row 1
+      [inp[2],inp[6],inp[10],inp[14]],  // row 2
+      [inp[3],inp[7],inp[11],inp[15]],  // row 3
+    ];
+    // Round 0: AddRoundKey
+    for (var r = 0; r < 4; r++)
+      for (var c = 0; c < 4; c++)
+        s[r][c] ^= w[c][r];
+
+    for (var round = 1; round <= 14; round++) {
+      // SubBytes
+      for (var r = 0; r < 4; r++)
+        for (var c = 0; c < 4; c++)
+          s[r][c] = sb[s[r][c]];
+
+      // ShiftRows: row r shifts left by r
+      for (var r = 1; r < 4; r++) {
+        var tmp = s[r].slice();
+        for (var c = 0; c < 4; c++) s[r][c] = tmp[(c + r) % 4];
+      }
+
+      // MixColumns (skip last round)
+      if (round < 14) {
+        for (var c = 0; c < 4; c++) {
+          var a=s[0][c], b=s[1][c], cc=s[2][c], d=s[3][c];
+          s[0][c] = xt(a) ^ xt(b)^b ^ cc ^ d;
+          s[1][c] = a ^ xt(b) ^ xt(cc)^cc ^ d;
+          s[2][c] = a ^ b ^ xt(cc) ^ xt(d)^d;
+          s[3][c] = xt(a)^a ^ b ^ cc ^ xt(d);
+        }
+      }
+
+      // AddRoundKey
+      var ki = round * 4;
+      for (var r = 0; r < 4; r++)
+        for (var c = 0; c < 4; c++)
+          s[r][c] ^= w[ki+c][r];
+    }
+
+    // Write output column-major
+    var out = new Array(16);
+    for (var r = 0; r < 4; r++)
+      for (var c = 0; c < 4; c++)
+        out[r + 4*c] = s[r][c];
+    return out;
+  }
+
+  // AES-256-CTR decrypt: key and counter are byte arrays
+  aesCtrDecrypt(ciphertext, keyBytes, counter) {
+    var w = this.aesKeyExpand(keyBytes);
+    var ctr = counter.slice();
+    var out = [];
+    for (var i = 0; i < ciphertext.length; i += 16) {
+      var ks = this.aesEncryptBlock(ctr, w);
+      for (var j = 0; j < 16 && i+j < ciphertext.length; j++) {
+        out.push(ciphertext[i+j] ^ ks[j]);
+      }
+      // Increment counter big-endian (last 4 bytes)
+      for (var k = 15; k >= 12; k--) {
+        ctr[k] = (ctr[k] + 1) & 0xff;
+        if (ctr[k] !== 0) break;
+      }
+    }
+    return out;
+  }
+
+  // Decode AllAnime tobeparsed AES-256-CTR blob.
+  // Format: [version(1)][nonce(12)][ciphertext(N)][authTag(16)]
+  // Key: SHA-256("Xot36i3lK3:v1")
+  // Counter: nonce ++ 0x00000002 (big-endian)
+  decodeTobeparsed(b64) {
+    try {
+      var bytes = this.base64Decode(b64);
+      if (bytes.length < 30) return [];
+
+      var nonce = bytes.slice(1, 13);            // 12-byte IV
+      var ciphertext = bytes.slice(13, bytes.length - 16); // skip auth tag at end
+
+      // Counter = nonce + 0x00000002 (16 bytes total)
+      var counter = nonce.slice();
+      counter.push(0, 0, 0, 2);
+
+      // Derive key
+      var keyBytes = this.sha256bytes("Xot36i3lK3:v1");
+
+      // Decrypt
+      var plainBytes = this.aesCtrDecrypt(ciphertext, keyBytes, counter);
+      var plain = "";
+      for (var i = 0; i < plainBytes.length; i++) {
+        plain += String.fromCharCode(plainBytes[i]);
+      }
+
+      // Extract {sourceUrl, sourceName} pairs from decrypted JSON
+      var sources = [];
+      var seen = {};
+      // Pattern 1: sourceUrl before sourceName
+      var rx1 = /"sourceUrl"\s*:\s*"([^"]+)"[^{}]*?"sourceName"\s*:\s*"([^"]+)"/g;
+      var m;
+      while ((m = rx1.exec(plain)) !== null) {
+        if (!seen[m[1]]) { seen[m[1]] = true; sources.push({ sourceUrl: m[1], sourceName: m[2] }); }
+      }
+      // Pattern 2: sourceName before sourceUrl
+      var rx2 = /"sourceName"\s*:\s*"([^"]+)"[^{}]*?"sourceUrl"\s*:\s*"([^"]+)"/g;
+      while ((m = rx2.exec(plain)) !== null) {
+        if (!seen[m[2]]) { seen[m[2]] = true; sources.push({ sourceUrl: m[2], sourceName: m[1] }); }
+      }
+      return sources;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // ── External extractors ────────────────────────────────────────────────────
 
   async extractStreamwish(url, qualityLabel) {
     var streams = [];
