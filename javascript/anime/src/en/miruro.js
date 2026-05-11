@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -320,7 +320,11 @@ class DefaultExtension extends MProvider {
         for (var si = 0; si < sourceUrls.length; si++) {
           var src = sourceUrls[si];
           var decoded = this.decryptAllAnimeUrl(src.sourceUrl || "").trim();
-          if (!decoded || !decoded.startsWith("http")) continue;
+          if (!decoded) continue;
+          // Accept both https:// external URLs and /apivtwo/ internal AllAnime CDN paths
+          var isExternal = decoded.startsWith("http");
+          var isInternal = decoded.startsWith("/");
+          if (!isExternal && !isInternal) continue;
 
           var serverName = src.sourceName || "Server";
           var qualityLabel = translationType.toUpperCase() + " - " + serverName;
@@ -340,6 +344,10 @@ class DefaultExtension extends MProvider {
 
   async extractFromUrl(url, qualityLabel) {
     try {
+      // Internal AllAnime CDN paths (relative: /apivtwo/clock?id=...)
+      if (url.startsWith("/") || url.includes("/apivtwo/")) {
+        return await this.extractAllAnimeInternal(url, qualityLabel);
+      }
       var lurl = url.toLowerCase();
       if (lurl.includes("dood") || lurl.includes("d000")) {
         return await this.extractDoodstream(url, qualityLabel);
@@ -357,6 +365,89 @@ class DefaultExtension extends MProvider {
     } catch (e) {
       return [];
     }
+  }
+
+  // AllAnime internal CDN player.
+  // Decoded sourceUrl is a relative path like /apivtwo/clock?id=XXXX.
+  // We fetch /getVersion to find the CDN base endpoint, then hit clock.json.
+  async extractAllAnimeInternal(url, qualityLabel) {
+    var streams = [];
+    try {
+      // Try both known AllAnime base domains for /getVersion
+      var endPoint = null;
+      var versionUrls = ["https://allanime.to/getVersion", "https://allmanga.to/getVersion"];
+      for (var vi = 0; vi < versionUrls.length; vi++) {
+        try {
+          var vr = await this.client.get(versionUrls[vi], {
+            "Referer": "https://allmanga.to",
+            "User-Agent": this.ua,
+          });
+          var vd = JSON.parse(vr.body);
+          if (vd && vd.episodeIframeHead) { endPoint = vd.episodeIframeHead; break; }
+        } catch (e) {}
+      }
+      if (!endPoint) return streams;
+
+      // Build clock.json URL: relative path → prepend endPoint
+      var clockUrl;
+      if (url.startsWith("http")) {
+        clockUrl = url.replace("/clock?", "/clock.json?");
+      } else {
+        clockUrl = endPoint + url.replace("/clock?", "/clock.json?");
+      }
+
+      var cr = await this.client.get(clockUrl, {
+        "Referer": "https://allmanga.to",
+        "User-Agent": this.ua,
+        "Origin": "https://allmanga.to",
+      });
+      var linkData = JSON.parse(cr.body);
+      var links = linkData.links || [];
+
+      for (var li = 0; li < links.length; li++) {
+        var link = links[li];
+        var subtitles = [];
+        if (link.subtitles && link.subtitles.length > 0) {
+          for (var subi = 0; subi < link.subtitles.length; subi++) {
+            var sub = link.subtitles[subi];
+            subtitles.push({ file: sub.src || sub.file || "", label: sub.lang || sub.label || "Unknown" });
+          }
+        }
+        var hlsHeaders = { "User-Agent": this.ua, "Origin": endPoint, "Referer": endPoint + "/" };
+
+        if (link.hls && link.link) {
+          try {
+            var hlsStreams = await this.parseHlsMaster(link.link, qualityLabel, hlsHeaders);
+            if (hlsStreams.length > 0) {
+              for (var hsi = 0; hsi < hlsStreams.length; hsi++) {
+                hlsStreams[hsi].subtitles = subtitles;
+                streams.push(hlsStreams[hsi]);
+              }
+            } else {
+              streams.push({
+                url: link.link, originalUrl: link.link,
+                quality: (link.resolutionStr || "Auto") + " [" + qualityLabel + "]",
+                headers: hlsHeaders, subtitles: subtitles,
+              });
+            }
+          } catch (e) {
+            streams.push({
+              url: link.link, originalUrl: link.link,
+              quality: (link.resolutionStr || "Auto") + " [" + qualityLabel + "]",
+              headers: hlsHeaders, subtitles: subtitles,
+            });
+          }
+        } else if (link.mp4 && link.link) {
+          streams.push({
+            url: link.link, originalUrl: link.link,
+            quality: (link.resolutionStr || "Auto") + " [" + qualityLabel + "]",
+            headers: { "User-Agent": this.ua, "Referer": endPoint + "/" },
+            subtitles: subtitles,
+          });
+        }
+      }
+    } catch (e) {}
+    return streams;
   }
 
   async extractStreamwish(url, qualityLabel) {
