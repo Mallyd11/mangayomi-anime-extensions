@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -23,6 +23,45 @@ const mangayomiSources = [
   },
 ];
 
+// ─── GraphQL queries ───────────────────────────────────────────────────────────
+
+// Compact query used for all list/search pages (matches exact query in HAR)
+var PAGE_MEDIA_QUERY = [
+  "query PageMedia(",
+  "$page:Int,$perPage:Int,$search:String,",
+  "$genres:[String],$format:MediaFormat,",
+  "$status:MediaStatus,$minScore:Int,$sort:[MediaSort]",
+  "){Page(page:$page,perPage:$perPage){",
+  "pageInfo{currentPage hasNextPage lastPage total}",
+  "media(type:ANIME,isAdult:false,search:$search,",
+  "genre_in:$genres,format:$format,status:$status,",
+  "averageScore_greater:$minScore,sort:$sort){",
+  "id idMal title{romaji english native}",
+  "description(asHtml:false)",
+  "coverImage{extraLarge large medium}",
+  "bannerImage episodes format duration",
+  "averageScore genres status season seasonYear",
+  "startDate{year month day} endDate{year month day}",
+  "studios{nodes{name isAnimationStudio}}",
+  "}}}"
+].join("");
+
+// Compact query for single-anime detail by AniList ID
+var MEDIA_DETAIL_QUERY = [
+  "query MediaDetail($id:Int){",
+  "Media(id:$id,type:ANIME){",
+  "id idMal title{romaji english native}",
+  "description(asHtml:false)",
+  "coverImage{extraLarge large medium}",
+  "bannerImage episodes format duration",
+  "averageScore genres status season seasonYear",
+  "startDate{year month day} endDate{year month day}",
+  "studios{nodes{name isAnimationStudio}}",
+  "}}"
+].join("");
+
+// ─── Extension ────────────────────────────────────────────────────────────────
+
 class DefaultExtension extends MProvider {
   constructor() {
     super();
@@ -33,36 +72,40 @@ class DefaultExtension extends MProvider {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
   }
 
-  get headers() {
+  get gqlHeaders() {
     return {
       "User-Agent": this.ua,
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "Origin": this.source.baseUrl,
       "Referer": this.source.baseUrl + "/",
     };
   }
 
-  // Calls /api/v2/hianime{path} and returns json.data
-  async apiGet(path) {
-    var url = this.source.baseUrl + "/api/v2/hianime" + path;
-    var res = await this.client.get(url, this.headers);
+  // POST to the site's AniList GraphQL proxy and return json.data
+  async gql(query, variables) {
+    var res = await this.client.post(
+      this.source.baseUrl + "/api/v2/anilist/graphql",
+      this.gqlHeaders,
+      JSON.stringify({ query: query, variables: variables })
+    );
     if (res.statusCode !== 200) throw new Error("HTTP " + res.statusCode);
     var json = JSON.parse(res.body);
-    if (!json || json.status !== 200) throw new Error("API error: " + res.body);
+    if (json.errors && json.errors.length) throw new Error(json.errors[0].message);
     return json.data;
   }
 
-  parseAnimeList(animes) {
+  // Map AniList media objects → Mangayomi list items
+  parseMedia(media) {
     var list = [];
-    (animes || []).forEach(function(a) {
-      var name = a.name || a.jname || "";
-      var id = a.id || "";
-      var imageUrl = a.poster || "";
-      if (name && id) {
-        list.push({
-          name: name,
-          link: id,
-          imageUrl: imageUrl,
-        });
-      }
+    (media || []).forEach(function(m) {
+      var name = (m.title && (m.title.english || m.title.romaji)) || "";
+      if (!name || !m.id) return;
+      list.push({
+        name: name,
+        link: String(m.id),
+        imageUrl: (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "",
+      });
     });
     return list;
   }
@@ -72,78 +115,82 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var data = await this.apiGet("/search?q=&sort=most-watched&page=" + page);
+    var data = await this.gql(PAGE_MEDIA_QUERY, {
+      page: page,
+      perPage: 24,
+      sort: ["POPULARITY_DESC"],
+    });
+    var p = (data && data.Page) || {};
     return {
-      list: this.parseAnimeList(data.animes),
-      hasNextPage: data.hasNextPage || false,
+      list: this.parseMedia(p.media),
+      hasNextPage: (p.pageInfo && p.pageInfo.hasNextPage) || false,
     };
   }
 
   async getLatestUpdates(page) {
-    var data = await this.apiGet("/search?q=&sort=recently-updated&page=" + page);
+    var data = await this.gql(PAGE_MEDIA_QUERY, {
+      page: page,
+      perPage: 24,
+      sort: ["UPDATED_AT_DESC"],
+    });
+    var p = (data && data.Page) || {};
     return {
-      list: this.parseAnimeList(data.animes),
-      hasNextPage: data.hasNextPage || false,
+      list: this.parseMedia(p.media),
+      hasNextPage: (p.pageInfo && p.pageInfo.hasNextPage) || false,
     };
   }
 
   async search(query, page, filters) {
-    var data = await this.apiGet(
-      "/search?q=" + encodeURIComponent(query) + "&page=" + page
-    );
+    var data = await this.gql(PAGE_MEDIA_QUERY, {
+      page: page,
+      perPage: 24,
+      search: query,
+      sort: ["SEARCH_MATCH"],
+    });
+    var p = (data && data.Page) || {};
     return {
-      list: this.parseAnimeList(data.animes),
-      hasNextPage: data.hasNextPage || false,
+      list: this.parseMedia(p.media),
+      hasNextPage: (p.pageInfo && p.pageInfo.hasNextPage) || false,
     };
   }
 
+  // AniList status → Mangayomi status code
   statusCode(s) {
-    s = (s || "").toLowerCase();
-    if (s.includes("finished") || s.includes("completed")) return 1;
-    if (s.includes("not yet") || s.includes("upcoming")) return 4;
-    if (s.includes("airing") || s.includes("ongoing") || s.includes("releasing")) return 0;
-    return 5;
+    switch ((s || "").toUpperCase()) {
+      case "RELEASING":         return 0;
+      case "FINISHED":          return 1;
+      case "NOT_YET_RELEASED":  return 4;
+      case "CANCELLED":         return 5;
+      default:                  return 5;
+    }
   }
 
   async getDetail(url) {
-    // url is either a bare anime id ("one-piece-100") or a full URL —
-    // strip everything before the last path segment just in case.
-    var animeId = url
-      .replace(/^https?:\/\/[^/]+/, "")
-      .replace(/^\/anime\//, "")
-      .replace(/[?#].*$/, "")
-      .replace(/^.*\//, "");
-    if (!animeId) animeId = url;
+    // url is a bare AniList ID ("16498") or a full detail URL ending in the ID
+    var anilistId = parseInt(url.replace(/[^0-9]/g, ""), 10);
+    if (!anilistId) throw new Error("Cannot parse AniList ID from: " + url);
 
-    var data = await this.apiGet("/anime/" + animeId);
-    var animeObj = data.anime || {};
-    var info = animeObj.info || {};
-    var moreInfo = animeObj.moreInfo || {};
+    var data = await this.gql(MEDIA_DETAIL_QUERY, { id: anilistId });
+    var m = (data && data.Media) || {};
 
-    var name = info.name || info.jname || "";
-    var imageUrl = info.poster || "";
-    var description = info.description || "";
-    var genre = moreInfo.genres || [];
-    var status = this.statusCode(moreInfo.status || "");
+    var name = (m.title && (m.title.english || m.title.romaji)) || "";
+    var imageUrl = (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "";
+    var description = (m.description || "").replace(/<[^>]*>/g, "").replace(/\n+/g, "\n").trim();
+    var genre = m.genres || [];
+    var status = this.statusCode(m.status);
+    var epCount = m.episodes || 0;
 
+    // Build episode list from AniList episode count
     var chapters = [];
-    try {
-      var epData = await this.apiGet("/anime/" + animeId + "/episodes");
-      var episodes = epData.episodes || [];
-      for (var i = 0; i < episodes.length; i++) {
-        var ep = episodes[i];
-        var epNum = ep.number || String(i + 1);
-        var epTitle = ep.title || "";
-        var epName = "Episode " + epNum;
-        if (epTitle) epName += ": " + epTitle;
-        chapters.push({
-          name: epName,
-          url: ep.episodeId,
-          isFiller: ep.isFiller || false,
-        });
-      }
-      chapters.reverse();
-    } catch (e) {}
+    for (var i = 1; i <= epCount; i++) {
+      chapters.push({
+        name: "Episode " + i,
+        // encode: anilistId|episodeNumber for getVideoList
+        url: anilistId + "|" + i,
+      });
+    }
+    // Reverse so newest episode is at the top (Mangayomi convention)
+    chapters.reverse();
 
     return {
       name: name,
@@ -151,79 +198,18 @@ class DefaultExtension extends MProvider {
       description: description,
       genre: genre,
       status: status,
-      link: this.source.baseUrl + "/anime/" + animeId,
+      link: this.source.baseUrl + "/anime/" + anilistId,
       chapters: chapters,
     };
   }
 
   async getVideoList(url) {
-    // url is an episodeId like "one-piece-100?ep=12345"
-    var streams = [];
-
-    var serverData;
-    try {
-      serverData = await this.apiGet(
-        "/episode/servers?animeEpisodeId=" + encodeURIComponent(url)
-      );
-    } catch (e) {
-      return streams;
-    }
-    if (!serverData) return streams;
-
-    var pref = "sub";
-    try {
-      pref = new SharedPreferences().get("myronix_pref_audio") || "sub";
-    } catch (e) {}
-
-    var categories = pref === "dub" ? ["dub", "sub"] : ["sub", "dub"];
-
-    for (var ci = 0; ci < categories.length; ci++) {
-      var category = categories[ci];
-      var categoryServers = serverData[category] || [];
-
-      for (var si = 0; si < categoryServers.length; si++) {
-        var serverName = categoryServers[si].serverName;
-        if (!serverName) continue;
-
-        try {
-          var srcData = await this.apiGet(
-            "/episode/sources?animeEpisodeId=" + encodeURIComponent(url) +
-            "&server=" + encodeURIComponent(serverName) +
-            "&category=" + category
-          );
-          if (!srcData || !srcData.sources) continue;
-
-          var streamHeaders = {
-            "User-Agent": this.ua,
-            "Referer": this.source.baseUrl + "/",
-          };
-
-          var subtitles = [];
-          if (Array.isArray(srcData.tracks)) {
-            srcData.tracks.forEach(function(t) {
-              if (t.file && t.kind !== "thumbnails") {
-                subtitles.push({ file: t.file, label: t.label || "Unknown" });
-              }
-            });
-          }
-
-          var sources = Array.isArray(srcData.sources) ? srcData.sources : [];
-          sources.forEach(function(src) {
-            var srcUrl = src.url || src.file;
-            if (!srcUrl) return;
-            streams.push({
-              url: srcUrl,
-              originalUrl: srcUrl,
-              quality: serverName + " [" + category.toUpperCase() + "]",
-              headers: streamHeaders,
-              subtitles: subtitles,
-            });
-          });
-        } catch (e) {}
-      }
-    }
-
-    return streams;
+    // url format: "{anilistId}|{episodeNumber}"
+    // The site proxies streaming through the aniwatch-api backend.
+    // A second HAR captured from a /watch page is needed to confirm the exact
+    // streaming endpoint and ID-mapping strategy. Returning empty for now so
+    // the catalog and detail views work while streaming is investigated.
+    return [];
   }
 
   getFilterList() {
@@ -231,17 +217,6 @@ class DefaultExtension extends MProvider {
   }
 
   getSourcePreferences() {
-    return [
-      {
-        key: "myronix_pref_audio",
-        listPreference: {
-          title: "Preferred audio",
-          summary: "Which audio track appears first for streaming",
-          valueIndex: 0,
-          entries: ["Sub", "Dub"],
-          entryValues: ["sub", "dub"],
-        },
-      },
-    ];
+    return [];
   }
 }
