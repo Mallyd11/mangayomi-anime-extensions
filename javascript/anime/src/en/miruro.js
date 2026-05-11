@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.0.8",
+    "version": "2.1.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -24,8 +24,8 @@ const mangayomiSources = [
   },
 ];
 
-// Metadata: Anilist GraphQL API
-// Streaming: HiAnime (hianime.ms) via megaplay.buzz
+// Metadata: AniList GraphQL API
+// Streaming:  AllAnime (api.allanime.day) — GraphQL + XOR-decoded source URLs
 class DefaultExtension extends MProvider {
   constructor() {
     super();
@@ -36,19 +36,11 @@ class DefaultExtension extends MProvider {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
   }
 
-  get hiAnimeBase() {
-    return "https://hianime.ms";
-  }
-
-  get hiHeaders() {
-    return { "User-Agent": this.ua, "Referer": this.hiAnimeBase + "/" };
-  }
-
   getPreference(key) {
     return new SharedPreferences().get(key);
   }
 
-  // ── Anilist GraphQL ──────────────────────────────────────────────────────────
+  // ── AniList GraphQL ────────────────────────────────────────────────────────
 
   async anilist(query, variables) {
     var res = await this.client.post(
@@ -135,32 +127,28 @@ class DefaultExtension extends MProvider {
     return this.parseAnilistPage(data);
   }
 
-  // ── HiAnime episode lookup ──────────────────────────────────────────────────
+  // ── AllAnime API ───────────────────────────────────────────────────────────
 
-  buildWatchUrl(slug, n) {
-    var d = slug.lastIndexOf("-");
-    if (d < 0) return null;
-    return "/watch-" + slug.substring(0, d) + "-episode-" + (n || 1) + "-" + slug.substring(d + 1);
+  async allAnimeRequest(gqlQuery, variables) {
+    var params = "?variables=" + encodeURIComponent(JSON.stringify(variables)) +
+                 "&query=" + encodeURIComponent(gqlQuery);
+    var res = await this.client.get("https://api.allanime.day/api" + params, {
+      "Referer": "https://allmanga.to",
+      "User-Agent": this.ua,
+    });
+    return JSON.parse(res.body);
   }
 
-  decodeStreamToken(token) {
-    if (!token) return null;
-    try {
-      var t = token.replace(/-/g, "+").replace(/_/g, "/");
-      while (t.length % 4 !== 0) t += "=";
-      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      var out = "";
-      t = t.replace(/[^A-Za-z0-9+/]/g, "");
-      for (var i = 0; i < t.length; i += 4) {
-        var n = (chars.indexOf(t[i]) << 18) | (chars.indexOf(t[i + 1]) << 12) |
-                ((chars.indexOf(t[i + 2]) & 63) << 6) | (chars.indexOf(t[i + 3]) & 63);
-        out += String.fromCharCode((n >> 16) & 255);
-        if (chars.indexOf(t[i + 2]) !== -1) out += String.fromCharCode((n >> 8) & 255);
-        if (chars.indexOf(t[i + 3]) !== -1) out += String.fromCharCode(n & 255);
-      }
-      var c = out.indexOf(":");
-      return c > 0 ? out.substring(0, c) : (out || null);
-    } catch (e) { return null; }
+  // XOR decode AllAnime's obfuscated source URLs.
+  // Encrypted strings start with '-'; the hex payload follows the last '-'.
+  decryptAllAnimeUrl(str) {
+    if (!str) return "";
+    if (str.startsWith("-")) {
+      var hex = str.substring(str.lastIndexOf("-") + 1);
+      var bytes = hex.match(/.{1,2}/g) || [];
+      return bytes.map(function(h) { return String.fromCharCode(parseInt(h, 16) ^ 56); }).join("");
+    }
+    return str;
   }
 
   scoreTitle(a, b) {
@@ -169,170 +157,93 @@ class DefaultExtension extends MProvider {
     var longer = Math.max(a.length, b.length);
     var shorter = Math.min(a.length, b.length);
     var ratio = shorter / longer;
-    // startsWith: one title is a prefix of the other (e.g. "Nippon Sangoku" vs
-    // "Nippon Sangoku: The Three Nations of the Crimson Sun"). Always at least 1.
     if (a.startsWith(b) || b.startsWith(a)) return ratio >= 0.5 ? 2 : 1;
     if (a.includes(b) || b.includes(a)) return ratio >= 0.65 ? 1 : 0;
     return 0;
   }
 
-  slugFromHref(href) {
-    if (!href) return "";
-    if (href.includes("/details/")) {
-      return href.split("/details/")[1].split("?")[0].split("#")[0];
-    }
-    var m = href.match(/\/watch-(.+)-episode-\d+-([\w]+)/);
-    if (m) return m[1] + "-" + m[2];
-    return "";
-  }
-
-  async findHiAnimeSlug(englishTitle, romajiTitle) {
+  async findAllAnimeShow(englishTitle, romajiTitle) {
     var self = this;
     var norm = function(s) { return (s || "").toLowerCase().replace(/[^a-z0-9]/g, ""); };
     var titles = [];
     if (englishTitle) titles.push(englishTitle);
     if (romajiTitle && romajiTitle !== englishTitle) titles.push(romajiTitle);
 
+    var gqlQuery = "query($search: SearchInput, $limit: Int, $countryOrigin: VaildCountryOriginEnumType) { shows(search: $search, limit: $limit, countryOrigin: $countryOrigin) { edges { _id name englishName nativeName } } }";
+
     for (var ti = 0; ti < titles.length; ti++) {
       var title = titles[ti];
       var normTitle = norm(title);
       if (!normTitle) continue;
-
       try {
-        var res = await self.client.get(
-          self.hiAnimeBase + "/search?keyword=" + encodeURIComponent(title),
-          self.hiHeaders
-        );
-        var doc = new Document(res.body);
-        var bestSlug = null, bestScore = 0;
-
-        // ── Method A: .flw-item card structure (old HiAnime layout) ──────────
-        var cards = doc.select(".flw-item");
-        for (var ci = 0; ci < cards.length && ci < 10; ci++) {
-          var card = cards[ci];
-          var aEl = card.selectFirst("a[href*='/details/'], .film-poster-ahref");
-          if (!aEl) continue;
-          var href = aEl.attr("href") || "";
-          var slug = self.slugFromHref(href);
-          if (!slug) continue;
-          var nameEl = card.selectFirst(".dynamic-name, .film-name a, a[href*='/details/']");
-          var t1 = nameEl ? (nameEl.attr("data-ename") || nameEl.attr("data-jname") || nameEl.attr("title") || "").trim() : "";
-          var t2 = nameEl ? (nameEl.text || "").trim() : "";
-          var score = Math.max(
-            t1 ? self.scoreTitle(norm(t1), normTitle) : 0,
-            t2 ? self.scoreTitle(norm(t2), normTitle) : 0
-          );
-          if (score > bestScore) { bestScore = score; bestSlug = slug; }
-          if (score === 3) break;
-        }
-
-        // ── Method B: plain a[href*='/details/'] links (new / simplified layout) ─
-        // WebFetch confirmed this structure exists even without .flw-item classes.
-        if (bestScore < 1) {
-          var seen = {};
-          var links = doc.select("a[href*='/details/']");
-          for (var li = 0; li < links.length && li < 20; li++) {
-            var lnk = links[li];
-            var lhref = lnk.attr("href") || "";
-            var lslug = self.slugFromHref(lhref);
-            if (!lslug || seen[lslug]) continue;
-            seen[lslug] = true;
-            // Gather every possible title hint from the anchor
-            var lTitle = (lnk.attr("data-ename") || lnk.attr("data-jname") ||
-                          lnk.attr("title") || lnk.text || "").trim();
-            if (!lTitle) continue;
-            var lscore = self.scoreTitle(norm(lTitle), normTitle);
-            if (lscore > bestScore) { bestScore = lscore; bestSlug = lslug; }
-            if (lscore === 3) break;
+        var data = await self.allAnimeRequest(gqlQuery, {
+          search: { query: title, allowAdult: false, allowUnknown: false },
+          countryOrigin: "ALL",
+          limit: 10,
+        });
+        var edges = (data.data && data.data.shows && data.data.shows.edges) || [];
+        var bestId = null, bestScore = 0;
+        for (var i = 0; i < edges.length; i++) {
+          var edge = edges[i];
+          var candidates = [edge.name, edge.englishName, edge.nativeName].filter(Boolean);
+          for (var ci = 0; ci < candidates.length; ci++) {
+            var score = self.scoreTitle(norm(candidates[ci]), normTitle);
+            if (score > bestScore) { bestScore = score; bestId = edge._id; }
+            if (score === 3) return edge._id;
           }
         }
-
-        if (bestScore >= 1 && bestSlug) return bestSlug;
+        if (bestScore >= 1 && bestId) return bestId;
       } catch (e) {}
     }
     return null;
   }
 
-  parseEpisodeTokens(doc) {
+  async getAllAnimeEpisodes(showId) {
+    var gqlQuery = "query($id: String!) { show(_id: $id) { availableEpisodesDetail } }";
+    var data = await this.allAnimeRequest(gqlQuery, { id: showId });
+    var show = data.data && data.data.show;
+    if (!show || !show.availableEpisodesDetail) return [];
+
+    var subEps = show.availableEpisodesDetail.sub || [];
+    var dubEps = show.availableEpisodesDetail.dub || [];
+    var dubSet = {};
+    for (var d = 0; d < dubEps.length; d++) dubSet[dubEps[d]] = true;
+
     var chapters = [];
-    // Select episode anchors that have a stream token OR a data-id.
-    // Older/completed anime use data-stream-token (decodes to megaplay realEpId).
-    // Newer/ongoing anime may only expose data-id; we pass it through directly
-    // to megaplay.buzz as a best-effort fallback.
-    var anchors = doc.select("a[data-stream-token], a[data-id][data-number]");
-    for (var i = 0; i < anchors.length; i++) {
-      var ep = anchors[i];
-      var token = ep.attr("data-stream-token");
-      var realEpId = token ? this.decodeStreamToken(token) : null;
-      // Fallback: use raw data-id value (may or may not work with megaplay)
-      if (!realEpId) realEpId = (ep.attr("data-id") || "").trim() || null;
-      if (!realEpId) continue;
-      var epNum = ep.attr("data-number") || ep.attr("data-episode") || String(i + 1);
-      var hasSub = ep.attr("data-has-sub") !== "0";  // default true
-      var hasDub = ep.attr("data-has-dub") === "1";
-      var titleSpan = ep.selectFirst(".ws-ep__title, .ep-name, .ep-title");
-      var epTitle = titleSpan ? titleSpan.text.trim() : "";
-      // Do NOT add [Sub/Dub] to the label — HiAnime sets data-has-dub at show level,
-      // so it shows "1" even for episodes whose dub hasn't been uploaded yet.
-      var label = "E" + epNum + (epTitle ? ": " + epTitle : "");
+    var seen = {};
+
+    for (var si = 0; si < subEps.length; si++) {
+      var ep = subEps[si];
+      if (seen[ep]) continue;
+      seen[ep] = true;
+      var hasDub = !!dubSet[ep];
       chapters.push({
-        name: label,
-        url: realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0"),
+        name: "Episode " + ep,
+        url: JSON.stringify({ showId: showId, ep: ep, hasSub: true, hasDub: hasDub }),
         isFiller: false,
       });
     }
+
+    // Dub-only episodes not in the sub list
+    for (var di = 0; di < dubEps.length; di++) {
+      var dep = dubEps[di];
+      if (seen[dep]) continue;
+      seen[dep] = true;
+      chapters.push({
+        name: "Episode " + dep + " [Dub]",
+        url: JSON.stringify({ showId: showId, ep: dep, hasSub: false, hasDub: true }),
+        isFiller: false,
+      });
+    }
+
     return chapters;
   }
 
-  async getHiAnimeEpisodes(slug) {
-    var lastDash = slug.lastIndexOf("-");
-    if (lastDash < 0) return [];
-    var hiAnimeId = slug.substring(lastDash + 1);
-    var watchPath = this.buildWatchUrl(slug, 1);
-    var watchUrl = watchPath ? this.hiAnimeBase + watchPath : this.hiAnimeBase;
-
-    // HiAnime loads episode tokens via AJAX — must send X-Requested-With header.
-    // IDs can be numeric ("72553") or alphanumeric ("72qpm") — try both endpoints
-    // regardless of format. Do NOT check statusCode: Mangayomi's client.get() does
-    // not reliably expose it; just try to parse whatever body is returned.
-    if (hiAnimeId) {
-      var ajaxHeaders = {
-        "User-Agent": this.ua,
-        "Referer": watchUrl,
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "application/json, text/javascript, */*",
-      };
-      var ajaxPaths = [
-        "/ajax/v2/episode/list/" + hiAnimeId,
-        "/ajax/episode/list/" + hiAnimeId,
-      ];
-      for (var p = 0; p < ajaxPaths.length; p++) {
-        try {
-          var apiRes = await this.client.get(this.hiAnimeBase + ajaxPaths[p], ajaxHeaders);
-          if (apiRes && apiRes.body) {
-            var apiData = JSON.parse(apiRes.body);
-            if (apiData && apiData.html) {
-              var chapters = this.parseEpisodeTokens(new Document(apiData.html));
-              if (chapters.length > 0) return chapters;
-            }
-          }
-        } catch (e) {}
-      }
-    }
-
-    // Fallback: watch page (works if Mangayomi's client executes JS)
-    if (!watchPath) return [];
-    try {
-      var res = await this.client.get(watchUrl, this.hiHeaders);
-      return this.parseEpisodeTokens(new Document(res.body));
-    } catch (e) { return []; }
-  }
-
-  // ── Anime detail ─────────────────────────────────────────────────────────────
+  // ── Anime detail ───────────────────────────────────────────────────────────
 
   async getDetail(url) {
     var animeId = parseInt(url.replace(/\D/g, ""), 10);
-    if (!animeId) throw new Error("Invalid Anilist ID: " + url);
+    if (!animeId) throw new Error("Invalid AniList ID: " + url);
 
     var q = "query($id:Int){Media(id:$id,type:ANIME){id title{romaji english native userPreferred}coverImage{large extraLarge}description status genres episodes format}}";
     var data = await this.anilist(q, { id: animeId });
@@ -344,121 +255,278 @@ class DefaultExtension extends MProvider {
     var status = this.anilistStatusCode(m.status);
     var genre = m.genres || [];
 
-    var slug = await this.findHiAnimeSlug(m.title.english, m.title.romaji);
-    var chapters = slug ? await this.getHiAnimeEpisodes(slug) : [];
+    var chapters = [];
+    try {
+      var showId = await this.findAllAnimeShow(m.title.english, m.title.romaji);
+      if (showId) {
+        chapters = await this.getAllAnimeEpisodes(showId);
+      }
+    } catch (e) {}
 
+    // Fallback: generate placeholder list from AniList episode count
     if (chapters.length === 0 && m.episodes) {
       for (var i = 1; i <= m.episodes; i++) {
-        chapters.push({ name: "Episode " + i, url: "unavailable|0|0", isFiller: false });
+        chapters.push({ name: "Episode " + i, url: "unavailable", isFiller: false });
       }
     }
 
     chapters.reverse();
-    return { name, imageUrl, description, genre, status, link: this.source.baseUrl + "/info/" + animeId, chapters };
+    return {
+      name, imageUrl, description, genre, status,
+      link: this.source.baseUrl + "/info/" + animeId,
+      chapters,
+    };
   }
 
-  // ── Streaming (megaplay.buzz) ────────────────────────────────────────────────
+  // ── Streaming ──────────────────────────────────────────────────────────────
 
-  async getMegaplayDataId(realEpId, audioType) {
-    var url = "https://megaplay.buzz/stream/s-2/" + realEpId + "/" + audioType;
-    try {
-      var res = await this.client.get(url, { "User-Agent": this.ua, "Referer": this.hiAnimeBase + "/" });
-      if (res.body.indexOf("File not found") >= 0 || res.body.indexOf("Error - MegaPlay") >= 0) return null;
-      var doc = new Document(res.body);
-      var el = doc.selectFirst("#megaplay-player[data-id]");
-      if (el) return { dataId: el.attr("data-id"), refererUrl: url };
-      var match = res.body.match(/id="megaplay-player"[^>]*data-id="(\d+)"/);
-      if (match) return { dataId: match[1], refererUrl: url };
-    } catch (e) {}
-    return null;
-  }
+  async getVideoList(url) {
+    if (url === "unavailable") return [];
 
-  async resolveHlsPlaylist(playlistUrl, headers) {
-    try {
-      var res = await this.client.get(playlistUrl, headers);
-      if (!res || !res.body) return { kind: "fetch-failed" };
-      var body = res.body;
-      if (body.indexOf("#EXTINF") >= 0 && body.indexOf("#EXT-X-STREAM-INF") < 0) return { kind: "flat" };
-      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return { kind: "empty-master" };
-      var baseDir = playlistUrl.substring(0, playlistUrl.lastIndexOf("/") + 1);
-      var variants = [];
-      var lines = body.split("\n");
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
-        var resM = line.match(/RESOLUTION=(\d+)x(\d+)/);
-        var bwM = line.match(/BANDWIDTH=(\d+)/);
-        for (var j = i + 1; j < lines.length; j++) {
-          var u = lines[j].trim();
-          if (!u || u[0] === "#") continue;
-          variants.push({
-            url: u.indexOf("http") === 0 ? u : baseDir + u,
-            label: resM ? resM[2] + "p" : (bwM ? Math.round(bwM[1] / 1000) + "kbps" : "Auto"),
-          });
-          break;
-        }
-      }
-      if (variants.length === 0) return { kind: "empty-master" };
-      variants.sort(function(a, b) { return (parseInt(b.label) || 0) - (parseInt(a.label) || 0); });
-      return { kind: "master", variants: variants };
-    } catch (e) { return { kind: "fetch-failed" }; }
-  }
+    var info;
+    try { info = JSON.parse(url); } catch (e) { return []; }
 
-  async extractMegaplaySources(realEpId, audioType, audioLabel) {
+    var showId = info.showId;
+    var ep = info.ep;
+    var hasSub = info.hasSub;
+    var hasDub = info.hasDub;
+    if (!showId || !ep) return [];
+
+    var pref = this.getPreference("miruro_pref_audio") || "sub";
     var streams = [];
-    var info = await this.getMegaplayDataId(realEpId, audioType);
-    if (!info) return streams;
-    try {
-      var res = await this.client.get(
-        "https://megaplay.buzz/stream/getSources?id=" + info.dataId,
-        { "User-Agent": this.ua, "Referer": info.refererUrl, "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" }
-      );
-      var data = JSON.parse(res.body);
-      if (!data || !data.sources) return streams;
-      var sourceList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
-      var subtitles = [];
-      if (Array.isArray(data.tracks)) {
-        for (var t of data.tracks) {
-          if (t && t.file && (t.kind === "captions" || t.kind === "subtitles" || !t.kind)) {
-            subtitles.push({ file: t.file, label: t.label || "Unknown" });
-          }
-        }
-      }
-      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
-      for (var src of sourceList) {
-        var fileUrl = src.file || src.url;
-        if (!fileUrl) continue;
-        if (fileUrl.indexOf(".m3u8") >= 0) {
-          var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
-          if (resolved.kind === "master") {
-            for (var v of resolved.variants) {
-              streams.push({ url: v.url, originalUrl: fileUrl, quality: v.label + " [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
+
+    var types = [];
+    if (pref === "dub") {
+      if (hasDub) types.push("dub");
+      if (hasSub) types.push("sub");
+    } else {
+      if (hasSub) types.push("sub");
+      if (hasDub) types.push("dub");
+    }
+    if (types.length === 0) types.push("sub");
+
+    var gqlQuery = "query($showId: String!, $episodeString: String!, $translationType: VaildTranslationTypeEnumType!) { episode(showId: $showId, episodeString: $episodeString, translationType: $translationType) { sourceUrls } }";
+
+    for (var ti = 0; ti < types.length; ti++) {
+      var translationType = types[ti];
+      try {
+        var data = await this.allAnimeRequest(gqlQuery, {
+          showId: showId,
+          episodeString: ep,
+          translationType: translationType,
+        });
+        var sourceUrls = (data.data && data.data.episode && data.data.episode.sourceUrls) || [];
+
+        for (var si = 0; si < sourceUrls.length; si++) {
+          var src = sourceUrls[si];
+          var decoded = this.decryptAllAnimeUrl(src.sourceUrl || "").trim();
+          if (!decoded || !decoded.startsWith("http")) continue;
+
+          var serverName = src.sourceName || "Server";
+          var qualityLabel = translationType.toUpperCase() + " - " + serverName;
+
+          try {
+            var extracted = await this.extractFromUrl(decoded, qualityLabel);
+            for (var ei = 0; ei < extracted.length; ei++) {
+              streams.push(extracted[ei]);
             }
-          } else if (resolved.kind === "flat") {
-            streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "Auto [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
-          }
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }
+
+    return streams;
+  }
+
+  async extractFromUrl(url, qualityLabel) {
+    try {
+      var lurl = url.toLowerCase();
+      if (lurl.includes("dood") || lurl.includes("d000")) {
+        return await this.extractDoodstream(url, qualityLabel);
+      } else if (lurl.includes("wish") || lurl.includes("awish") || lurl.includes("playerwish")) {
+        return await this.extractStreamwish(url, qualityLabel);
+      } else if (lurl.includes("filemoon") || lurl.includes("moonplayer")) {
+        return await this.extractFilemoon(url, qualityLabel);
+      } else if (lurl.includes("mp4upload")) {
+        return await this.extractMp4upload(url, qualityLabel);
+      } else if (lurl.includes("ok.ru") || lurl.includes("odnoklassniki")) {
+        return await this.extractOkRu(url, qualityLabel);
+      }
+      // Generic: try the URL directly as HLS/MP4
+      return await this.extractGeneric(url, qualityLabel);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async extractStreamwish(url, qualityLabel) {
+    var streams = [];
+    try {
+      var res = await this.client.get(url, {
+        "User-Agent": this.ua,
+        "Referer": "https://allmanga.to/",
+      });
+      var body = res.body;
+      var m3u8Match = body.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/);
+      if (!m3u8Match) m3u8Match = body.match(/source\s*:\s*["']([^"']+\.m3u8[^"']*)["']/);
+      if (!m3u8Match) m3u8Match = body.match(/"src"\s*:\s*"([^"]+\.m3u8[^"]*)"/);
+      if (m3u8Match) {
+        var m3u8Url = m3u8Match[1];
+        var hlsStreams = await this.parseHlsMaster(m3u8Url, qualityLabel, { "Referer": url, "User-Agent": this.ua });
+        if (hlsStreams.length > 0) {
+          for (var i = 0; i < hlsStreams.length; i++) streams.push(hlsStreams[i]);
         } else {
-          streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "MP4 [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
+          streams.push({
+            url: m3u8Url, originalUrl: m3u8Url,
+            quality: "Auto [" + qualityLabel + "]",
+            headers: { "Referer": url, "User-Agent": this.ua },
+          });
         }
       }
     } catch (e) {}
     return streams;
   }
 
-  async getVideoList(url) {
-    if (url === "unavailable|0|0") return [];
-    var parts = url.split("|");
-    var realEpId = parts[0];
-    var hasSub = parts[1] === "1";
-    var hasDub = parts[2] === "1";
-    if (!hasSub && !hasDub) hasSub = true;
-    var pref = this.getPreference("miruro_pref_audio") || "sub";
-    var subStreams = hasSub ? await this.extractMegaplaySources(realEpId, "sub", "Sub") : [];
-    var dubStreams = hasDub ? await this.extractMegaplaySources(realEpId, "dub", "Dub") : [];
-    return pref === "dub" ? dubStreams.concat(subStreams) : subStreams.concat(dubStreams);
+  async extractDoodstream(url, qualityLabel) {
+    var streams = [];
+    try {
+      var referer = "https://doodstream.com/";
+      var res = await this.client.get(url, { "User-Agent": this.ua, "Referer": referer });
+      var body = res.body;
+
+      var passMd5Match = body.match(/\/pass_md5\/[^'"?\s]+/);
+      if (!passMd5Match) return streams;
+      var passMd5Path = passMd5Match[0];
+
+      var domainMatch = url.match(/^(https?:\/\/[^/]+)/);
+      if (!domainMatch) return streams;
+      var passMd5Url = domainMatch[1] + passMd5Path;
+
+      var tokenMatch = body.match(/[?&]token=([^&"'\s<]+)/);
+      if (!tokenMatch) tokenMatch = body.match(/token\s*=\s*["']([^"']+)["']/);
+      var token = tokenMatch ? tokenMatch[1] : passMd5Path.split("/").pop();
+
+      var baseRes = await this.client.get(passMd5Url, { "User-Agent": this.ua, "Referer": url });
+      var baseUrl = (baseRes.body || "").trim();
+      if (!baseUrl || !baseUrl.startsWith("http")) return streams;
+
+      var expiry = String(Math.floor(Date.now() / 1000) + 300);
+      var finalUrl = baseUrl + "z2FS1Eol5p" + "?token=" + token + "&expiry=" + expiry;
+
+      streams.push({
+        url: finalUrl, originalUrl: finalUrl,
+        quality: "Auto [" + qualityLabel + "]",
+        headers: { "Referer": url, "User-Agent": this.ua },
+      });
+    } catch (e) {}
+    return streams;
   }
 
-  // ── Filters & Preferences ────────────────────────────────────────────────────
+  async extractFilemoon(url, qualityLabel) {
+    var streams = [];
+    try {
+      var res = await this.client.get(url, { "User-Agent": this.ua, "Referer": "https://allmanga.to/" });
+      var body = res.body;
+      var m3u8Match = body.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/);
+      if (!m3u8Match) m3u8Match = body.match(/"file"\s*:\s*"([^"]+\.m3u8[^"]*)"/);
+      if (m3u8Match) {
+        var m3u8Url = m3u8Match[1];
+        var hlsStreams = await this.parseHlsMaster(m3u8Url, qualityLabel, { "Referer": url, "User-Agent": this.ua });
+        if (hlsStreams.length > 0) {
+          for (var i = 0; i < hlsStreams.length; i++) streams.push(hlsStreams[i]);
+        } else {
+          streams.push({ url: m3u8Url, originalUrl: m3u8Url, quality: "Auto [" + qualityLabel + "]", headers: { "Referer": url, "User-Agent": this.ua } });
+        }
+      }
+    } catch (e) {}
+    return streams;
+  }
+
+  async extractMp4upload(url, qualityLabel) {
+    var streams = [];
+    try {
+      var res = await this.client.get(url, { "User-Agent": this.ua, "Referer": "https://allmanga.to/" });
+      var body = res.body;
+      var mp4Match = body.match(/"(?:src|file)"\s*:\s*"([^"]+\.mp4[^"]*)"/);
+      if (!mp4Match) mp4Match = body.match(/src\s*:\s*"([^"]+\.mp4[^"]*)"/);
+      if (mp4Match) {
+        streams.push({ url: mp4Match[1], originalUrl: mp4Match[1], quality: "Auto [" + qualityLabel + "]", headers: { "Referer": url, "User-Agent": this.ua } });
+      }
+    } catch (e) {}
+    return streams;
+  }
+
+  async extractOkRu(url, qualityLabel) {
+    var streams = [];
+    try {
+      var res = await this.client.get(url, { "User-Agent": this.ua });
+      var body = res.body;
+      var dataMatch = body.match(/data-options="([^"]+)"/);
+      if (!dataMatch) return streams;
+      var decoded = dataMatch[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"');
+      var dataObj = JSON.parse(decoded);
+      var flashVars = dataObj.flashvars || dataObj;
+      var metadataStr = flashVars.metadata || flashVars.metadata_str || "";
+      if (!metadataStr) return streams;
+      var metadata = JSON.parse(decodeURIComponent(metadataStr));
+      var videos = metadata.videos || [];
+      for (var i = 0; i < videos.length; i++) {
+        var v = videos[i];
+        if (v.url) {
+          streams.push({ url: v.url, originalUrl: v.url, quality: (v.name || "Auto") + " [" + qualityLabel + "]", headers: { "Referer": "https://ok.ru/", "User-Agent": this.ua } });
+        }
+      }
+    } catch (e) {}
+    return streams;
+  }
+
+  async extractGeneric(url, qualityLabel) {
+    var streams = [];
+    try {
+      var lurl = url.toLowerCase();
+      if (lurl.includes(".m3u8")) {
+        var hlsStreams = await this.parseHlsMaster(url, qualityLabel, { "User-Agent": this.ua });
+        if (hlsStreams.length > 0) return hlsStreams;
+        streams.push({ url: url, originalUrl: url, quality: "Auto [" + qualityLabel + "]", headers: { "User-Agent": this.ua } });
+      } else if (lurl.includes(".mp4")) {
+        streams.push({ url: url, originalUrl: url, quality: "Auto [" + qualityLabel + "]", headers: { "User-Agent": this.ua } });
+      }
+    } catch (e) {}
+    return streams;
+  }
+
+  // Parse an HLS master playlist and return per-quality stream objects.
+  async parseHlsMaster(m3u8Url, qualityLabel, headers) {
+    var streams = [];
+    try {
+      var res = await this.client.get(m3u8Url, headers);
+      if (!res || !res.body) return streams;
+      var body = res.body;
+      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return streams;
+      var base = m3u8Url.substring(0, m3u8Url.lastIndexOf("/") + 1);
+      var lines = body.split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+        var resM = line.match(/RESOLUTION=\d+x(\d+)/);
+        var resLabel = resM ? resM[1] + "p" : "Auto";
+        for (var j = i + 1; j < lines.length; j++) {
+          var nxt = lines[j].trim();
+          if (!nxt || nxt[0] === "#") continue;
+          var varUrl = nxt.indexOf("http") === 0 ? nxt : base + nxt;
+          streams.push({
+            url: varUrl, originalUrl: varUrl,
+            quality: resLabel + " [" + qualityLabel + "]",
+            headers: headers,
+          });
+          break;
+        }
+      }
+    } catch (e) {}
+    return streams;
+  }
+
+  // ── Filters & Preferences ──────────────────────────────────────────────────
 
   getFilterList() {
     return [
