@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.2.0",
+    "version": "2.2.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -25,8 +25,8 @@ const mangayomiSources = [
 ];
 
 // Metadata : AniList GraphQL API
-// Episodes : miruro.tv secure pipe  → base64url(JSON) request, base64url(gzip(JSON)) response
-// Streaming: miruro.tv secure pipe  → sources endpoint per provider / category
+// Episodes : miruro.tv secure pipe  — GET /api/secure/pipe?e={base64url(JSON)}
+// Response : base64url(gzip(JSON)) decoded client-side
 class DefaultExtension extends MProvider {
   constructor() {
     super();
@@ -42,22 +42,6 @@ class DefaultExtension extends MProvider {
   }
 
   // ── Base64url helpers ─────────────────────────────────────────────────────
-
-  // UTF-8 encode a JS string to a byte array (handles BMP only — sufficient for API data)
-  strToUtf8(str) {
-    var bytes = [];
-    for (var i = 0; i < str.length; i++) {
-      var c = str.charCodeAt(i);
-      if (c < 0x80) {
-        bytes.push(c);
-      } else if (c < 0x800) {
-        bytes.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F));
-      } else {
-        bytes.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F));
-      }
-    }
-    return bytes;
-  }
 
   // Byte array → base64url string (no padding)
   bytesToB64url(bytes) {
@@ -97,12 +81,62 @@ class DefaultExtension extends MProvider {
     return bytes;
   }
 
-  // Encode an object as base64url(JSON) for the pipe request body
+  // UTF-8 string → byte array
+  strToUtf8(str) {
+    var bytes = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      if (c < 0x80) {
+        bytes.push(c);
+      } else if (c < 0x800) {
+        bytes.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F));
+      } else {
+        bytes.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F));
+      }
+    }
+    return bytes;
+  }
+
+  // UTF-8 byte array → string
+  utf8Decode(bytes) {
+    var result = "";
+    var i = 0;
+    while (i < bytes.length) {
+      var b = bytes[i++];
+      if (b < 0x80) {
+        result += String.fromCharCode(b);
+      } else if ((b & 0xE0) === 0xC0) {
+        result += String.fromCharCode(((b & 0x1F) << 6) | (bytes[i++] & 0x3F));
+      } else if ((b & 0xF0) === 0xE0) {
+        var b2 = bytes[i++], b3 = bytes[i++];
+        result += String.fromCharCode(((b & 0xF) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
+      } else if ((b & 0xF8) === 0xF0) {
+        var b2 = bytes[i++], b3 = bytes[i++], b4 = bytes[i++];
+        var cp = ((b & 7) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F);
+        cp -= 0x10000;
+        result += String.fromCharCode(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF));
+      }
+    }
+    return result;
+  }
+
+  // Encode an object as base64url(UTF-8(JSON)) for pipe requests
   encodePipePayload(payload) {
     return this.bytesToB64url(this.strToUtf8(JSON.stringify(payload)));
   }
 
-  // base64url-encode a plain string (for episodeId in sources query)
+  // Translate an episode id that might be base64url-encoded.
+  // If decoding reveals a string containing ':', use the decoded form.
+  // Otherwise keep the raw id. (Mirrors walterwhite-69/Miruro-API _translate_id)
+  translateEpId(id) {
+    try {
+      var decoded = this.utf8Decode(this.b64urlToBytes(id));
+      if (decoded.indexOf(":") >= 0) return decoded;
+    } catch (e) {}
+    return id;
+  }
+
+  // base64url-encode a plain string (for episodeId field in sources payload)
   b64urlStr(str) {
     return this.bytesToB64url(this.strToUtf8(str));
   }
@@ -134,24 +168,18 @@ class DefaultExtension extends MProvider {
       return v;
     }
 
-    // Build canonical Huffman lookup table from per-symbol code lengths.
-    // Returns {table: {len: {code: symbol}}, maxLen}.
     function buildTree(lengths) {
       var maxLen = 0;
       for (var i = 0; i < lengths.length; i++) if (lengths[i] > maxLen) maxLen = lengths[i];
       if (maxLen === 0) return { table: {}, maxLen: 0 };
-
       var blCount = new Array(maxLen + 1).fill(0);
       for (var i = 0; i < lengths.length; i++) if (lengths[i] > 0) blCount[lengths[i]]++;
-
-      // Compute starting code for each length (RFC 1951 §3.2.2)
       var nextCode = new Array(maxLen + 2).fill(0);
       var code = 0;
       for (var bits = 1; bits <= maxLen; bits++) {
         code = (code + blCount[bits - 1]) << 1;
         nextCode[bits] = code;
       }
-
       var table = {};
       for (var i = 0; i < lengths.length; i++) {
         var len = lengths[i];
@@ -164,7 +192,6 @@ class DefaultExtension extends MProvider {
       return { table: table, maxLen: maxLen };
     }
 
-    // Decode one symbol: accumulate bits MSB-first (bits are read LSB-first from stream).
     function decodeSymbol(tree) {
       var code = 0;
       for (var len = 1; len <= tree.maxLen; len++) {
@@ -176,7 +203,6 @@ class DefaultExtension extends MProvider {
       throw new Error("invalid Huffman code");
     }
 
-    // RFC 1951 Tables for length and distance codes
     var lenBase  = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
     var lenExtra = [0,0,0,0,0,0,0,0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4,  4,  5,  5,  5,  5,  0];
     var distBase  = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
@@ -206,14 +232,12 @@ class DefaultExtension extends MProvider {
       var btype  = readBits(2);
 
       if (btype === 0) {
-        // Stored block — flush to byte boundary, then copy verbatim
         bitLen = 0;
         var len = data[bytePos] | (data[bytePos + 1] << 8);
-        bytePos += 4; // skip LEN + NLEN
+        bytePos += 4;
         for (var i = 0; i < len; i++) output.push(data[bytePos++]);
 
       } else if (btype === 1) {
-        // Fixed Huffman trees (RFC 1951 §3.2.6)
         var litLengths = [];
         for (var i =   0; i <= 143; i++) litLengths.push(8);
         for (var i = 144; i <= 255; i++) litLengths.push(9);
@@ -224,7 +248,6 @@ class DefaultExtension extends MProvider {
         decompressBlock(buildTree(litLengths), buildTree(distLengths));
 
       } else if (btype === 2) {
-        // Dynamic Huffman trees (RFC 1951 §3.2.7)
         var hlit  = readBits(5) + 257;
         var hdist = readBits(5) + 1;
         var hclen = readBits(4) + 4;
@@ -232,7 +255,6 @@ class DefaultExtension extends MProvider {
         var clLengths = new Array(19).fill(0);
         for (var i = 0; i < hclen; i++) clLengths[clOrder[i]] = readBits(3);
         var clTree = buildTree(clLengths);
-
         var allLengths = [];
         while (allLengths.length < hlit + hdist) {
           var sym = decodeSymbol(clTree);
@@ -245,7 +267,7 @@ class DefaultExtension extends MProvider {
           } else if (sym === 17) {
             var count = readBits(3) + 3;
             for (var i = 0; i < count; i++) allLengths.push(0);
-          } else { // sym === 18
+          } else {
             var count = readBits(7) + 11;
             for (var i = 0; i < count; i++) allLengths.push(0);
           }
@@ -261,48 +283,23 @@ class DefaultExtension extends MProvider {
     return output;
   }
 
-  // Decode UTF-8 byte array to JS string
-  utf8Decode(bytes) {
-    var result = "";
-    var i = 0;
-    while (i < bytes.length) {
-      var b = bytes[i++];
-      if (b < 0x80) {
-        result += String.fromCharCode(b);
-      } else if ((b & 0xE0) === 0xC0) {
-        result += String.fromCharCode(((b & 0x1F) << 6) | (bytes[i++] & 0x3F));
-      } else if ((b & 0xF0) === 0xE0) {
-        var b2 = bytes[i++], b3 = bytes[i++];
-        result += String.fromCharCode(((b & 0xF) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
-      } else if ((b & 0xF8) === 0xF0) {
-        var b2 = bytes[i++], b3 = bytes[i++], b4 = bytes[i++];
-        var cp = ((b & 7) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F);
-        cp -= 0x10000;
-        result += String.fromCharCode(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF));
-      }
-    }
-    return result;
-  }
-
   // ── Miruro secure pipe ────────────────────────────────────────────────────
+  // Protocol (from walterwhite-69/Miruro-API reverse engineering):
+  //   Request : GET https://www.miruro.tv/api/secure/pipe?e={base64url(json(payload))}
+  //   Response: base64url(gzip(json)) — decoded + decompressed client-side
 
   async callMiruPipe(path, query) {
     var payload = { path: path, method: "GET", query: query, body: null, version: "0.1.0" };
-    var encoded = this.encodePipePayload(payload);
-    var res = await this.client.post(
-      "https://www.miruro.tv/api/secure/pipe",
-      {
-        "Content-Type": "text/plain",
-        "User-Agent": this.ua,
-        "Referer": "https://www.miruro.tv/",
-        "Origin": "https://www.miruro.tv",
-        "Accept": "*/*",
-      },
-      encoded
-    );
+    var e = this.encodePipePayload(payload);
+    var url = "https://www.miruro.tv/api/secure/pipe?e=" + e;
+    var res = await this.client.get(url, {
+      "User-Agent": this.ua,
+      "Referer": "https://www.miruro.tv/",
+      "Accept": "*/*",
+    });
     if (!res || !res.body) throw new Error("empty pipe response");
-    var responseBody = (typeof res.body === "string") ? res.body.trim() : String(res.body).trim();
-    var bytes = this.b64urlToBytes(responseBody);
+    var body = (typeof res.body === "string") ? res.body.trim() : String(res.body).trim();
+    var bytes = this.b64urlToBytes(body);
     var decompressed = this.inflate(bytes);
     return JSON.parse(this.utf8Decode(decompressed));
   }
@@ -374,11 +371,11 @@ class DefaultExtension extends MProvider {
       for (var f of filters) {
         if (f.type_name === "SelectFilter" && f.state > 0) {
           var v = f.values[f.state].value;
-          if (f.name === "Season" && v)  { conditions.push("season:$season");       args += ",$season:MediaSeason";  variables.season = v;           }
-          else if (f.name === "Format" && v)  { conditions.push("format:$format");       args += ",$format:MediaFormat";  variables.format = v;           }
-          else if (f.name === "Status" && v)  { conditions.push("status:$status");       args += ",$status:MediaStatus";  variables.status = v;           }
-          else if (f.name === "Year"   && v)  { conditions.push("seasonYear:$year");     args += ",$year:Int";            variables.year   = parseInt(v); }
-          else if (f.name === "Sort"   && v)  { conditions.push("sort:[$sort]");         args += ",$sort:[MediaSort]";    variables.sort   = [v];         }
+          if      (f.name === "Season" && v) { conditions.push("season:$season");     args += ",$season:MediaSeason";  variables.season = v;           }
+          else if (f.name === "Format" && v) { conditions.push("format:$format");     args += ",$format:MediaFormat";  variables.format = v;           }
+          else if (f.name === "Status" && v) { conditions.push("status:$status");     args += ",$status:MediaStatus";  variables.status = v;           }
+          else if (f.name === "Year"   && v) { conditions.push("seasonYear:$year");   args += ",$year:Int";            variables.year   = parseInt(v); }
+          else if (f.name === "Sort"   && v) { conditions.push("sort:[$sort]");       args += ",$sort:[MediaSort]";    variables.sort   = [v];         }
         } else if (f.type_name === "GroupFilter") {
           var genres = [];
           for (var item of f.state) { if (item.state === true) genres.push(item.value); }
@@ -402,29 +399,65 @@ class DefaultExtension extends MProvider {
     var data = await this.anilist(q, { id: animeId });
     var m = data.Media;
 
-    var name      = this.getTitle(m.title);
-    var imageUrl  = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
+    var name        = this.getTitle(m.title);
+    var imageUrl    = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
     var description = (m.description || "").replace(/<[^>]+>/g, "");
-    var status    = this.anilistStatusCode(m.status);
-    var genre     = m.genres || [];
+    var status      = this.anilistStatusCode(m.status);
+    var genre       = m.genres || [];
 
-    var chapters = [];
+    // episodeMap[epNum] = { animeId, num, title, filler, ids: {provider: {sub: id, dub: id}} }
+    var episodeMap = {};
+
     try {
-      var epData   = await this.callMiruPipe("episodes", { anilistId: animeId });
-      var episodes = epData.results || epData.episodes || (Array.isArray(epData) ? epData : []);
-      for (var i = 0; i < episodes.length; i++) {
-        var ep     = episodes[i];
-        var epNum  = ep.number || ep.episodeNumber || ep.num || (i + 1);
-        var epTitle = ep.title || ep.name || "";
-        var epName  = epTitle ? ("Episode " + epNum + ": " + epTitle) : ("Episode " + epNum);
-        var epId    = ep.id || ep.episodeId || String(epNum);
-        chapters.push({
-          name:     epName,
-          url:      epId,
-          isFiller: !!(ep.isFiller || ep.filler),
-        });
+      var epData    = await this.callMiruPipe("episodes", { anilistId: animeId });
+      var providers = epData.providers || {};
+
+      var providerKeys = Object.keys(providers);
+      for (var pi = 0; pi < providerKeys.length; pi++) {
+        var provider = providerKeys[pi];
+        var catMap   = providers[provider].episodes || {};
+        var catKeys  = Object.keys(catMap); // "sub", "dub"
+
+        for (var ci = 0; ci < catKeys.length; ci++) {
+          var category = catKeys[ci];
+          var eps      = catMap[category] || [];
+
+          for (var ei = 0; ei < eps.length; ei++) {
+            var ep  = eps[ei];
+            var num = ep.number || (ei + 1);
+            var rawId = ep.id || ep.episodeId || String(num);
+            // Normalise: if the id is base64url-encoded and decodes to a string
+            // containing ':', use the decoded form (matches miruro's internal format)
+            var translatedId = this.translateEpId(rawId);
+
+            if (!episodeMap[num]) {
+              episodeMap[num] = {
+                animeId: animeId,
+                num:     num,
+                title:   ep.title || ep.name || "",
+                filler:  !!(ep.filler || ep.isFiller),
+                ids:     {},
+              };
+            }
+            if (!episodeMap[num].ids[provider]) episodeMap[num].ids[provider] = {};
+            episodeMap[num].ids[provider][category] = translatedId;
+          }
+        }
       }
     } catch (e) {}
+
+    // Sort numerically and build chapters
+    var chapters = [];
+    var nums = Object.keys(episodeMap).map(Number).sort(function(a, b) { return a - b; });
+    for (var ni = 0; ni < nums.length; ni++) {
+      var ep = episodeMap[nums[ni]];
+      var epName = ep.title ? ("Episode " + ep.num + ": " + ep.title) : ("Episode " + ep.num);
+      chapters.push({
+        name:     epName,
+        url:      JSON.stringify(ep),
+        isFiller: ep.filler,
+      });
+    }
 
     // Fallback: generate placeholder list from AniList episode count
     if (chapters.length === 0 && m.episodes) {
@@ -446,31 +479,41 @@ class DefaultExtension extends MProvider {
   async getVideoList(url) {
     if (url === "unavailable") return [];
 
-    var providers = this.getPreference("miruro_pref_providers");
-    if (!providers || providers.length === 0) providers = ["kiwi", "arc", "zoro"];
+    var info;
+    try { info = JSON.parse(url); } catch (e) { return []; }
 
-    var audioPref = this.getPreference("miruro_pref_audio") || "sub";
+    var animeId  = info.animeId;
+    var ids      = info.ids || {};  // {provider: {sub: id, dub: id}}
+
+    var providerPref = this.getPreference("miruro_pref_providers");
+    if (!providerPref || providerPref.length === 0) providerPref = ["kiwi", "arc", "zoro"];
+
+    var audioPref  = this.getPreference("miruro_pref_audio") || "sub";
     var categories = audioPref === "dub" ? ["dub", "sub"] : ["sub", "dub"];
-
-    // episodeId must be base64url-encoded before sending to the sources endpoint
-    var episodeIdEncoded = this.b64urlStr(url);
 
     var streams = [];
     var headers = { "User-Agent": this.ua, "Referer": "https://www.miruro.tv/" };
 
     for (var ci = 0; ci < categories.length; ci++) {
       var category = categories[ci];
-      for (var pi = 0; pi < providers.length; pi++) {
-        var provider = providers[pi];
+      for (var pi = 0; pi < providerPref.length; pi++) {
+        var provider = providerPref[pi];
+        var provIds  = ids[provider];
+        if (!provIds) continue;
+        var episodeId = provIds[category];
+        if (!episodeId) continue;
+
         try {
           var data = await this.callMiruPipe("sources", {
-            episodeId: episodeIdEncoded,
+            // episodeId must be base64url-encoded (the translated raw id → encoded)
+            episodeId: this.b64urlStr(episodeId),
             provider:  provider,
             category:  category,
+            anilistId: animeId,
           });
 
-          var sources = data.streams || data.sources || data.links || [];
-          var tracks  = data.subtitles || data.tracks || [];
+          var sources  = data.streams  || data.sources || data.links || [];
+          var tracks   = data.subtitles || data.tracks || [];
 
           var subtitles = [];
           for (var ti = 0; ti < tracks.length; ti++) {
@@ -484,8 +527,8 @@ class DefaultExtension extends MProvider {
             var streamUrl = src.url || src.file || src.link || src.src;
             if (!streamUrl) continue;
 
-            var quality   = src.quality || src.resolution || src.label || "Auto";
-            var label     = quality + " [" + category.toUpperCase() + " · " + provider + "]";
+            var quality = src.quality || src.resolution || src.label || "Auto";
+            var label   = quality + " [" + category.toUpperCase() + " · " + provider + "]";
 
             var stream = {
               url:         streamUrl,
@@ -510,11 +553,11 @@ class DefaultExtension extends MProvider {
       {
         type_name: "SelectFilter", name: "Sort", state: 0,
         values: [
-          { type_name: "SelectOption", name: "Trending",   value: "TRENDING_DESC"    },
-          { type_name: "SelectOption", name: "Popularity", value: "POPULARITY_DESC"  },
-          { type_name: "SelectOption", name: "Score",      value: "SCORE_DESC"       },
-          { type_name: "SelectOption", name: "Newest",     value: "START_DATE_DESC"  },
-          { type_name: "SelectOption", name: "Oldest",     value: "START_DATE"       },
+          { type_name: "SelectOption", name: "Trending",   value: "TRENDING_DESC"   },
+          { type_name: "SelectOption", name: "Popularity", value: "POPULARITY_DESC" },
+          { type_name: "SelectOption", name: "Score",      value: "SCORE_DESC"      },
+          { type_name: "SelectOption", name: "Newest",     value: "START_DATE_DESC" },
+          { type_name: "SelectOption", name: "Oldest",     value: "START_DATE"      },
         ],
       },
       {
@@ -541,10 +584,10 @@ class DefaultExtension extends MProvider {
       {
         type_name: "SelectFilter", name: "Status", state: 0,
         values: [
-          { type_name: "SelectOption", name: "Any",          value: ""                  },
-          { type_name: "SelectOption", name: "Airing",       value: "RELEASING"         },
-          { type_name: "SelectOption", name: "Finished",     value: "FINISHED"          },
-          { type_name: "SelectOption", name: "Not Yet Aired",value: "NOT_YET_RELEASED"  },
+          { type_name: "SelectOption", name: "Any",           value: ""                 },
+          { type_name: "SelectOption", name: "Airing",        value: "RELEASING"        },
+          { type_name: "SelectOption", name: "Finished",      value: "FINISHED"         },
+          { type_name: "SelectOption", name: "Not Yet Aired", value: "NOT_YET_RELEASED" },
         ],
       },
       {
@@ -594,31 +637,31 @@ class DefaultExtension extends MProvider {
       {
         key: "miruro_title_lang",
         listPreference: {
-          title:      "Preferred title language",
-          summary:    "Language for anime titles",
-          valueIndex: 0,
-          entries:    ["English", "Romaji", "Native", "User Preferred"],
-          entryValues:["english", "romaji", "native", "userPreferred"],
+          title:       "Preferred title language",
+          summary:     "Language for anime titles",
+          valueIndex:  0,
+          entries:     ["English", "Romaji", "Native", "User Preferred"],
+          entryValues: ["english", "romaji", "native", "userPreferred"],
         },
       },
       {
         key: "miruro_pref_audio",
         listPreference: {
-          title:      "Preferred audio",
-          summary:    "Sub or Dub — shown first in stream list",
-          valueIndex: 0,
-          entries:    ["Sub", "Dub"],
-          entryValues:["sub", "dub"],
+          title:       "Preferred audio",
+          summary:     "Sub or Dub — shown first in stream list",
+          valueIndex:  0,
+          entries:     ["Sub", "Dub"],
+          entryValues: ["sub", "dub"],
         },
       },
       {
         key: "miruro_pref_providers",
         multiSelectListPreference: {
-          title:      "Preferred providers",
-          summary:    "Providers to fetch streams from (all selected by default)",
-          values:     ["kiwi", "arc", "zoro"],
-          entries:    ["Kiwi", "Arc", "Zoro", "Jet", "Telli"],
-          entryValues:["kiwi", "arc", "zoro", "jet", "telli"],
+          title:       "Preferred providers",
+          summary:     "Providers to fetch streams from",
+          values:      ["kiwi", "arc", "zoro"],
+          entries:     ["Kiwi", "Arc", "Zoro", "Jet", "Telli"],
+          entryValues: ["kiwi", "arc", "zoro", "jet", "telli"],
         },
       },
     ];
