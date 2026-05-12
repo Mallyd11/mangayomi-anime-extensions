@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.2.1",
+    "version": "2.2.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -172,9 +172,11 @@ class DefaultExtension extends MProvider {
       var maxLen = 0;
       for (var i = 0; i < lengths.length; i++) if (lengths[i] > maxLen) maxLen = lengths[i];
       if (maxLen === 0) return { table: {}, maxLen: 0 };
-      var blCount = new Array(maxLen + 1).fill(0);
+      var blCount = [];
+      for (var fi = 0; fi <= maxLen; fi++) blCount.push(0);
       for (var i = 0; i < lengths.length; i++) if (lengths[i] > 0) blCount[lengths[i]]++;
-      var nextCode = new Array(maxLen + 2).fill(0);
+      var nextCode = [];
+      for (var fi = 0; fi <= maxLen + 1; fi++) nextCode.push(0);
       var code = 0;
       for (var bits = 1; bits <= maxLen; bits++) {
         code = (code + blCount[bits - 1]) << 1;
@@ -252,7 +254,8 @@ class DefaultExtension extends MProvider {
         var hdist = readBits(5) + 1;
         var hclen = readBits(4) + 4;
         var clOrder = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
-        var clLengths = new Array(19).fill(0);
+        var clLengths = [];
+        for (var fi = 0; fi < 19; fi++) clLengths.push(0);
         for (var i = 0; i < hclen; i++) clLengths[clOrder[i]] = readBits(3);
         var clTree = buildTree(clLengths);
         var allLengths = [];
@@ -368,7 +371,8 @@ class DefaultExtension extends MProvider {
     }
 
     if (filters && Array.isArray(filters)) {
-      for (var f of filters) {
+      for (var fi = 0; fi < filters.length; fi++) {
+        var f = filters[fi];
         if (f.type_name === "SelectFilter" && f.state > 0) {
           var v = f.values[f.state].value;
           if      (f.name === "Season" && v) { conditions.push("season:$season");     args += ",$season:MediaSeason";  variables.season = v;           }
@@ -378,7 +382,10 @@ class DefaultExtension extends MProvider {
           else if (f.name === "Sort"   && v) { conditions.push("sort:[$sort]");       args += ",$sort:[MediaSort]";    variables.sort   = [v];         }
         } else if (f.type_name === "GroupFilter") {
           var genres = [];
-          for (var item of f.state) { if (item.state === true) genres.push(item.value); }
+          var stateArr = f.state || [];
+          for (var si = 0; si < stateArr.length; si++) {
+            if (stateArr[si].state === true) genres.push(stateArr[si].value);
+          }
           if (genres.length > 0) { conditions.push("genre_in:$genres"); args += ",$genres:[String]"; variables.genres = genres; }
         }
       }
@@ -457,13 +464,6 @@ class DefaultExtension extends MProvider {
         url:      JSON.stringify(ep),
         isFiller: ep.filler,
       });
-    }
-
-    // Fallback: generate placeholder list from AniList episode count
-    if (chapters.length === 0 && m.episodes) {
-      for (var i = 1; i <= m.episodes; i++) {
-        chapters.push({ name: "Episode " + i, url: "unavailable", isFiller: false });
-      }
     }
 
     chapters.reverse();
