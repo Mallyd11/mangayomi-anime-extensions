@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.2.2",
+    "version": "2.2.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -414,6 +414,8 @@ class DefaultExtension extends MProvider {
 
     // episodeMap[epNum] = { animeId, num, title, filler, ids: {provider: {sub: id, dub: id}} }
     var episodeMap = {};
+    var _pipeError = null;
+    var _pipeEpCount = 0;
 
     try {
       var epData    = await this.callMiruPipe("episodes", { anilistId: animeId });
@@ -445,13 +447,14 @@ class DefaultExtension extends MProvider {
                 filler:  !!(ep.filler || ep.isFiller),
                 ids:     {},
               };
+              _pipeEpCount++;
             }
             if (!episodeMap[num].ids[provider]) episodeMap[num].ids[provider] = {};
             episodeMap[num].ids[provider][category] = translatedId;
           }
         }
       }
-    } catch (e) {}
+    } catch (e) { _pipeError = String(e); }
 
     // Sort numerically and build chapters
     var chapters = [];
@@ -464,6 +467,14 @@ class DefaultExtension extends MProvider {
         url:      JSON.stringify(ep),
         isFiller: ep.filler,
       });
+    }
+
+    // Debug: surface pipe result so we can diagnose QuickJS issues
+    if (chapters.length === 0) {
+      var dbgMsg = _pipeError
+        ? ("PIPE_ERR: " + _pipeError)
+        : ("PIPE_OK:0eps (anilist=" + (m.episodes || "?") + ")");
+      chapters.push({ name: dbgMsg, url: "unavailable", isFiller: false });
     }
 
     chapters.reverse();
