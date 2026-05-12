@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.2.3",
+    "version": "2.2.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -294,17 +294,30 @@ class DefaultExtension extends MProvider {
   async callMiruPipe(path, query) {
     var payload = { path: path, method: "GET", query: query, body: null, version: "0.1.0" };
     var e = this.encodePipePayload(payload);
-    var url = "https://www.miruro.tv/api/secure/pipe?e=" + e;
-    var res = await this.client.get(url, {
-      "User-Agent": this.ua,
-      "Referer": "https://www.miruro.tv/",
-      "Accept": "*/*",
-    });
-    if (!res || !res.body) throw new Error("empty pipe response");
-    var body = (typeof res.body === "string") ? res.body.trim() : String(res.body).trim();
-    var bytes = this.b64urlToBytes(body);
-    var decompressed = this.inflate(bytes);
-    return JSON.parse(this.utf8Decode(decompressed));
+    var bases = ["https://www.miruro.tv", "https://www.miruro.bz"];
+    var lastErr = "no response";
+    for (var bi = 0; bi < bases.length; bi++) {
+      var base = bases[bi];
+      try {
+        var url = base + "/api/secure/pipe?e=" + e;
+        var res = await this.client.get(url, {
+          "User-Agent": this.ua,
+          "Referer": base + "/",
+          "Accept": "*/*",
+        });
+        if (!res || !res.body) { lastErr = "empty body from " + base; continue; }
+        var body = (typeof res.body === "string") ? res.body : String(res.body);
+        // strip anything that is not a valid base64url character
+        body = body.replace(/[^A-Za-z0-9+/=\-_]/g, "");
+        if (!body) { lastErr = "blank body from " + base; continue; }
+        var bytes = this.b64urlToBytes(body);
+        var decompressed = this.inflate(bytes);
+        return JSON.parse(this.utf8Decode(decompressed));
+      } catch (ex) {
+        lastErr = base + ": " + String(ex);
+      }
+    }
+    throw new Error("pipe failed: " + lastErr);
   }
 
   // ── AniList GraphQL ───────────────────────────────────────────────────────
@@ -327,7 +340,8 @@ class DefaultExtension extends MProvider {
   }
 
   anilistStatusCode(s) {
-    return { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 }[s] ?? 5;
+    var map = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
+    return map[s] !== undefined ? map[s] : 5;
   }
 
   parseAnilistPage(data) {
