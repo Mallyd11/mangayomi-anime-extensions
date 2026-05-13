@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "2.2.4",
+    "version": "2.2.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -294,7 +294,7 @@ class DefaultExtension extends MProvider {
   async callMiruPipe(path, query) {
     var payload = { path: path, method: "GET", query: query, body: null, version: "0.1.0" };
     var e = this.encodePipePayload(payload);
-    var bases = ["https://www.miruro.tv", "https://www.miruro.bz"];
+    var bases = ["https://www.miruro.to", "https://www.miruro.tv", "https://www.miruro.bz"];
     var lastErr = "no response";
     for (var bi = 0; bi < bases.length; bi++) {
       var base = bases[bi];
