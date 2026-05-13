@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.5",
+    "version": "1.1.6",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -199,7 +199,9 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    var results = await Promise.all(
+    var dlPref = this.getPreference("animetsu_pref_dl_links");
+
+    var streamPromise = Promise.all(
       combinations.map(async ({ serverName, audioType }) => {
         try {
           var epSlug = `/oppai/${url}?server=${serverName}&source_type=${audioType}`;
@@ -219,7 +221,17 @@ class DefaultExtension extends MProvider {
       })
     );
 
-    return results.flat();
+    if (!dlPref) {
+      var results = await streamPromise;
+      return results.flat();
+    }
+
+    var [streamResults, dlStreams] = await Promise.all([
+      streamPromise,
+      this.getDownloadStreams(url),
+    ]);
+
+    return [...streamResults.flat(), ...dlStreams];
   }
 
   streamNamer(res, dubType, serverName) {
@@ -305,6 +317,97 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
+  // Resolve a pahe.win shortlink → kwik.cx download form → direct MP4 URL
+  async resolveKwikDownload(paheWinUrl) {
+    try {
+      var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+      var hdr = { "User-Agent": ua, "Referer": "https://animetsu.bz/" };
+
+      // GET pahe.win — client should follow the 301 redirect to kwik.cx/f/{hash}
+      var res = await this.client.get(paheWinUrl, hdr);
+
+      // If the client did NOT auto-follow the redirect, do it manually
+      if (res.statusCode >= 300 && res.statusCode < 400) {
+        var loc = (res.headers || {})["location"] || (res.headers || {})["Location"];
+        if (!loc) return null;
+        res = await this.client.get(loc, Object.assign({}, hdr, { "Referer": "https://kwik.cx/" }));
+      }
+
+      var body = res.body || "";
+      if (body.length < 50) return null;
+
+      // Extract Laravel CSRF token — handle both attribute orderings
+      var tokenMatch = body.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/)
+                    || body.match(/value=["']([^"']{20,})["'][^>]*name=["']_token["']/);
+      if (!tokenMatch) return null;
+      var csrfToken = tokenMatch[1];
+
+      // Extract form action URL e.g. https://kwik.cx/d/HASH
+      var actionMatch = body.match(/action=["'](https?:\/\/kwik\.[^"']+\/d\/[^"']+)["']/);
+      if (!actionMatch) return null;
+      var dlAction = actionMatch[1];
+      var kwikFileUrl = dlAction.replace(/\/d\//, "/f/");
+
+      // POST to kwik.cx/d/{hash} — server will 302 to the direct MP4 URL
+      var postRes = await this.client.post(
+        dlAction,
+        { "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": ua,
+          "Referer": kwikFileUrl,
+          "Origin": "https://kwik.cx" },
+        "_token=" + encodeURIComponent(csrfToken)
+      );
+
+      // 302 redirect Location header is the direct download URL
+      if (postRes.headers) {
+        var directUrl = postRes.headers["location"] || postRes.headers["Location"];
+        if (directUrl && directUrl.startsWith("http")) return directUrl;
+      }
+
+      // If client auto-followed the redirect, look for MP4 URL in the body
+      if (postRes.body) {
+        var mp4Match = postRes.body.match(/https?:\/\/[^\s"'<>]*\.mp4[^\s"'<>]*/);
+        if (mp4Match) return mp4Match[0];
+      }
+
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Fetch the /dl endpoint and resolve all kwik shortlinks to direct MP4 URLs
+  async getDownloadStreams(url) {
+    try {
+      var dlData = await this.request("/dl/" + url);
+      if (!Array.isArray(dlData) || dlData.length === 0) return [];
+
+      var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+      var streams = await Promise.all(
+        dlData.map(async (item) => {
+          try {
+            if (!item.link) return null;
+            var directUrl = await this.resolveKwikDownload(item.link);
+            if (!directUrl) return null;
+            return {
+              url: directUrl,
+              originalUrl: directUrl,
+              quality: (item.name || "Download") + " [DIRECT DL]",
+              headers: { "User-Agent": ua },
+            };
+          } catch (e) {
+            return null;
+          }
+        })
+      );
+
+      return streams.filter(Boolean);
+    } catch (e) {
+      return [];
+    }
+  }
+
   getFilterList() {
     throw new Error("getFilterList not implemented");
   }
@@ -344,6 +447,14 @@ class DefaultExtension extends MProvider {
         switchPreferenceCompat: {
           title: "Episode description",
           summary: "",
+          value: true,
+        },
+      },
+      {
+        key: "animetsu_pref_dl_links",
+        switchPreferenceCompat: {
+          title: "Fetch direct download links",
+          summary: "Resolve kwik.cx URLs for direct MP4 downloads (adds extra requests on episode load)",
           value: true,
         },
       },
