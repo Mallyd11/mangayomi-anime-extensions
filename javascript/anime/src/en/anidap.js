@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.0",
+    "version": "1.4.1",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -373,6 +373,22 @@ class DefaultExtension extends MProvider {
         { type: "sub", provider: subDefault },
         { type: "dub", provider: dubDefault },
       ];
+    }
+
+    // Helper: find a provider by id in a list
+    function findProvider(list, id) {
+      for (var fi = 0; fi < list.length; fi++) { if (list[fi].id === id) return list[fi]; }
+      return null;
+    }
+
+    // Always append mochi for sub: unlike the default uwu provider (which serves
+    // AES-128 encrypted HLS with root-relative paths), mochi transforms to a
+    // direct video file on mp4.24stream.xyz (~441 MB, application/octet-stream).
+    // Mangayomi's downloader can save it as a single file without any HLS
+    // parsing, segment merging, or AES decryption.  Playback also works.
+    var subMochi = findProvider(subProviders, "mochi");
+    if (subMochi && (!subDefault || subDefault.id !== "mochi")) {
+      categories.push({ type: "sub", provider: subMochi });
     }
 
     var streams = [];
