@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.2.0",
+    "version": "1.3.0",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -353,12 +353,14 @@ class DefaultExtension extends MProvider {
 
         var sources  = srcData.sources || [];
         var tracks   = srcData.tracks  || [];
-        // The API tells us which Referer the CDN expects
-        var cdnRef   = (srcData.headers && srcData.headers.Referer) || "https://kwik.cx";
 
+        // The browser sends Referer: https://anidap.se/ (the site's own origin)
+        // to the CDN — NOT the "Referer" value in the API response (kwik.cx),
+        // which the site's player ignores. Using kwik.cx causes 403s.
         var streamHdrs = {
           "User-Agent": this.ua,
-          "Referer": cdnRef,
+          "Referer": this.getBaseUrl() + "/",
+          "Origin": this.getBaseUrl(),
         };
 
         // Build subtitle list
