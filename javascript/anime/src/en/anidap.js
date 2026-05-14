@@ -7,11 +7,11 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.1",
+    "version": "1.4.2",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
-    "hasCloudflare": true,
+    "hasCloudflare": false,
     "isFullData": false,
     "appMinVerReq": "0.5.0",
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/anidap.js",
@@ -361,35 +361,37 @@ class DefaultExtension extends MProvider {
     var subDefault  = defaultProvider(subProviders);
     var dubDefault  = defaultProvider(dubProviders);
 
-    // Build category order based on user preference
-    var categories;
-    if (audioPref === "dub") {
-      categories = [
-        { type: "dub", provider: dubDefault },
-        { type: "sub", provider: subDefault },
-      ];
-    } else {
-      categories = [
-        { type: "sub", provider: subDefault },
-        { type: "dub", provider: dubDefault },
-      ];
-    }
-
     // Helper: find a provider by id in a list
     function findProvider(list, id) {
       for (var fi = 0; fi < list.length; fi++) { if (list[fi].id === id) return list[fi]; }
       return null;
     }
 
-    // Always append mochi for sub: unlike the default uwu provider (which serves
-    // AES-128 encrypted HLS with root-relative paths), mochi transforms to a
-    // direct video file on mp4.24stream.xyz (~441 MB, application/octet-stream).
-    // Mangayomi's downloader can save it as a single file without any HLS
-    // parsing, segment merging, or AES decryption.  Playback also works.
     var subMochi = findProvider(subProviders, "mochi");
-    if (subMochi && (!subDefault || subDefault.id !== "mochi")) {
-      categories.push({ type: "sub", provider: subMochi });
+    var dubMochi = findProvider(dubProviders, "mochi") || dubDefault;
+
+    // Stream order matters: Mangayomi downloads the FIRST stream automatically
+    // (no quality picker for downloads).  mochi serves a direct ~441 MB video
+    // file (mp4.24stream.xyz, application/octet-stream) — no HLS parsing or
+    // AES-128 decryption needed.  Put it first so downloads always work.
+    //
+    // The uwu streams (multi-quality HLS) follow for in-player quality selection.
+    var categories = [];
+
+    // 1. mochi sub — first = automatic download target
+    if (subMochi) categories.push({ type: "sub", provider: subMochi });
+
+    // 2. HLS streams — preference-ordered so the right audio is listed first
+    if (audioPref === "dub") {
+      if (dubDefault && dubDefault.id !== "mochi") categories.push({ type: "dub", provider: dubDefault });
+      if (subDefault && subDefault.id !== "mochi") categories.push({ type: "sub", provider: subDefault });
+    } else {
+      if (subDefault && subDefault.id !== "mochi") categories.push({ type: "sub", provider: subDefault });
+      if (dubDefault && dubDefault.id !== "mochi") categories.push({ type: "dub", provider: dubDefault });
     }
+
+    // 3. mochi dub — direct file, dub audio
+    if (dubMochi && dubMochi.id === "mochi") categories.push({ type: "dub", provider: dubMochi });
 
     var streams = [];
     var seen    = {};
