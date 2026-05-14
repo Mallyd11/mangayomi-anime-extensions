@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.3.0",
+    "version": "1.4.0",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -231,6 +231,41 @@ class DefaultExtension extends MProvider {
     return JSON.parse(res.body);
   }
 
+  // ── URL transformation ─────────────────────────────────────────────────────
+  //
+  // The site's api.js maps each provider ID to a URL transform function.
+  // We mirror the known transforms here so Mangayomi receives playable URLs
+  // instead of the raw vault-*.owocdn.top placeholder URLs (which return 503).
+  //
+  // Derived from anidap.se/assets/api-BgbRfQAC.js:
+  //   uwu:   t.replace(/https:\/\/vault-\d+\.(owo|uwu)cdn\.top\/stream\//, "https://sv6.otakuu.se/storage/")
+  //   mochi: t.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
+  //   miku:  t.replace(/https:\/\/[^/]+\//, "https://ply.24stream.xyz/media/")
+  //   vee / wave / beep: identity (no-op)
+
+  transformUrl(url, providerId) {
+    if (!url) return url;
+    switch (providerId) {
+      case "uwu":
+        return url.replace(
+          /https:\/\/vault-\d+\.(owo|uwu)cdn\.top\/stream\//,
+          "https://sv6.otakuu.se/storage/"
+        );
+      case "mochi":
+        return url.replace(
+          "https://tools.fast4speed.rsvp",
+          "https://mp4.24stream.xyz/storage"
+        );
+      case "miku":
+        return url.replace(
+          /https:\/\/[^/]+\//,
+          "https://ply.24stream.xyz/media/"
+        );
+      default:
+        return url; // vee, wave, beep: identity; u()-based providers: leave as-is
+    }
+  }
+
   // ── Detail ─────────────────────────────────────────────────────────────────
 
   async getDetail(url) {
@@ -354,13 +389,10 @@ class DefaultExtension extends MProvider {
         var sources  = srcData.sources || [];
         var tracks   = srcData.tracks  || [];
 
-        // The browser sends Referer: https://anidap.se/ (the site's own origin)
-        // to the CDN — NOT the "Referer" value in the API response (kwik.cx),
-        // which the site's player ignores. Using kwik.cx causes 403s.
+        // sv6.otakuu.se (the real CDN after URL transformation) serves content
+        // with no custom origin/referer requirements — only a UA is needed.
         var streamHdrs = {
           "User-Agent": this.ua,
-          "Referer": this.getBaseUrl() + "/",
-          "Origin": this.getBaseUrl(),
         };
 
         // Build subtitle list
@@ -376,6 +408,11 @@ class DefaultExtension extends MProvider {
           var src    = sources[k];
           var srcUrl = src && src.url;
           if (!srcUrl) continue;
+
+          // Apply the provider-specific URL transformation (mirrors the site's
+          // api.js transform map) so the URL points to the real CDN, not the
+          // vault-*.owocdn.top placeholder that returns HTTP 503.
+          srcUrl = this.transformUrl(srcUrl, cat.provider.id);
 
           var quality = (src.quality || "Auto") +
             " [" + cat.type.toUpperCase() + "] " +
