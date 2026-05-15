@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.3",
+    "version": "1.4.4",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -389,31 +389,29 @@ class DefaultExtension extends MProvider {
 
     // ── Stream order ───────────────────────────────────────────────────────
     //
-    // Mangayomi auto-picks the FIRST stream for downloads (no quality picker).
-    // mochi serves a direct ~400 MB video file (mp4.24stream.xyz) which
-    // Mangayomi can download without HLS parsing or AES-128 decryption.
-    // All other providers serve HLS master playlists — great for in-player
-    // quality selection, but encrypted and not reliably downloadable.
+    // The chad API applies a per-IP rate limit across ALL /sources requests.
+    // Every extra provider fetch burns quota that could be needed for the
+    // next episode.  Keep the request count to the minimum needed.
     //
-    // Order:
-    //  1. mochi sub  — direct file, sub audio → download target
-    //  2. HLS sub/dub in audio-preference order (uwu default first)
-    //  3. mimi sub/dub — vibeplayer.site HLS, good fallback
-    //  4. shiro sub    — kem.clvd.xyz HLS
-    //  5. mochi dub    — direct file, dub audio
+    // mochi is the ONLY provider that returns a direct video file (~400 MB,
+    // mp4.24stream.xyz).  All other providers return AES-128 encrypted HLS
+    // which Mangayomi cannot download.  So the order is:
+    //
+    //   1. mochi sub  — direct file, the only downloadable stream
+    //   2. default sub (uwu) — HLS, best for in-player quality selection
+    //   3. default dub — added when dub is preferred OR as an extra option
+    //
+    // Total: 2 API requests per episode load.  (Previously 5–6.)
 
     var categories = [];
 
-    var subMochi  = findProvider(subProviders, "mochi");
-    var dubMochi  = findProvider(dubProviders, "mochi");
-    var subMimi   = findProvider(subProviders, "mimi");
-    var dubMimi   = findProvider(dubProviders, "mimi");
-    var subShiro  = findProvider(subProviders, "shiro");
+    var subMochi = findProvider(subProviders, "mochi");
+    var dubMochi = findProvider(dubProviders, "mochi");
 
-    // 1. mochi sub first — automatic download target
+    // 1. mochi sub — must be first so Mangayomi auto-downloads it
     if (subMochi) categories.push({ type: "sub", provider: subMochi });
 
-    // 2. default HLS in preferred audio order
+    // 2. default HLS provider in preferred-audio order
     if (audioPref === "dub") {
       if (dubDefault && dubDefault.id !== "mochi") categories.push({ type: "dub", provider: dubDefault });
       if (subDefault && subDefault.id !== "mochi") categories.push({ type: "sub", provider: subDefault });
@@ -422,20 +420,7 @@ class DefaultExtension extends MProvider {
       if (dubDefault && dubDefault.id !== "mochi") categories.push({ type: "dub", provider: dubDefault });
     }
 
-    // 3. mimi as additional HLS fallback (sub + dub)
-    if (subMimi && subMimi.id !== (subDefault && subDefault.id)) {
-      categories.push({ type: "sub", provider: subMimi });
-    }
-    if (dubMimi && dubMimi.id !== (dubDefault && dubDefault.id)) {
-      categories.push({ type: "dub", provider: dubMimi });
-    }
-
-    // 4. shiro sub as HLS fallback
-    if (subShiro && subShiro.id !== (subDefault && subDefault.id)) {
-      categories.push({ type: "sub", provider: subShiro });
-    }
-
-    // 5. mochi dub — direct file, dub audio
+    // 3. mochi dub — direct file with dub audio (one extra request, worth it)
     if (dubMochi) categories.push({ type: "dub", provider: dubMochi });
 
     var streams = [];
