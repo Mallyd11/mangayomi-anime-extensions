@@ -7,11 +7,11 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.2",
+    "version": "1.4.3",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
-    "hasCloudflare": false,
+    "hasCloudflare": true,
     "isFullData": false,
     "appMinVerReq": "0.5.0",
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/anidap.js",
@@ -24,7 +24,7 @@ const mangayomiSources = [
   },
 ];
 
-// chad.anidap.se is the dedicated REST API subdomain
+// chad.anidap.se is the dedicated REST API subdomain (no Cloudflare)
 var CHAD = "https://chad.anidap.se/rest/api";
 
 // ─── AniList GraphQL (browse / search / metadata) ────────────────────────────
@@ -68,7 +68,7 @@ class DefaultExtension extends MProvider {
     return this.getPreference("anidap_base_url") || this.source.baseUrl;
   }
 
-  // Headers for requests to anidap.se (Remix .data routes)
+  // Headers for requests to anidap.se (Remix .data routes, Cloudflare-protected)
   get siteHeaders() {
     return {
       "User-Agent": this.ua,
@@ -77,7 +77,7 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Headers for requests to chad.anidap.se
+  // Headers for requests to chad.anidap.se (no Cloudflare)
   get chadHeaders() {
     return {
       "User-Agent": this.ua,
@@ -161,16 +161,17 @@ class DefaultExtension extends MProvider {
   // ── Slug resolution ────────────────────────────────────────────────────────
   //
   // The site uses a unique slug per anime (e.g. "one-punch-man-season-3-i5r8m")
-  // which is required for all chad.anidap.se API calls.
+  // required for all chad.anidap.se API calls.  It is embedded in the Remix
+  // turbo-stream response at /info/{anilistId}.data as a flat serialised array.
   //
-  // It is embedded in the Remix turbo-stream response at /info/{anilistId}.data
-  // as a flat array: [..., "id", "one-punch-man-season-3-i5r8m", "anilistId", 153800, ...]
+  // NOTE: anidap.se is Cloudflare-protected. If this request fails the first
+  // time, Mangayomi will show a "Failed to bypass Cloudflare" dialog.
+  // Tap "bypass it manually in the webview" — the clearance cookie is then
+  // stored and all subsequent requests succeed automatically.
 
   extractSlug(arr) {
     if (!Array.isArray(arr)) return null;
     for (var i = 0; i < arr.length - 1; i++) {
-      // The slug appears as the string value immediately after the "id" key.
-      // It contains hyphens and is not purely numeric.
       if (arr[i] === "id" &&
           typeof arr[i + 1] === "string" &&
           arr[i + 1].indexOf("-") >= 0 &&
@@ -197,8 +198,6 @@ class DefaultExtension extends MProvider {
 
   // ── chad.anidap.se REST API ────────────────────────────────────────────────
 
-  // GET /episodes?id={slug}
-  // Returns [{number, titles:{en}, img, isFiller, description, hasDub, hasSub, ...}]
   async chadEpisodes(slug) {
     var res = await this.client.get(CHAD + "/episodes?id=" + slug, this.chadHeaders);
     if (res.statusCode !== 200 || !res.body) return [];
@@ -206,8 +205,6 @@ class DefaultExtension extends MProvider {
     return Array.isArray(data) ? data : [];
   }
 
-  // GET /servers?id={slug}&epNum={n}
-  // Returns {subProviders:[{id,default,tip}], dubProviders:[...]}
   async chadServers(slug, epNum) {
     var res = await this.client.get(
       CHAD + "/servers?id=" + slug + "&epNum=" + epNum,
@@ -217,8 +214,6 @@ class DefaultExtension extends MProvider {
     return JSON.parse(res.body);
   }
 
-  // GET /sources?id={slug}&epNum={n}&type={sub|dub}&providerId={pid}
-  // Returns {sources:[{url,quality}], tracks:[...], headers:{Referer:...}}
   async chadSources(slug, epNum, type, providerId) {
     var res = await this.client.get(
       CHAD + "/sources?id=" + slug +
@@ -228,24 +223,42 @@ class DefaultExtension extends MProvider {
       this.chadHeaders
     );
     if (res.statusCode !== 200 || !res.body) return null;
-    return JSON.parse(res.body);
+    var data = JSON.parse(res.body);
+    // Treat error responses as null
+    if (data && data.error) return null;
+    return data;
   }
 
   // ── URL transformation ─────────────────────────────────────────────────────
   //
-  // The site's api.js maps each provider ID to a URL transform function.
-  // We mirror the known transforms here so Mangayomi receives playable URLs
-  // instead of the raw vault-*.owocdn.top placeholder URLs (which return 503).
+  // Derived from anidap.se/assets/api-BgbRfQAC.js transform map:
   //
-  // Derived from anidap.se/assets/api-BgbRfQAC.js:
-  //   uwu:   t.replace(/https:\/\/vault-\d+\.(owo|uwu)cdn\.top\/stream\//, "https://sv6.otakuu.se/storage/")
-  //   mochi: t.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage")
-  //   miku:  t.replace(/https:\/\/[^/]+\//, "https://ply.24stream.xyz/media/")
-  //   vee / wave / beep: identity (no-op)
+  //   uwu:   regex-replace vault-*.owocdn.top/stream/ → sv6.otakuu.se/storage/
+  //   mochi: string-replace tools.fast4speed.rsvp    → mp4.24stream.xyz/storage
+  //   miku:  regex-replace any origin               → ply.24stream.xyz/media/
+  //
+  //   The following providers use u(t,{origin:"<cdn>"}) — an origin-swap:
+  //   nuri → rapid-cloud.co   shiro → kem.clvd.xyz      kami → krussdomi.com
+  //   yuki → megaplay.buzz    koto  → megacloud.blog/    miru → senshi.live/
+  //   maze → ayy-eu.1stkmgv1.com    kiwi  → 4spromax.site/
+  //   mimi → vibeplayer.site/ (same origin = identity)   zaza → anizone.to
+  //
+  //   wave, vee, beep: identity (no transform).
+
+  // Replace only the scheme+host part of a URL, preserving path/query/hash.
+  replaceOrigin(url, newOrigin) {
+    if (!url) return url;
+    var protoEnd = url.indexOf("://");
+    if (protoEnd < 0) return url;
+    var pathStart = url.indexOf("/", protoEnd + 3);
+    var path = pathStart >= 0 ? url.substring(pathStart) : "/";
+    return newOrigin.replace(/\/$/, "") + path;
+  }
 
   transformUrl(url, providerId) {
     if (!url) return url;
     switch (providerId) {
+      // ── regex / string replace ─────────────────────────────────────────────
       case "uwu":
         return url.replace(
           /https:\/\/vault-\d+\.(owo|uwu)cdn\.top\/stream\//,
@@ -261,8 +274,20 @@ class DefaultExtension extends MProvider {
           /https:\/\/[^/]+\//,
           "https://ply.24stream.xyz/media/"
         );
-      default:
-        return url; // vee, wave, beep: identity; u()-based providers: leave as-is
+
+      // ── origin-swap providers ──────────────────────────────────────────────
+      case "nuri":  return this.replaceOrigin(url, "https://rapid-cloud.co");
+      case "shiro": return this.replaceOrigin(url, "https://kem.clvd.xyz");
+      case "kami":  return this.replaceOrigin(url, "https://krussdomi.com");
+      case "yuki":  return this.replaceOrigin(url, "https://megaplay.buzz");
+      case "koto":  return this.replaceOrigin(url, "https://megacloud.blog");
+      case "miru":  return this.replaceOrigin(url, "https://senshi.live");
+      case "maze":  return this.replaceOrigin(url, "https://ayy-eu.1stkmgv1.com");
+      case "kiwi":  return this.replaceOrigin(url, "https://4spromax.site");
+      case "zaza":  return this.replaceOrigin(url, "https://anizone.to");
+
+      // ── identity providers (mimi, wave, vee, beep) ────────────────────────
+      default: return url;
     }
   }
 
@@ -272,18 +297,18 @@ class DefaultExtension extends MProvider {
     var anilistId = parseInt(url.replace(/[^0-9]/g, ""), 10);
     if (!anilistId) throw new Error("Cannot parse AniList ID: " + url);
 
-    // Fetch AniList metadata (reliable, fast)
     var data = await this.gql(MEDIA_DETAIL_QUERY, { id: anilistId });
     var m = (data && data.Media) || {};
 
-    var name       = this.titleByPref(m.title || {});
-    var imageUrl   = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
+    var name        = this.titleByPref(m.title || {});
+    var imageUrl    = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
     var description = (m.description || "").replace(/<[^>]*>/g, "").replace(/\n{3,}/g, "\n\n").trim();
-    var genre      = m.genres || [];
-    var status     = this.statusCode(m.status);
-    var isMovie    = m.format === "MOVIE";
+    var genre       = m.genres || [];
+    var status      = this.statusCode(m.status);
+    var isMovie     = m.format === "MOVIE";
 
-    // Get the site slug needed for the chad API
+    // Fetch slug (hits Cloudflare-protected anidap.se — manual webview bypass
+    // may be needed on first use; clearance cookie persists after that).
     var slug = await this.getSlug(anilistId);
 
     var chapters = [];
@@ -296,8 +321,7 @@ class DefaultExtension extends MProvider {
         var chName = isMovie ? title : ("E" + num + " — " + title);
         chapters.push({
           name: chName,
-          // URL encodes both the AniList ID and the slug so getVideoList
-          // can call the chad API directly without an extra network round-trip.
+          // Embed slug in chapter URL so getVideoList() needs no extra round-trip.
           url: anilistId + "|" + num + "|" + slug,
           thumbnailUrl: ep.img || null,
           description: ep.description || null,
@@ -305,7 +329,8 @@ class DefaultExtension extends MProvider {
         });
       });
     } else {
-      // Fallback: numbered stubs from AniList episode count
+      // Fallback: numbered stubs from AniList episode count.
+      // Streams will be unavailable until Cloudflare is bypassed.
       var epCount = m.episodes || 0;
       for (var j = 1; j <= epCount; j++) {
         chapters.push({
@@ -332,7 +357,6 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     // Chapter URL format: "{anilistId}|{epNum}|{slug}"
-    // e.g. "153800|1|one-punch-man-season-3-i5r8m"
     var parts     = url.split("|");
     var anilistId = parts[0] || "";
     var epNum     = parts[1] || "";
@@ -340,48 +364,56 @@ class DefaultExtension extends MProvider {
 
     if (!anilistId || !epNum) return [];
 
-    // If the chapter was created from a stub (no slug), fetch it now.
+    // Stub chapters (no slug) require a live slug fetch.
     if (!slug) {
       slug = await this.getSlug(anilistId);
       if (!slug) return [];
     }
 
-    // Get available providers for this episode
-    var servers = await this.chadServers(slug, epNum);
+    var servers      = await this.chadServers(slug, epNum);
     var subProviders = servers.subProviders || [];
     var dubProviders = servers.dubProviders || [];
 
-    // Select default providers (flagged default:true, or first entry)
+    function findProvider(list, id) {
+      for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
+      return null;
+    }
     function defaultProvider(list) {
       for (var i = 0; i < list.length; i++) { if (list[i].default) return list[i]; }
       return list[0] || null;
     }
 
-    var audioPref   = this.getPreference("anidap_audio_pref");
-    var subDefault  = defaultProvider(subProviders);
-    var dubDefault  = defaultProvider(dubProviders);
+    var audioPref  = this.getPreference("anidap_audio_pref");
+    var subDefault = defaultProvider(subProviders);
+    var dubDefault = defaultProvider(dubProviders);
 
-    // Helper: find a provider by id in a list
-    function findProvider(list, id) {
-      for (var fi = 0; fi < list.length; fi++) { if (list[fi].id === id) return list[fi]; }
-      return null;
-    }
-
-    var subMochi = findProvider(subProviders, "mochi");
-    var dubMochi = findProvider(dubProviders, "mochi") || dubDefault;
-
-    // Stream order matters: Mangayomi downloads the FIRST stream automatically
-    // (no quality picker for downloads).  mochi serves a direct ~441 MB video
-    // file (mp4.24stream.xyz, application/octet-stream) — no HLS parsing or
-    // AES-128 decryption needed.  Put it first so downloads always work.
+    // ── Stream order ───────────────────────────────────────────────────────
     //
-    // The uwu streams (multi-quality HLS) follow for in-player quality selection.
+    // Mangayomi auto-picks the FIRST stream for downloads (no quality picker).
+    // mochi serves a direct ~400 MB video file (mp4.24stream.xyz) which
+    // Mangayomi can download without HLS parsing or AES-128 decryption.
+    // All other providers serve HLS master playlists — great for in-player
+    // quality selection, but encrypted and not reliably downloadable.
+    //
+    // Order:
+    //  1. mochi sub  — direct file, sub audio → download target
+    //  2. HLS sub/dub in audio-preference order (uwu default first)
+    //  3. mimi sub/dub — vibeplayer.site HLS, good fallback
+    //  4. shiro sub    — kem.clvd.xyz HLS
+    //  5. mochi dub    — direct file, dub audio
+
     var categories = [];
 
-    // 1. mochi sub — first = automatic download target
+    var subMochi  = findProvider(subProviders, "mochi");
+    var dubMochi  = findProvider(dubProviders, "mochi");
+    var subMimi   = findProvider(subProviders, "mimi");
+    var dubMimi   = findProvider(dubProviders, "mimi");
+    var subShiro  = findProvider(subProviders, "shiro");
+
+    // 1. mochi sub first — automatic download target
     if (subMochi) categories.push({ type: "sub", provider: subMochi });
 
-    // 2. HLS streams — preference-ordered so the right audio is listed first
+    // 2. default HLS in preferred audio order
     if (audioPref === "dub") {
       if (dubDefault && dubDefault.id !== "mochi") categories.push({ type: "dub", provider: dubDefault });
       if (subDefault && subDefault.id !== "mochi") categories.push({ type: "sub", provider: subDefault });
@@ -390,8 +422,21 @@ class DefaultExtension extends MProvider {
       if (dubDefault && dubDefault.id !== "mochi") categories.push({ type: "dub", provider: dubDefault });
     }
 
-    // 3. mochi dub — direct file, dub audio
-    if (dubMochi && dubMochi.id === "mochi") categories.push({ type: "dub", provider: dubMochi });
+    // 3. mimi as additional HLS fallback (sub + dub)
+    if (subMimi && subMimi.id !== (subDefault && subDefault.id)) {
+      categories.push({ type: "sub", provider: subMimi });
+    }
+    if (dubMimi && dubMimi.id !== (dubDefault && dubDefault.id)) {
+      categories.push({ type: "dub", provider: dubMimi });
+    }
+
+    // 4. shiro sub as HLS fallback
+    if (subShiro && subShiro.id !== (subDefault && subDefault.id)) {
+      categories.push({ type: "sub", provider: subShiro });
+    }
+
+    // 5. mochi dub — direct file, dub audio
+    if (dubMochi) categories.push({ type: "dub", provider: dubMochi });
 
     var streams = [];
     var seen    = {};
@@ -404,16 +449,15 @@ class DefaultExtension extends MProvider {
         var srcData = await this.chadSources(slug, epNum, cat.type, cat.provider.id);
         if (!srcData) continue;
 
-        var sources  = srcData.sources || [];
-        var tracks   = srcData.tracks  || [];
+        var sources = srcData.sources || [];
+        var tracks  = srcData.tracks  || [];
 
-        // sv6.otakuu.se (the real CDN after URL transformation) serves content
-        // with no custom origin/referer requirements — only a UA is needed.
-        var streamHdrs = {
-          "User-Agent": this.ua,
-        };
+        // Use the Referer returned by the API — CDNs check it for hotlink
+        // protection. Without it the server returns 403 / an HTML error page.
+        var apiHdrs = srcData.headers || {};
+        var streamHdrs = { "User-Agent": this.ua };
+        if (apiHdrs.Referer) streamHdrs.Referer = apiHdrs.Referer;
 
-        // Build subtitle list
         var subtitles = [];
         (tracks || []).forEach(function(t) {
           if (t && (t.url || t.file)) {
@@ -421,15 +465,11 @@ class DefaultExtension extends MProvider {
           }
         });
 
-        // Each source already carries a quality label (e.g. "1080p") from the API.
         for (var k = 0; k < sources.length; k++) {
           var src    = sources[k];
           var srcUrl = src && src.url;
           if (!srcUrl) continue;
 
-          // Apply the provider-specific URL transformation (mirrors the site's
-          // api.js transform map) so the URL points to the real CDN, not the
-          // vault-*.owocdn.top placeholder that returns HTTP 503.
           srcUrl = this.transformUrl(srcUrl, cat.provider.id);
 
           var quality = (src.quality || "Auto") +
