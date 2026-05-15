@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.4",
+    "version": "1.4.5",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -378,50 +378,39 @@ class DefaultExtension extends MProvider {
       for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
       return null;
     }
-    function defaultProvider(list) {
-      for (var i = 0; i < list.length; i++) { if (list[i].default) return list[i]; }
-      return list[0] || null;
-    }
 
-    var audioPref  = this.getPreference("anidap_audio_pref");
-    var subDefault = defaultProvider(subProviders);
-    var dubDefault = defaultProvider(dubProviders);
+    var audioPref = this.getPreference("anidap_audio_pref");
 
     // ── Stream order ───────────────────────────────────────────────────────
     //
-    // The chad API applies a per-IP rate limit across ALL /sources requests.
-    // Every extra provider fetch burns quota that could be needed for the
-    // next episode.  Keep the request count to the minimum needed.
+    // mochi is the ONLY provider that returns a direct video file (MP4,
+    // ~238 MB, mp4.24stream.xyz).  All other providers (uwu, shiro, etc.)
+    // return AES-128 encrypted HLS with relative segment URLs — Mangayomi's
+    // download manager cannot decrypt and reassemble them.
     //
-    // mochi is the ONLY provider that returns a direct video file (~400 MB,
-    // mp4.24stream.xyz).  All other providers return AES-128 encrypted HLS
-    // which Mangayomi cannot download.  So the order is:
+    // Fetching HLS providers also wastes sources-API quota: the chad API
+    // enforces a per-IP rate limit with a ~39-minute window.  When the user
+    // plays an episode (consuming quota) and then taps Download (triggering
+    // another getVideoList() call), the HLS requests push the total over the
+    // limit → all chadSources() calls return null → empty stream list →
+    // "nothing happens" on download.
     //
-    //   1. mochi sub  — direct file, the only downloadable stream
-    //   2. default sub (uwu) — HLS, best for in-player quality selection
-    //   3. default dub — added when dub is preferred OR as an extra option
-    //
-    // Total: 2 API requests per episode load.  (Previously 5–6.)
-
-    var categories = [];
+    // Fix: fetch ONLY mochi (1–2 sources requests per getVideoList() call).
+    // mochi plays and downloads reliably; the rate limit is never approached.
 
     var subMochi = findProvider(subProviders, "mochi");
     var dubMochi = findProvider(dubProviders, "mochi");
 
-    // 1. mochi sub — must be first so Mangayomi auto-downloads it
-    if (subMochi) categories.push({ type: "sub", provider: subMochi });
-
-    // 2. default HLS provider in preferred-audio order
+    var categories = [];
     if (audioPref === "dub") {
-      if (dubDefault && dubDefault.id !== "mochi") categories.push({ type: "dub", provider: dubDefault });
-      if (subDefault && subDefault.id !== "mochi") categories.push({ type: "sub", provider: subDefault });
+      // Dub preferred — dub audio first, sub as fallback
+      if (dubMochi) categories.push({ type: "dub", provider: dubMochi });
+      if (subMochi) categories.push({ type: "sub", provider: subMochi });
     } else {
-      if (subDefault && subDefault.id !== "mochi") categories.push({ type: "sub", provider: subDefault });
-      if (dubDefault && dubDefault.id !== "mochi") categories.push({ type: "dub", provider: dubDefault });
+      // Sub preferred (default) — sub first so Mangayomi auto-downloads it
+      if (subMochi) categories.push({ type: "sub", provider: subMochi });
+      if (dubMochi) categories.push({ type: "dub", provider: dubMochi });
     }
-
-    // 3. mochi dub — direct file with dub audio (one extra request, worth it)
-    if (dubMochi) categories.push({ type: "dub", provider: dubMochi });
 
     var streams = [];
     var seen    = {};
@@ -457,7 +446,11 @@ class DefaultExtension extends MProvider {
 
           srcUrl = this.transformUrl(srcUrl, cat.provider.id);
 
-          var quality = (src.quality || "Auto") +
+          // mochi always reports quality "auto" — label it as MP4 so the
+          // user knows it is a direct file (not HLS) and is downloadable.
+          var rawQ   = (src.quality || "").toLowerCase();
+          var qLabel = (rawQ && rawQ !== "auto") ? src.quality : "MP4";
+          var quality = qLabel +
             " [" + cat.type.toUpperCase() + "] " +
             cat.provider.id.toUpperCase();
           var key = srcUrl + "|" + cat.type;
