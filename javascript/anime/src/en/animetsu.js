@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.12",
+    "version": "1.1.13",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -221,13 +221,18 @@ class DefaultExtension extends MProvider {
       })
     );
 
-    // Sort helper: put [DL]-labelled streams first so Mangayomi's download
-    // manager auto-selects a direct MP4 rather than an AES-128 encrypted HLS
-    // playlist. Mangayomi cannot decrypt/reassemble AES-128 HLS segments.
+    // Sort helper — priority order for Mangayomi's download manager:
+    //   [MP4]  (score 2) — single-file direct MP4, best for offline download
+    //   [DL]   (score 1) — unencrypted HLS, Mangayomi may segment-download it
+    //   (none) (score 0) — AES-128 encrypted HLS, unusable offline
     function dlFirst(a, b) {
-      var aDl = (a.quality || "").includes("[DL]") ? 1 : 0;
-      var bDl = (b.quality || "").includes("[DL]") ? 1 : 0;
-      return bDl - aDl;
+      function score(s) {
+        var q = s.quality || "";
+        if (q.includes("[MP4]")) return 2;
+        if (q.includes("[DL]")) return 1;
+        return 0;
+      }
+      return score(b) - score(a);
     }
 
     if (!dlPref) {
@@ -254,10 +259,16 @@ class DefaultExtension extends MProvider {
     epData.forEach((item) => {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
-      var isMp4 = item.type === "video/mp4" || item.old_hls === false;
-      var label = isMp4
-        ? this.streamNamer(quality + " [DL]", audioType, serverName)
-        : this.streamNamer(quality, audioType, serverName);
+      // Distinguish between a true single-file MP4 (best for offline download,
+      // Mangayomi can save it as a regular file) and unencrypted HLS
+      // (old_hls === false but type is video/mpegurl — still needs segment download).
+      var directMp4 = item.type === "video/mp4";
+      var unencryptedHls = !directMp4 && item.old_hls === false;
+      var label = directMp4
+        ? this.streamNamer(quality + " [MP4]", audioType, serverName)
+        : (unencryptedHls
+          ? this.streamNamer(quality + " [DL]", audioType, serverName)
+          : this.streamNamer(quality, audioType, serverName));
       streams.push({
         url: link,
         originalUrl: link,
