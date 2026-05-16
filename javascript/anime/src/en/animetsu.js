@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.10",
+    "version": "1.1.11",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -326,42 +326,25 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  // owocdn.top CDN (vault-*.owocdn.top) is Cloudflare-protected and returns 503.
-  // sv6.otakuu.se serves the same content without CF — same path structure.
-  // (Identical transform used by the anidap.js extension for its "uwu" provider.)
-  transformOwoCdnUrl(url) {
-    if (!url) return url;
-    return url.replace(
-      /https?:\/\/vault-\d+\.(owo|uwu)cdn\.top\//,
-      "https://sv6.otakuu.se/storage/"
-    );
-  }
-
-  // Resolve a pahe.win shortlink → direct MP4 CDN URL.
-  // Step 1: GET pahe.win page → extract kwik.cx URL from JS string literal.
-  // Step 2: GET kwik.cx/f/{hash} → extract CSRF token + form action.
-  // Step 3: POST kwik.cx/d/{hash} → 302 redirect to owocdn.top MP4 CDN URL.
-  // Step 4: Transform owocdn.top → sv6.otakuu.se to bypass CF protection.
+  // Resolve a pahe.win shortlink → direct MP4 CDN URL via kwik.cx.
+  // owocdn.top (the final CDN) is Cloudflare-protected; this chain only works
+  // when Mangayomi's HTTP client already holds a valid kwik.cx CF session.
   async resolveKwikDownload(paheWinUrl) {
     try {
       var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-      // Step 1: pahe.win countdown page embeds the kwik URL as a JS string literal:
-      //   $("a.redirect").attr("href","https://kwik.cx/f/HASH")
+      // Step 1: pahe.win embeds the kwik URL in JS before the CF countdown resolves.
       var paheRes = await this.client.get(paheWinUrl, {
-        "User-Agent": ua,
-        "Referer": "https://animetsu.bz/",
+        "User-Agent": ua, "Referer": "https://animetsu.bz/",
       });
       var paheBody = paheRes.body || "";
-
       var kwikMatch = paheBody.match(/["'](https?:\/\/kwik\.[a-z]{2,3}\/[ef]\/[A-Za-z0-9]+)["']/);
       if (!kwikMatch) return null;
       var kwikFileUrl = kwikMatch[1].replace("/e/", "/f/");
 
-      // Step 2: kwik.cx/f/{hash} — plain HTML form (no packer obfuscation)
+      // Step 2: GET kwik.cx/f/{hash} — plain form, no packer obfuscation.
       var kwikRes = await this.client.get(kwikFileUrl, {
-        "User-Agent": ua,
-        "Referer": paheWinUrl,
+        "User-Agent": ua, "Referer": paheWinUrl,
       });
       var kwikBody = kwikRes.body || "";
       if (kwikBody.length < 100) return null;
@@ -369,109 +352,108 @@ class DefaultExtension extends MProvider {
       var tokenMatch = kwikBody.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/)
                     || kwikBody.match(/value=["']([^"']{20,})["'][^>]*name=["']_token["']/);
       if (!tokenMatch) return null;
-
       var actionMatch = kwikBody.match(/action=["'](https?:\/\/kwik\.[^"']+\/d\/[^"']+)["']/);
       if (!actionMatch) return null;
       var dlAction = actionMatch[1];
 
-      // Step 3: POST → 302 redirect to owocdn.top MP4 CDN URL
+      // Step 3: POST → 302 redirect to vault-*.owocdn.top MP4 CDN URL.
       var postRes = await this.client.post(
         dlAction,
-        {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": ua,
-          "Referer": kwikFileUrl,
-          "Origin": "https://kwik.cx",
-        },
+        { "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": ua, "Referer": kwikFileUrl, "Origin": "https://kwik.cx" },
         "_token=" + encodeURIComponent(tokenMatch[1])
       );
 
-      // Extract the CDN URL then transform owocdn.top → sv6.otakuu.se (no CF)
-      var cdnUrl = null;
-
-      // Case 1: Location header exposed (redirect not followed)
+      // Case 1: Location header (redirect not auto-followed)
       if (postRes.headers) {
         var loc = postRes.headers["location"] || postRes.headers["Location"];
-        if (loc && loc.startsWith("http")) cdnUrl = loc;
+        if (loc && loc.startsWith("http")) return loc;
       }
       // Case 2: redirect was followed, final URL in .url
-      if (!cdnUrl && postRes.url && postRes.url !== dlAction && /\.(mp4|webm|mkv)/i.test(postRes.url)) {
-        cdnUrl = postRes.url;
+      if (postRes.url && postRes.url !== dlAction && /\.(mp4|webm|mkv)/i.test(postRes.url)) {
+        return postRes.url;
       }
-      // Case 3: redirect HTML body contains the CDN URL (href or raw)
-      if (!cdnUrl && postRes.body && typeof postRes.body === "string") {
-        var hrefMatch = postRes.body.match(/href=["'](https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)["']/i);
-        if (hrefMatch) cdnUrl = hrefMatch[1];
-        if (!cdnUrl) {
-          var rawMatch = postRes.body.match(/https?:\/\/[a-z0-9-]+\.[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-          if (rawMatch) cdnUrl = rawMatch[0];
-        }
+      // Case 3: body contains CDN URL
+      if (postRes.body && typeof postRes.body === "string") {
+        var hrefM = postRes.body.match(/href=["'](https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)["']/i);
+        if (hrefM) return hrefM[1];
+        var rawM = postRes.body.match(/https?:\/\/[a-z0-9-]+\.[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
+        if (rawM) return rawM[0];
       }
-
-      // Transform owocdn.top to sv6.otakuu.se to bypass Cloudflare 503
-      if (cdnUrl) return this.transformOwoCdnUrl(cdnUrl);
-
       return null;
-    } catch (e) {
-      return null;
-    }
+    } catch (e) { return null; }
   }
 
-  // Build download-friendly stream entries.
-  // Primary:  resolve pahe.win → kwik.cx → owocdn.top direct MP4 CDN URLs.
-  // Fallback: meg server proxy MP4 streams — identical source used by the player,
-  //           guaranteed to work whenever streaming works.
+  // Build the download stream list shown to Mangayomi's download manager.
+  //
+  // Priority order (best → worst for offline playback):
+  //   1. kwik.cx → owocdn.top  — direct MP4, no decryption needed.
+  //      Only works when Mangayomi holds a kwik.cx CF session; silently skipped
+  //      if the chain fails (owocdn is CF-protected when accessed cold).
+  //   2. kite server            — unencrypted HLS (no AES-128 key).
+  //      Mangayomi downloads each TS segment via swiftstream proxy with the
+  //      stream headers; the reassembled file plays offline without any
+  //      decryption step.  This is the most reliable fallback.
+  //   3. meg server MP4         — only present when meg actually returns
+  //      type:"video/mp4"; many anime fall back to pahe HLS here, so this
+  //      is filtered strictly.
   async getDownloadStreams(url) {
     var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     var results = [];
-
-    // Primary: kwik.cx → direct CDN URL (owocdn.top)
-    try {
-      var dlData = await this.request("/dl/" + url);
-      if (Array.isArray(dlData) && dlData.length > 0) {
-        var kwikStreams = await Promise.all(
-          dlData.map(async (item) => {
-            try {
-              if (!item.link) return null;
-              var directUrl = await this.resolveKwikDownload(item.link);
-              if (!directUrl) return null;
-              // sv6.otakuu.se (transformed from owocdn.top) needs no special Referer
-              var isTransformed = directUrl.includes("sv6.otakuu.se");
-              return {
-                url: directUrl,
-                originalUrl: directUrl,
-                quality: (item.name || "Download") + " [DIRECT DL]",
-                headers: isTransformed
-                  ? { "User-Agent": ua }
-                  : { "User-Agent": ua, "Referer": "https://kwik.cx/" },
-              };
-            } catch (e) {
-              return null;
-            }
-          })
-        );
-        results.push(...kwikStreams.filter(Boolean));
-      }
-    } catch (e) {}
-
-    // Fallback: meg server MP4 proxy streams.
-    // These are the same URLs the player uses — if playback works, downloads work.
-    // Fetched for each audio type the user has configured.
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
     if (!audioPref || audioPref.length < 1) audioPref = ["sub"];
     var hdr = this.getHeaders();
 
+    // ── 1. kwik.cx direct MP4 ─────────────────────────────────────────────────
+    try {
+      var dlData = await this.request("/dl/" + url);
+      if (Array.isArray(dlData) && dlData.length > 0) {
+        var kwikStreams = await Promise.all(dlData.map(async (item) => {
+          try {
+            if (!item.link) return null;
+            var directUrl = await this.resolveKwikDownload(item.link);
+            if (!directUrl) return null;
+            return {
+              url: directUrl, originalUrl: directUrl,
+              quality: (item.name || "Download") + " [DIRECT DL]",
+              headers: { "User-Agent": ua, "Referer": "https://kwik.cx/" },
+            };
+          } catch (e) { return null; }
+        }));
+        results.push(...kwikStreams.filter(Boolean));
+      }
+    } catch (e) {}
+
+    // ── 2. kite server — unencrypted HLS ─────────────────────────────────────
+    // Kite streams have no #EXT-X-KEY, so Mangayomi can download all segments
+    // and play offline without any decryption step.
     for (var audioType of audioPref) {
       try {
-        var epData = await this.request(`/oppai/${url}?server=meg&source_type=${audioType}`);
-        if (!epData || !Array.isArray(epData.sources)) continue;
-        for (var src of epData.sources) {
-          // Only pick up MP4/direct-video sources, skip HLS
+        var kiteData = await this.request(`/oppai/${url}?server=kite&source_type=${audioType}`);
+        if (!kiteData || !Array.isArray(kiteData.sources)) continue;
+        var kiteVariants = await this.getKiteStreams(kiteData, audioType);
+        for (var kv of kiteVariants) {
+          results.push({
+            url: kv.url,
+            originalUrl: kv.originalUrl,
+            quality: kv.quality + " [DL]",
+            headers: kv.headers,
+            subtitles: kv.subtitles,
+          });
+        }
+      } catch (e) {}
+    }
+
+    // ── 3. meg server — only when it genuinely returns MP4 (not HLS) ─────────
+    for (var audioType of audioPref) {
+      try {
+        var megData = await this.request(`/oppai/${url}?server=meg&source_type=${audioType}`);
+        if (!megData || !Array.isArray(megData.sources)) continue;
+        for (var src of megData.sources) {
           if (src.type !== "video/mp4" && src.old_hls !== false) continue;
           var proxyUrl = this.getProxyMediaUrl(src.url);
           results.push({
-            url: proxyUrl,
-            originalUrl: proxyUrl,
+            url: proxyUrl, originalUrl: proxyUrl,
             quality: (src.quality || "Auto") + ` [DL] - ${audioType.toUpperCase()} : MEG`,
             headers: hdr,
           });
