@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.9",
+    "version": "1.1.10",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -221,9 +221,18 @@ class DefaultExtension extends MProvider {
       })
     );
 
+    // Sort helper: put [DL]-labelled streams first so Mangayomi's download
+    // manager auto-selects a direct MP4 rather than an AES-128 encrypted HLS
+    // playlist. Mangayomi cannot decrypt/reassemble AES-128 HLS segments.
+    function dlFirst(a, b) {
+      var aDl = (a.quality || "").includes("[DL]") ? 1 : 0;
+      var bDl = (b.quality || "").includes("[DL]") ? 1 : 0;
+      return bDl - aDl;
+    }
+
     if (!dlPref) {
       var results = await streamPromise;
-      return results.flat();
+      return results.flat().sort(dlFirst);
     }
 
     var [streamResults, dlStreams] = await Promise.all([
@@ -231,18 +240,7 @@ class DefaultExtension extends MProvider {
       this.getDownloadStreams(url),
     ]);
 
-    var all = [...streamResults.flat(), ...dlStreams];
-
-    // Sort so direct/MP4 download streams appear first in the list.
-    // Mangayomi uses the first stream when auto-selecting for downloads, so we
-    // want an actual video file (not an HLS playlist) to be at the top.
-    all.sort((a, b) => {
-      var aDl = (a.quality || "").includes("[DL]") ? 1 : 0;
-      var bDl = (b.quality || "").includes("[DL]") ? 1 : 0;
-      return bDl - aDl;
-    });
-
-    return all;
+    return [...streamResults.flat(), ...dlStreams].sort(dlFirst);
   }
 
   streamNamer(res, dubType, serverName) {
@@ -328,10 +326,22 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
+  // owocdn.top CDN (vault-*.owocdn.top) is Cloudflare-protected and returns 503.
+  // sv6.otakuu.se serves the same content without CF — same path structure.
+  // (Identical transform used by the anidap.js extension for its "uwu" provider.)
+  transformOwoCdnUrl(url) {
+    if (!url) return url;
+    return url.replace(
+      /https?:\/\/vault-\d+\.(owo|uwu)cdn\.top\//,
+      "https://sv6.otakuu.se/storage/"
+    );
+  }
+
   // Resolve a pahe.win shortlink → direct MP4 CDN URL.
   // Step 1: GET pahe.win page → extract kwik.cx URL from JS string literal.
   // Step 2: GET kwik.cx/f/{hash} → extract CSRF token + form action.
   // Step 3: POST kwik.cx/d/{hash} → 302 redirect to owocdn.top MP4 CDN URL.
+  // Step 4: Transform owocdn.top → sv6.otakuu.se to bypass CF protection.
   async resolveKwikDownload(paheWinUrl) {
     try {
       var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -376,22 +386,30 @@ class DefaultExtension extends MProvider {
         "_token=" + encodeURIComponent(tokenMatch[1])
       );
 
+      // Extract the CDN URL then transform owocdn.top → sv6.otakuu.se (no CF)
+      var cdnUrl = null;
+
       // Case 1: Location header exposed (redirect not followed)
       if (postRes.headers) {
         var loc = postRes.headers["location"] || postRes.headers["Location"];
-        if (loc && loc.startsWith("http")) return loc;
+        if (loc && loc.startsWith("http")) cdnUrl = loc;
       }
       // Case 2: redirect was followed, final URL in .url
-      if (postRes.url && postRes.url !== dlAction && /\.(mp4|webm|mkv)/i.test(postRes.url)) {
-        return postRes.url;
+      if (!cdnUrl && postRes.url && postRes.url !== dlAction && /\.(mp4|webm|mkv)/i.test(postRes.url)) {
+        cdnUrl = postRes.url;
       }
       // Case 3: redirect HTML body contains the CDN URL (href or raw)
-      if (postRes.body && typeof postRes.body === "string") {
+      if (!cdnUrl && postRes.body && typeof postRes.body === "string") {
         var hrefMatch = postRes.body.match(/href=["'](https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)["']/i);
-        if (hrefMatch) return hrefMatch[1];
-        var rawMatch = postRes.body.match(/https?:\/\/[a-z0-9-]+\.[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-        if (rawMatch) return rawMatch[0];
+        if (hrefMatch) cdnUrl = hrefMatch[1];
+        if (!cdnUrl) {
+          var rawMatch = postRes.body.match(/https?:\/\/[a-z0-9-]+\.[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
+          if (rawMatch) cdnUrl = rawMatch[0];
+        }
       }
+
+      // Transform owocdn.top to sv6.otakuu.se to bypass Cloudflare 503
+      if (cdnUrl) return this.transformOwoCdnUrl(cdnUrl);
 
       return null;
     } catch (e) {
@@ -417,12 +435,15 @@ class DefaultExtension extends MProvider {
               if (!item.link) return null;
               var directUrl = await this.resolveKwikDownload(item.link);
               if (!directUrl) return null;
+              // sv6.otakuu.se (transformed from owocdn.top) needs no special Referer
+              var isTransformed = directUrl.includes("sv6.otakuu.se");
               return {
                 url: directUrl,
                 originalUrl: directUrl,
                 quality: (item.name || "Download") + " [DIRECT DL]",
-                // owocdn.top CDN validates Referer from kwik.cx
-                headers: { "User-Agent": ua, "Referer": "https://kwik.cx/" },
+                headers: isTransformed
+                  ? { "User-Agent": ua }
+                  : { "User-Agent": ua, "Referer": "https://kwik.cx/" },
               };
             } catch (e) {
               return null;
