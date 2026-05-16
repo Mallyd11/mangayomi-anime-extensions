@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.8",
+    "version": "1.1.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -231,7 +231,18 @@ class DefaultExtension extends MProvider {
       this.getDownloadStreams(url),
     ]);
 
-    return [...streamResults.flat(), ...dlStreams];
+    var all = [...streamResults.flat(), ...dlStreams];
+
+    // Sort so direct/MP4 download streams appear first in the list.
+    // Mangayomi uses the first stream when auto-selecting for downloads, so we
+    // want an actual video file (not an HLS playlist) to be at the top.
+    all.sort((a, b) => {
+      var aDl = (a.quality || "").includes("[DL]") ? 1 : 0;
+      var bDl = (b.quality || "").includes("[DL]") ? 1 : 0;
+      return bDl - aDl;
+    });
+
+    return all;
   }
 
   streamNamer(res, dubType, serverName) {
@@ -317,58 +328,27 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  // Decode packer.js obfuscation (eval(function(p,a,c,k,e,d){...})) used on kwik.cx pages.
-  // Returns the unpacked JavaScript string, or null if pattern not found / decode failed.
-  decodePackerJs(html) {
-    try {
-      // Match the canonical packer invocation pattern
-      var m = html.match(/\(function\s*\(p,a,c,k,e,[a-z]\)\s*\{[\s\S]+?\}\s*\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*(\d+)\s*,\s*\d+\s*,\s*'((?:[^'\\]|\\.)*)'\s*\.split\s*\(\s*['"]\|['"]\s*\)/);
-      if (!m) return null;
-
-      var payload = m[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\");
-      var radix = parseInt(m[2]);
-      var keys = m[3].split("|");
-
-      // Custom base converter — parseInt only handles up to base 36; kwik uses base 62
-      var CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-      function fromBase(s) {
-        var n = 0;
-        for (var i = 0; i < s.length; i++) {
-          var d = CHARS.indexOf(s[i]);
-          if (d < 0 || d >= radix) return NaN;
-          n = n * radix + d;
-        }
-        return n;
-      }
-
-      return payload.replace(/\b([a-zA-Z0-9_$]+)\b/g, function(w) {
-        var n = fromBase(w);
-        return (!isNaN(n) && n >= 0 && n < keys.length && keys[n] !== "") ? keys[n] : w;
-      });
-    } catch (e) { return null; }
-  }
-
-  // Resolve a pahe.win shortlink → direct MP4 CDN URL (token+expiry embedded in URL).
-  // Strategy A: decode packer.js on the kwik page to extract the source URL without a POST.
-  // Strategy B: POST the kwik download form and capture the 302 Location redirect.
+  // Resolve a pahe.win shortlink → direct MP4 CDN URL.
+  // Step 1: GET pahe.win page → extract kwik.cx URL from JS string literal.
+  // Step 2: GET kwik.cx/f/{hash} → extract CSRF token + form action.
+  // Step 3: POST kwik.cx/d/{hash} → 302 redirect to owocdn.top MP4 CDN URL.
   async resolveKwikDownload(paheWinUrl) {
     try {
       var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-      // Step 1: GET pahe.win → the countdown JS contains the kwik URL
-      // e.g. $("a.redirect").attr("href","https://kwik.cx/f/HASH")
+      // Step 1: pahe.win countdown page embeds the kwik URL as a JS string literal:
+      //   $("a.redirect").attr("href","https://kwik.cx/f/HASH")
       var paheRes = await this.client.get(paheWinUrl, {
         "User-Agent": ua,
         "Referer": "https://animetsu.bz/",
       });
       var paheBody = paheRes.body || "";
 
-      // Handle kwik.cx and any other kwik.* TLD, both /f/ and /e/ paths
       var kwikMatch = paheBody.match(/["'](https?:\/\/kwik\.[a-z]{2,3}\/[ef]\/[A-Za-z0-9]+)["']/);
       if (!kwikMatch) return null;
       var kwikFileUrl = kwikMatch[1].replace("/e/", "/f/");
 
-      // Step 2: GET the kwik download page
+      // Step 2: kwik.cx/f/{hash} — plain HTML form (no packer obfuscation)
       var kwikRes = await this.client.get(kwikFileUrl, {
         "User-Agent": ua,
         "Referer": paheWinUrl,
@@ -376,17 +356,6 @@ class DefaultExtension extends MProvider {
       var kwikBody = kwikRes.body || "";
       if (kwikBody.length < 100) return null;
 
-      // Strategy A: decode packer.js → source URL (no POST, avoids redirect-capture problem)
-      var unpacked = this.decodePackerJs(kwikBody);
-      if (unpacked) {
-        var srcMatch = unpacked.match(/(?:source|src|file|url)\s*=\s*['"]([^'"]+\.mp4[^'"]*)['"]/i);
-        if (srcMatch && srcMatch[1].startsWith("http")) return srcMatch[1];
-        // Broader CDN URL search in decoded output
-        var cdnMatch = unpacked.match(/https?:\/\/[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-        if (cdnMatch) return cdnMatch[0];
-      }
-
-      // Strategy B: POST the download form; server 302s to the direct MP4 CDN URL
       var tokenMatch = kwikBody.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/)
                     || kwikBody.match(/value=["']([^"']{20,})["'][^>]*name=["']_token["']/);
       if (!tokenMatch) return null;
@@ -395,26 +364,33 @@ class DefaultExtension extends MProvider {
       if (!actionMatch) return null;
       var dlAction = actionMatch[1];
 
+      // Step 3: POST → 302 redirect to owocdn.top MP4 CDN URL
       var postRes = await this.client.post(
         dlAction,
-        { "Content-Type": "application/x-www-form-urlencoded",
+        {
+          "Content-Type": "application/x-www-form-urlencoded",
           "User-Agent": ua,
           "Referer": kwikFileUrl,
-          "Origin": "https://kwik.cx" },
+          "Origin": "https://kwik.cx",
+        },
         "_token=" + encodeURIComponent(tokenMatch[1])
       );
 
-      // Case 1: redirect NOT followed — Location header holds the direct URL
+      // Case 1: Location header exposed (redirect not followed)
       if (postRes.headers) {
         var loc = postRes.headers["location"] || postRes.headers["Location"];
         if (loc && loc.startsWith("http")) return loc;
       }
-      // Case 2: redirect WAS followed — final URL accessible via .url property
-      if (postRes.url && /\.mp4/i.test(postRes.url)) return postRes.url;
-      // Case 3: text response body may contain the CDN URL
+      // Case 2: redirect was followed, final URL in .url
+      if (postRes.url && postRes.url !== dlAction && /\.(mp4|webm|mkv)/i.test(postRes.url)) {
+        return postRes.url;
+      }
+      // Case 3: redirect HTML body contains the CDN URL (href or raw)
       if (postRes.body && typeof postRes.body === "string") {
-        var mp4Match = postRes.body.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-        if (mp4Match) return mp4Match[0];
+        var hrefMatch = postRes.body.match(/href=["'](https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)["']/i);
+        if (hrefMatch) return hrefMatch[1];
+        var rawMatch = postRes.body.match(/https?:\/\/[a-z0-9-]+\.[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
+        if (rawMatch) return rawMatch[0];
       }
 
       return null;
@@ -423,36 +399,66 @@ class DefaultExtension extends MProvider {
     }
   }
 
-  // Fetch the /dl endpoint and resolve all kwik shortlinks to direct MP4 URLs
+  // Build download-friendly stream entries.
+  // Primary:  resolve pahe.win → kwik.cx → owocdn.top direct MP4 CDN URLs.
+  // Fallback: meg server proxy MP4 streams — identical source used by the player,
+  //           guaranteed to work whenever streaming works.
   async getDownloadStreams(url) {
+    var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    var results = [];
+
+    // Primary: kwik.cx → direct CDN URL (owocdn.top)
     try {
       var dlData = await this.request("/dl/" + url);
-      if (!Array.isArray(dlData) || dlData.length === 0) return [];
+      if (Array.isArray(dlData) && dlData.length > 0) {
+        var kwikStreams = await Promise.all(
+          dlData.map(async (item) => {
+            try {
+              if (!item.link) return null;
+              var directUrl = await this.resolveKwikDownload(item.link);
+              if (!directUrl) return null;
+              return {
+                url: directUrl,
+                originalUrl: directUrl,
+                quality: (item.name || "Download") + " [DIRECT DL]",
+                // owocdn.top CDN validates Referer from kwik.cx
+                headers: { "User-Agent": ua, "Referer": "https://kwik.cx/" },
+              };
+            } catch (e) {
+              return null;
+            }
+          })
+        );
+        results.push(...kwikStreams.filter(Boolean));
+      }
+    } catch (e) {}
 
-      var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    // Fallback: meg server MP4 proxy streams.
+    // These are the same URLs the player uses — if playback works, downloads work.
+    // Fetched for each audio type the user has configured.
+    var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
+    if (!audioPref || audioPref.length < 1) audioPref = ["sub"];
+    var hdr = this.getHeaders();
 
-      var streams = await Promise.all(
-        dlData.map(async (item) => {
-          try {
-            if (!item.link) return null;
-            var directUrl = await this.resolveKwikDownload(item.link);
-            if (!directUrl) return null;
-            return {
-              url: directUrl,
-              originalUrl: directUrl,
-              quality: (item.name || "Download") + " [DIRECT DL]",
-              headers: { "User-Agent": ua },
-            };
-          } catch (e) {
-            return null;
-          }
-        })
-      );
-
-      return streams.filter(Boolean);
-    } catch (e) {
-      return [];
+    for (var audioType of audioPref) {
+      try {
+        var epData = await this.request(`/oppai/${url}?server=meg&source_type=${audioType}`);
+        if (!epData || !Array.isArray(epData.sources)) continue;
+        for (var src of epData.sources) {
+          // Only pick up MP4/direct-video sources, skip HLS
+          if (src.type !== "video/mp4" && src.old_hls !== false) continue;
+          var proxyUrl = this.getProxyMediaUrl(src.url);
+          results.push({
+            url: proxyUrl,
+            originalUrl: proxyUrl,
+            quality: (src.quality || "Auto") + ` [DL] - ${audioType.toUpperCase()} : MEG`,
+            headers: hdr,
+          });
+        }
+      } catch (e) {}
     }
+
+    return results;
   }
 
   getFilterList() {
