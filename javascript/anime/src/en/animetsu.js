@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.11",
+    "version": "1.1.12",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -299,7 +299,7 @@ class DefaultExtension extends MProvider {
               var stream = {
                 url: variantUrl,
                 originalUrl: variantUrl,
-                quality: this.streamNamer(resolution, "soft" + audioType, "kite"),
+                quality: this.streamNamer(resolution + " [DL]", "soft" + audioType, "kite"),
                 headers: hdr,
               };
               if (!parsed) {
@@ -316,7 +316,7 @@ class DefaultExtension extends MProvider {
         streams.push({
           url: masterUrl,
           originalUrl: masterUrl,
-          quality: this.streamNamer("Auto", "soft" + audioType, "kite"),
+          quality: this.streamNamer("Auto [DL]", "soft" + audioType, "kite"),
           headers: hdr,
           subtitles: subtitles,
         });
@@ -384,82 +384,35 @@ class DefaultExtension extends MProvider {
     } catch (e) { return null; }
   }
 
-  // Build the download stream list shown to Mangayomi's download manager.
+  // Optional extra download streams: attempt the kwik.cx → owocdn.top chain
+  // for direct MP4 links. owocdn.top is CF-protected so this only works when
+  // Mangayomi already holds a kwik.cx CF session. Silently returns [] on failure.
   //
-  // Priority order (best → worst for offline playback):
-  //   1. kwik.cx → owocdn.top  — direct MP4, no decryption needed.
-  //      Only works when Mangayomi holds a kwik.cx CF session; silently skipped
-  //      if the chain fails (owocdn is CF-protected when accessed cold).
-  //   2. kite server            — unencrypted HLS (no AES-128 key).
-  //      Mangayomi downloads each TS segment via swiftstream proxy with the
-  //      stream headers; the reassembled file plays offline without any
-  //      decryption step.  This is the most reliable fallback.
-  //   3. meg server MP4         — only present when meg actually returns
-  //      type:"video/mp4"; many anime fall back to pahe HLS here, so this
-  //      is filtered strictly.
+  // NOTE: kite streams (unencrypted HLS, best for downloads) are already
+  // included via streamPromise in getVideoList with a [DL] label. No extra
+  // API calls are made here to avoid slowing down / timing out getVideoList.
   async getDownloadStreams(url) {
     var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     var results = [];
-    var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
-    if (!audioPref || audioPref.length < 1) audioPref = ["sub"];
-    var hdr = this.getHeaders();
 
-    // ── 1. kwik.cx direct MP4 ─────────────────────────────────────────────────
     try {
       var dlData = await this.request("/dl/" + url);
-      if (Array.isArray(dlData) && dlData.length > 0) {
-        var kwikStreams = await Promise.all(dlData.map(async (item) => {
-          try {
-            if (!item.link) return null;
-            var directUrl = await this.resolveKwikDownload(item.link);
-            if (!directUrl) return null;
-            return {
-              url: directUrl, originalUrl: directUrl,
-              quality: (item.name || "Download") + " [DIRECT DL]",
-              headers: { "User-Agent": ua, "Referer": "https://kwik.cx/" },
-            };
-          } catch (e) { return null; }
-        }));
-        results.push(...kwikStreams.filter(Boolean));
-      }
+      if (!Array.isArray(dlData) || dlData.length === 0) return results;
+
+      var kwikStreams = await Promise.all(dlData.map(async (item) => {
+        try {
+          if (!item.link) return null;
+          var directUrl = await this.resolveKwikDownload(item.link);
+          if (!directUrl) return null;
+          return {
+            url: directUrl, originalUrl: directUrl,
+            quality: (item.name || "Download") + " [DIRECT DL]",
+            headers: { "User-Agent": ua, "Referer": "https://kwik.cx/" },
+          };
+        } catch (e) { return null; }
+      }));
+      results.push(...kwikStreams.filter(Boolean));
     } catch (e) {}
-
-    // ── 2. kite server — unencrypted HLS ─────────────────────────────────────
-    // Kite streams have no #EXT-X-KEY, so Mangayomi can download all segments
-    // and play offline without any decryption step.
-    for (var audioType of audioPref) {
-      try {
-        var kiteData = await this.request(`/oppai/${url}?server=kite&source_type=${audioType}`);
-        if (!kiteData || !Array.isArray(kiteData.sources)) continue;
-        var kiteVariants = await this.getKiteStreams(kiteData, audioType);
-        for (var kv of kiteVariants) {
-          results.push({
-            url: kv.url,
-            originalUrl: kv.originalUrl,
-            quality: kv.quality + " [DL]",
-            headers: kv.headers,
-            subtitles: kv.subtitles,
-          });
-        }
-      } catch (e) {}
-    }
-
-    // ── 3. meg server — only when it genuinely returns MP4 (not HLS) ─────────
-    for (var audioType of audioPref) {
-      try {
-        var megData = await this.request(`/oppai/${url}?server=meg&source_type=${audioType}`);
-        if (!megData || !Array.isArray(megData.sources)) continue;
-        for (var src of megData.sources) {
-          if (src.type !== "video/mp4" && src.old_hls !== false) continue;
-          var proxyUrl = this.getProxyMediaUrl(src.url);
-          results.push({
-            url: proxyUrl, originalUrl: proxyUrl,
-            quality: (src.quality || "Auto") + ` [DL] - ${audioType.toUpperCase()} : MEG`,
-            headers: hdr,
-          });
-        }
-      } catch (e) {}
-    }
 
     return results;
   }
@@ -509,9 +462,9 @@ class DefaultExtension extends MProvider {
       {
         key: "animetsu_pref_dl_links",
         switchPreferenceCompat: {
-          title: "Fetch direct download links",
-          summary: "Resolve kwik.cx URLs for direct MP4 downloads (adds extra requests on episode load)",
-          value: true,
+          title: "Fetch direct download links (experimental)",
+          summary: "Attempt to resolve kwik.cx → direct MP4 URLs. Requires Mangayomi to hold a kwik.cx Cloudflare session. Adds extra requests on episode load — leave off if downloads are slow to start.",
+          value: false,
         },
       },
       {
