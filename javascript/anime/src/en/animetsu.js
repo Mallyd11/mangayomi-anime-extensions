@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.14",
+    "version": "1.1.15",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -269,11 +269,19 @@ class DefaultExtension extends MProvider {
       var label = downloadable
         ? this.streamNamer(quality + " [DL]", audioType, serverName)
         : this.streamNamer(quality, audioType, serverName);
+      // swiftstream's meg proxy rejects full GET (returns 400) but responds
+      // correctly to Range requests. Adding "Range":"bytes=0-" forces Mangayomi's
+      // download manager to issue a Range GET, receiving a 206 with the full
+      // 72 MB file. Per-request Range headers from the player override this
+      // default, so seeking during streaming is unaffected.
+      var entryHeaders = directMp4
+        ? Object.assign({}, hdr, { "Range": "bytes=0-" })
+        : hdr;
       var entry = {
         url: link,
         originalUrl: link,
         quality: label,
-        headers: hdr,
+        headers: entryHeaders,
       };
       if (directMp4) entry._mp4Dl = true;
       streams.push(entry);
