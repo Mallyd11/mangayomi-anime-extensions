@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.16",
+    "version": "1.1.17",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -222,13 +222,14 @@ class DefaultExtension extends MProvider {
     );
 
     // Sort helper — priority order for Mangayomi's download manager:
-    //   _kwikDl=true (score 2) — kwik→owocdn direct BD MP4, best for offline
+    //   _kwikDl=true (score 3) — kwik→owocdn direct BD MP4, best for offline
+    //   _megDl=true  (score 2) — swiftstream proxy MP4 (.mp4 suffix + Range header)
     //   [DL]         (score 1) — unencrypted HLS (kite), segment-based download
-    //   (none)       (score 0) — AES-128 encrypted HLS or meg proxy MP4 (streaming only)
-    // kwik streams are labelled "[DL]" AND carry _kwikDl so they float to the top.
+    //   (none)       (score 0) — AES-128 encrypted HLS (pahe), streaming only
     function dlFirst(a, b) {
       function score(s) {
-        if (s._kwikDl) return 2;
+        if (s._kwikDl) return 3;
+        if (s._megDl) return 2;
         if ((s.quality || "").includes("[DL]")) return 1;
         return 0;
       }
@@ -259,17 +260,33 @@ class DefaultExtension extends MProvider {
     epData.forEach((item) => {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
-      // pahe = AES-128 HLS (encrypted, unusable offline).
-      // meg  = direct MP4 but swiftstream rejects full GET with 400 — streaming
-      //        only, not downloadable via Mangayomi's download manager.
-      // Neither server gets the "[DL]" label. Offline MP4s come from the
-      // kwik → owocdn chain in getDownloadStreams.
-      streams.push({
-        url: link,
-        originalUrl: link,
-        quality: this.streamNamer(quality, audioType, serverName),
-        headers: hdr,
-      });
+
+      if (serverName === "meg") {
+        // meg serves a direct MP4 via swiftstream proxy.
+        // Append .mp4 so Mangayomi's isMediaVideo() routes this URL to the
+        // direct-streaming download path (originalUrl must end in a video
+        // extension — without it both m3u8Urls and nonM3u8Urls are empty and
+        // the download spins forever).
+        // Swiftstream requires Range: bytes=0- when the .mp4 suffix is present:
+        //   plain GET/HEAD → 500 │ Range GET/HEAD → 200/206 with full content.
+        var megUrl = link + ".mp4";
+        var megHdr = Object.assign({}, hdr, { "Range": "bytes=0-" });
+        streams.push({
+          url: megUrl,
+          originalUrl: megUrl,
+          quality: this.streamNamer(quality + " [DL]", audioType, serverName),
+          headers: megHdr,
+          _megDl: true,
+        });
+      } else {
+        // pahe = AES-128 encrypted HLS — streaming only, not downloadable offline.
+        streams.push({
+          url: link,
+          originalUrl: link,
+          quality: this.streamNamer(quality, audioType, serverName),
+          headers: hdr,
+        });
+      }
     });
 
     return streams;
