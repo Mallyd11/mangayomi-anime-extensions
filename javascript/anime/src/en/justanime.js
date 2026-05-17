@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.7",
+    "version": "0.0.8",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -142,11 +142,12 @@ class DefaultExtension extends MProvider {
     // Try to get real episode data_ids needed for streaming
     try {
       var epList = await this.apiGet("/episodes/" + id);
-      var episodes = epList.results || epList.data || [];
+      var episodes = epList.results || epList.data || epList.episodes || epList.episodeList || epList.list || [];
       for (var ei = 0; ei < episodes.length; ei++) {
         var ep = episodes[ei];
-        var dataId = ep.data_id || ep.id || ep.episode_id || String(ep.episode_no || (ei + 1));
-        var epNum = ep.episode_no || ep.number || (ei + 1);
+        // Prefer a dedicated data_id / episode_id; fall back to the episode number
+        var dataId = ep.data_id || ep.dataId || ep.episode_id || ep.episodeId || ep.id || String(ep.episode_no || ep.number || (ei + 1));
+        var epNum = ep.episode_no || ep.number || ep.episodeNumber || (ei + 1);
         chapters.push({ name: "Episode " + epNum, url: id + "||" + dataId });
       }
     } catch (e) {}
@@ -188,27 +189,34 @@ class DefaultExtension extends MProvider {
 
     try {
       var serversData = await this.apiGet("/servers/" + animeId + "?ep=" + episodeDataId);
-      var servers = serversData.results || serversData.data || [];
+      var servers = serversData.results || serversData.data || serversData.servers || [];
 
       for (var si = 0; si < servers.length; si++) {
         var server = servers[si];
-        var serverName = server.serverName || server.server_name || server.name;
-        var type = (server.type || "sub").toLowerCase();
-        if (!serverName || (type !== "sub" && type !== "dub")) continue;
+        var serverName = server.serverName || server.server_name || server.name || server.server;
+        if (!serverName) continue;
+
+        // Normalise type: anything containing "dub" → dub, everything else → sub
+        var rawType = (server.type || server.category || server.audioType || server.audio || "sub").toLowerCase();
+        var type = rawType.indexOf("dub") >= 0 ? "dub" : "sub";
 
         try {
-          // The API embeds the episode id with ?ep= inside the id param value (matches site behavior)
           var streamData = await this.apiGet(
-            "/stream?id=" + animeId + "?ep=" + episodeDataId +
+            "/stream?id=" + animeId + "&ep=" + episodeDataId +
             "&server=" + encodeURIComponent(serverName) + "&type=" + type
           );
-          var results = streamData.results || streamData.data || {};
-          var links = results.streamingLink || results.sources || results.links || [];
-          var tracks = results.tracks || results.subtitles || [];
+          var results = streamData.results || streamData.data || streamData || {};
+          var links = results.streamingLink || results.sources || results.links || results.videos || [];
+          var tracks = results.tracks || results.subtitles || results.captions || [];
+
+          // sources can come back as a single object instead of an array
+          if (!Array.isArray(links) && (links.url || links.file || links.link)) {
+            links = [links];
+          }
 
           for (var li = 0; li < links.length; li++) {
             var link = links[li];
-            var streamUrl = link.url || link.file || link.link;
+            var streamUrl = link.url || link.file || link.link || link.src;
             if (!streamUrl) continue;
 
             var subtitles = [];
@@ -222,7 +230,7 @@ class DefaultExtension extends MProvider {
             var entry = {
               url: streamUrl,
               originalUrl: streamUrl,
-              quality: serverName + " " + type + " [" + (link.quality || link.resolution || "auto") + "]",
+              quality: serverName + " " + type + " [" + (link.quality || link.resolution || link.label || "auto") + "]",
               headers: { "Referer": siteReferer, "User-Agent": ua },
               subtitles: subtitles,
             };
