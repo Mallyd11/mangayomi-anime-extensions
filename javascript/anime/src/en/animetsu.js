@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.13",
+    "version": "1.1.14",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -222,14 +222,15 @@ class DefaultExtension extends MProvider {
     );
 
     // Sort helper — priority order for Mangayomi's download manager:
-    //   [MP4]  (score 2) — single-file direct MP4, best for offline download
-    //   [DL]   (score 1) — unencrypted HLS, Mangayomi may segment-download it
-    //   (none) (score 0) — AES-128 encrypted HLS, unusable offline
+    //   _mp4Dl=true (score 2) — single-file direct MP4 (meg server), best for offline
+    //   [DL]        (score 1) — unencrypted HLS (kite), Mangayomi may segment-download
+    //   (none)      (score 0) — AES-128 encrypted HLS, unusable offline
+    // All downloadable streams keep the "[DL]" label so Mangayomi recognises them.
+    // The _mp4Dl flag is a private sort-hint set by getPaheMegStreams.
     function dlFirst(a, b) {
       function score(s) {
-        var q = s.quality || "";
-        if (q.includes("[MP4]")) return 2;
-        if (q.includes("[DL]")) return 1;
+        if (s._mp4Dl) return 2;
+        if ((s.quality || "").includes("[DL]")) return 1;
         return 0;
       }
       return score(b) - score(a);
@@ -259,22 +260,23 @@ class DefaultExtension extends MProvider {
     epData.forEach((item) => {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
-      // Distinguish between a true single-file MP4 (best for offline download,
-      // Mangayomi can save it as a regular file) and unencrypted HLS
-      // (old_hls === false but type is video/mpegurl — still needs segment download).
+      // Direct MP4 = single downloadable file (best for offline).
+      // Unencrypted HLS (old_hls===false, type mpegurl) = segment playlist.
+      // Both get the "[DL]" label so Mangayomi recognises them as downloadable.
+      // _mp4Dl is a private sort-hint (score 2) so direct MP4 sorts above HLS.
       var directMp4 = item.type === "video/mp4";
-      var unencryptedHls = !directMp4 && item.old_hls === false;
-      var label = directMp4
-        ? this.streamNamer(quality + " [MP4]", audioType, serverName)
-        : (unencryptedHls
-          ? this.streamNamer(quality + " [DL]", audioType, serverName)
-          : this.streamNamer(quality, audioType, serverName));
-      streams.push({
+      var downloadable = directMp4 || item.old_hls === false;
+      var label = downloadable
+        ? this.streamNamer(quality + " [DL]", audioType, serverName)
+        : this.streamNamer(quality, audioType, serverName);
+      var entry = {
         url: link,
         originalUrl: link,
         quality: label,
         headers: hdr,
-      });
+      };
+      if (directMp4) entry._mp4Dl = true;
+      streams.push(entry);
     });
 
     return streams;
