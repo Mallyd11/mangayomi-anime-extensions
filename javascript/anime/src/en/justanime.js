@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.8",
+    "version": "0.0.9",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -39,14 +39,6 @@ class DefaultExtension extends MProvider {
     return JSON.parse(res.body);
   }
 
-  titleToSlug(title) {
-    return (title || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, "")
-      .trim()
-      .replace(/\s+/g, "-");
-  }
-
   animeTitle(item) {
     if (!item.title) return item.name || "";
     if (typeof item.title === "string") return item.title;
@@ -60,7 +52,7 @@ class DefaultExtension extends MProvider {
       list.push({
         name: this.animeTitle(item),
         link: String(item.id),
-        imageUrl: item.cover || item.poster || (item.coverImage && item.coverImage.extraLarge) || "",
+        imageUrl: item.cover || (item.coverImage && item.coverImage.extraLarge) || "",
       });
     }
     return list;
@@ -80,7 +72,15 @@ class DefaultExtension extends MProvider {
     return (str || "").replace(/<[^>]*>/g, " ").replace(/\s{2,}/g, " ").trim();
   }
 
-  // Accepts: bare ID, /anime/{id}/{slug}, or legacy /{slug}-{id}
+  titleToSlug(title) {
+    return (title || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, "")
+      .trim()
+      .replace(/\s+/g, "-");
+  }
+
+  // Accepts bare ID, /anime/{id}/slug, or legacy /{slug}-{id}
   extractId(url) {
     var base = this.source.baseUrl;
     if (url.startsWith(base)) {
@@ -97,30 +97,20 @@ class DefaultExtension extends MProvider {
 
   async getPopular(page) {
     var data = await this.apiGet("/home");
-    var items = data.popular || data.most_popular || [];
+    var items = data.popular || [];
     return { list: this.parseAnimeList(items), hasNextPage: false };
   }
 
   async getLatestUpdates(page) {
     var data = await this.apiGet("/home");
-    var items = data.airing || data.latest_episode || data.latestEpisode || [];
+    var items = data.latestEpisode || data.airing || [];
     return { list: this.parseAnimeList(items), hasNextPage: false };
   }
 
   async search(query, page, filters) {
-    var items = [];
-    var hasNextPage = false;
-    try {
-      var data = await this.apiGet("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
-      items = data.results || data.data || data.anime || [];
-      hasNextPage = !!(data.hasNextPage || (data.pagination && data.pagination.hasNextPage));
-    } catch (e) {}
-    if (items.length === 0) {
-      try {
-        var sugg = await this.apiGet("/search/suggest?keyword=" + encodeURIComponent(query));
-        items = sugg.results || sugg.data || [];
-      } catch (e) {}
-    }
+    var data = await this.apiGet("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
+    var items = data.results || data.data || [];
+    var hasNextPage = !!(data.pageInfo && data.pageInfo.hasNextPage);
     return { list: this.parseAnimeList(items), hasNextPage: hasNextPage };
   }
 
@@ -130,37 +120,17 @@ class DefaultExtension extends MProvider {
     var id = this.extractId(url);
 
     var infoData = await this.apiGet("/anime/" + id);
-    var anime = infoData.data || infoData.results || {};
+    var anime = infoData.data || {};
 
     var title = this.animeTitle(anime) || id;
-    var imageUrl = (anime.coverImage && anime.coverImage.extraLarge) || anime.poster || "";
+    var imageUrl = (anime.coverImage && anime.coverImage.extraLarge) || anime.cover || "";
     var description = this.stripHtml(anime.description || "");
     var genres = anime.genres || [];
+    var total = anime.episodes || 0;
 
     var chapters = [];
-
-    // Try to get real episode data_ids needed for streaming
-    try {
-      var epList = await this.apiGet("/episodes/" + id);
-      var episodes = epList.results || epList.data || epList.episodes || epList.episodeList || epList.list || [];
-      for (var ei = 0; ei < episodes.length; ei++) {
-        var ep = episodes[ei];
-        // Prefer a dedicated data_id / episode_id; fall back to the episode number
-        var dataId = ep.data_id || ep.dataId || ep.episode_id || ep.episodeId || ep.id || String(ep.episode_no || ep.number || (ei + 1));
-        var epNum = ep.episode_no || ep.number || ep.episodeNumber || (ei + 1);
-        chapters.push({ name: "Episode " + epNum, url: id + "||" + dataId });
-      }
-    } catch (e) {}
-
-    // Fall back to count-based if episodes API failed or returned nothing
-    if (chapters.length === 0) {
-      try {
-        var epData = await this.apiGet("/anime/" + id + "/episodes");
-        var total = epData.totalEpisodes || anime.episodes || 0;
-        for (var fi = 1; fi <= total; fi++) {
-          chapters.push({ name: "Episode " + fi, url: id + "||" + fi });
-        }
-      } catch (e) {}
+    for (var i = 1; i <= total; i++) {
+      chapters.push({ name: "Episode " + i, url: id + "||" + i });
     }
 
     return {
@@ -177,70 +147,41 @@ class DefaultExtension extends MProvider {
   // ── Video sources ─────────────────────────────────────────────────────────
 
   async getVideoList(url) {
-    // url format: "{animeId}||{episodeDataId}"
+    // url format: "{animeId}||{epNum}"
     var parts = url.split("||");
     var animeId = parts[0];
-    var episodeDataId = parts[1];
+    var epNum = parts[1];
 
     var subVideos = [];
     var dubVideos = [];
     var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
-    var siteReferer = "https://justanime.to/";
 
     try {
-      var serversData = await this.apiGet("/servers/" + animeId + "?ep=" + episodeDataId);
-      var servers = serversData.results || serversData.data || serversData.servers || [];
+      var data = await this.apiGet("/watch/" + animeId + "/episode/" + epNum + "/animepahe");
 
-      for (var si = 0; si < servers.length; si++) {
-        var server = servers[si];
-        var serverName = server.serverName || server.server_name || server.name || server.server;
-        if (!serverName) continue;
-
-        // Normalise type: anything containing "dub" → dub, everything else → sub
-        var rawType = (server.type || server.category || server.audioType || server.audio || "sub").toLowerCase();
-        var type = rawType.indexOf("dub") >= 0 ? "dub" : "sub";
-
-        try {
-          var streamData = await this.apiGet(
-            "/stream?id=" + animeId + "&ep=" + episodeDataId +
-            "&server=" + encodeURIComponent(serverName) + "&type=" + type
-          );
-          var results = streamData.results || streamData.data || streamData || {};
-          var links = results.streamingLink || results.sources || results.links || results.videos || [];
-          var tracks = results.tracks || results.subtitles || results.captions || [];
-
-          // sources can come back as a single object instead of an array
-          if (!Array.isArray(links) && (links.url || links.file || links.link)) {
-            links = [links];
+      var types = ["sub", "dub"];
+      for (var ti = 0; ti < types.length; ti++) {
+        var type = types[ti];
+        var typeData = data[type];
+        if (!typeData || !typeData.sources) continue;
+        var sources = typeData.sources;
+        for (var si = 0; si < sources.length; si++) {
+          var s = sources[si];
+          var streamUrl = s.url || s.file;
+          if (!streamUrl) continue;
+          var entry = {
+            url: streamUrl,
+            originalUrl: streamUrl,
+            quality: type.toUpperCase() + " [" + (s.quality || "auto") + "p]",
+            headers: { "Referer": "https://kwik.cx/", "User-Agent": ua },
+            subtitles: [],
+          };
+          if (type === "dub") {
+            dubVideos.push(entry);
+          } else {
+            subVideos.push(entry);
           }
-
-          for (var li = 0; li < links.length; li++) {
-            var link = links[li];
-            var streamUrl = link.url || link.file || link.link || link.src;
-            if (!streamUrl) continue;
-
-            var subtitles = [];
-            for (var ti = 0; ti < tracks.length; ti++) {
-              var track = tracks[ti];
-              if (track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
-                subtitles.push({ url: track.file, label: track.label || "Unknown" });
-              }
-            }
-
-            var entry = {
-              url: streamUrl,
-              originalUrl: streamUrl,
-              quality: serverName + " " + type + " [" + (link.quality || link.resolution || link.label || "auto") + "]",
-              headers: { "Referer": siteReferer, "User-Agent": ua },
-              subtitles: subtitles,
-            };
-            if (type === "dub") {
-              dubVideos.push(entry);
-            } else {
-              subVideos.push(entry);
-            }
-          }
-        } catch (e) {}
+        }
       }
     } catch (e) {}
 
