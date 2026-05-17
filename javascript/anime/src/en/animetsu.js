@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.15",
+    "version": "1.1.16",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -222,14 +222,13 @@ class DefaultExtension extends MProvider {
     );
 
     // Sort helper — priority order for Mangayomi's download manager:
-    //   _mp4Dl=true (score 2) — single-file direct MP4 (meg server), best for offline
-    //   [DL]        (score 1) — unencrypted HLS (kite), Mangayomi may segment-download
-    //   (none)      (score 0) — AES-128 encrypted HLS, unusable offline
-    // All downloadable streams keep the "[DL]" label so Mangayomi recognises them.
-    // The _mp4Dl flag is a private sort-hint set by getPaheMegStreams.
+    //   _kwikDl=true (score 2) — kwik→owocdn direct BD MP4, best for offline
+    //   [DL]         (score 1) — unencrypted HLS (kite), segment-based download
+    //   (none)       (score 0) — AES-128 encrypted HLS or meg proxy MP4 (streaming only)
+    // kwik streams are labelled "[DL]" AND carry _kwikDl so they float to the top.
     function dlFirst(a, b) {
       function score(s) {
-        if (s._mp4Dl) return 2;
+        if (s._kwikDl) return 2;
         if ((s.quality || "").includes("[DL]")) return 1;
         return 0;
       }
@@ -260,31 +259,17 @@ class DefaultExtension extends MProvider {
     epData.forEach((item) => {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
-      // Direct MP4 = single downloadable file (best for offline).
-      // Unencrypted HLS (old_hls===false, type mpegurl) = segment playlist.
-      // Both get the "[DL]" label so Mangayomi recognises them as downloadable.
-      // _mp4Dl is a private sort-hint (score 2) so direct MP4 sorts above HLS.
-      var directMp4 = item.type === "video/mp4";
-      var downloadable = directMp4 || item.old_hls === false;
-      var label = downloadable
-        ? this.streamNamer(quality + " [DL]", audioType, serverName)
-        : this.streamNamer(quality, audioType, serverName);
-      // swiftstream's meg proxy rejects full GET (returns 400) but responds
-      // correctly to Range requests. Adding "Range":"bytes=0-" forces Mangayomi's
-      // download manager to issue a Range GET, receiving a 206 with the full
-      // 72 MB file. Per-request Range headers from the player override this
-      // default, so seeking during streaming is unaffected.
-      var entryHeaders = directMp4
-        ? Object.assign({}, hdr, { "Range": "bytes=0-" })
-        : hdr;
-      var entry = {
+      // pahe = AES-128 HLS (encrypted, unusable offline).
+      // meg  = direct MP4 but swiftstream rejects full GET with 400 — streaming
+      //        only, not downloadable via Mangayomi's download manager.
+      // Neither server gets the "[DL]" label. Offline MP4s come from the
+      // kwik → owocdn chain in getDownloadStreams.
+      streams.push({
         url: link,
         originalUrl: link,
-        quality: label,
-        headers: entryHeaders,
-      };
-      if (directMp4) entry._mp4Dl = true;
-      streams.push(entry);
+        quality: this.streamNamer(quality, audioType, serverName),
+        headers: hdr,
+      });
     });
 
     return streams;
@@ -405,13 +390,11 @@ class DefaultExtension extends MProvider {
     } catch (e) { return null; }
   }
 
-  // Optional extra download streams: attempt the kwik.cx → owocdn.top chain
-  // for direct MP4 links. owocdn.top is CF-protected so this only works when
-  // Mangayomi already holds a kwik.cx CF session. Silently returns [] on failure.
-  //
-  // NOTE: kite streams (unencrypted HLS, best for downloads) are already
-  // included via streamPromise in getVideoList with a [DL] label. No extra
-  // API calls are made here to avoid slowing down / timing out getVideoList.
+  // Resolve the kwik.cx → owocdn.top chain to get direct BD MP4 download links.
+  // These are the highest-quality offline-playable files available.
+  // _kwikDl:true gives them sort score 2 (above kite [DL] score 1) so Mangayomi
+  // picks them first for downloads.
+  // Silently returns [] on any failure — kite [DL] acts as automatic fallback.
   async getDownloadStreams(url) {
     var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     var results = [];
@@ -426,9 +409,13 @@ class DefaultExtension extends MProvider {
           var directUrl = await this.resolveKwikDownload(item.link);
           if (!directUrl) return null;
           return {
-            url: directUrl, originalUrl: directUrl,
-            quality: (item.name || "Download") + " [DIRECT DL]",
+            url: directUrl,
+            originalUrl: directUrl,
+            // "[DL]" so Mangayomi recognises it as downloadable.
+            // _kwikDl sorts it above kite [DL] streams (score 2 vs 1).
+            quality: (item.name || "Download") + " [DL]",
             headers: { "User-Agent": ua, "Referer": "https://kwik.cx/" },
+            _kwikDl: true,
           };
         } catch (e) { return null; }
       }));
@@ -483,9 +470,9 @@ class DefaultExtension extends MProvider {
       {
         key: "animetsu_pref_dl_links",
         switchPreferenceCompat: {
-          title: "Fetch direct download links (experimental)",
-          summary: "Attempt to resolve kwik.cx → direct MP4 URLs. Requires Mangayomi to hold a kwik.cx Cloudflare session. Adds extra requests on episode load — leave off if downloads are slow to start.",
-          value: false,
+          title: "Fetch direct download links",
+          summary: "Resolve kwik.cx → direct BD MP4 URLs for offline-playable downloads. On by default — disable only if episode loading becomes slow.",
+          value: true,
         },
       },
       {
