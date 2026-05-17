@@ -412,16 +412,8 @@
       "Bash(python ah_diagnose2.py)",
       "Bash(python hi_latest_check.py)",
       "Bash(python hi_pages.py)",
-      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\pedantic-feynman-c60b66\\\\javascript\\\\anime\\\\src\\\\en\\\\\" -Filter \"*.js\" | Select-Object Name | Head -20)",
-      "Bash(ls \"C:\\\\Users\\\\malik\\\\.claude\\\\projects\\\\\" | head -20)",
-      "Bash(curl -s -H \"Referer: https://animetsu.bz\" -H \"n1: 1\" \"https://animetsu.bz/v2/api/anime/oppai/21459/1?server=pahe&source_type=sub\")",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
-      "Bash(curl -s -H \"Referer: https://animetsu.bz\" -H \"n1: 1\" \"https://animetsu.bz/v2/api/anime/search/?sort=popular&page=1&per_page=5\")",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d['results'][0], indent=2\\)\\)\")",
-      "Bash(curl -s -H \"Referer: https://animetsu.bz\" -H \"n1: 1\" \"https://animetsu.bz/v2/api/anime/search/?sort=popular&page=1&per_page=3\")",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(r['id'], r['title']['romaji']\\) for r in d['results']]\")",
-      "Bash(curl -sv -H \"Referer: https://animetsu.bz\" -H \"n1: 1\" \"https://animetsu.bz/v2/api/anime/search/?sort=popular&page=1&per_page=3\")",
-      "PowerShell(gh run list --repo Mallyd11/mangayomi-anime-extensions --limit 5)"
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\loving-nash-25c52e\" -Recurse -Name)",
+      "Bash(Select-Object -First 50)"
     ]
   }
 }
