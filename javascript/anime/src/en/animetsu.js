@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.17",
+    "version": "1.1.18",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -263,17 +263,22 @@ class DefaultExtension extends MProvider {
 
       if (serverName === "meg") {
         // meg serves a direct MP4 via swiftstream proxy.
-        // Append .mp4 so Mangayomi's isMediaVideo() routes this URL to the
-        // direct-streaming download path (originalUrl must end in a video
-        // extension — without it both m3u8Urls and nonM3u8Urls are empty and
-        // the download spins forever).
-        // Swiftstream requires Range: bytes=0- when the .mp4 suffix is present:
-        //   plain GET/HEAD → 500 │ Range GET/HEAD → 200/206 with full content.
-        var megUrl = link + ".mp4";
+        //
+        // Mangayomi's download_provider.dart checks `originalUrl` to classify
+        // the stream (isMediaVideo → .mp4 path), but uses `url` for the actual
+        // download/playback request. These are DIFFERENT fields.
+        //
+        // Problem: swiftstream returns 500 for TOKEN.mp4 (with or without Range)
+        // but 206 for plain TOKEN + Range: bytes=0-. So we cannot use the .mp4
+        // URL as the real download URL.
+        //
+        // Fix: set originalUrl to a fake .mp4 path (passes isMediaVideo() check
+        // → Mangayomi routes to direct-streaming download path), while url stays
+        // as the real plain token URL that actually serves 206 MP4 content.
         var megHdr = Object.assign({}, hdr, { "Range": "bytes=0-" });
         streams.push({
-          url: megUrl,
-          originalUrl: megUrl,
+          url: link,                  // real URL — plain token, Range → 206 MP4
+          originalUrl: link + ".mp4", // fake suffix — tricks isMediaVideo() = true
           quality: this.streamNamer(quality + " [DL]", audioType, serverName),
           headers: megHdr,
           _megDl: true,
