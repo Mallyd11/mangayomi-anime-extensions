@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.4",
+    "version": "0.0.5",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -46,13 +46,12 @@ class DefaultExtension extends MProvider {
     return res.body || "";
   }
 
-  // Parse a list page (popular.php / new.php / search.php). The site uses two
-  // structures: chart cards (popular, new) and similar cards (search). Both
-  // wrap an <img class='coverimg'> inside an <a href='anime.php?ID'>.
+  // Parse a list page (popular.php / new.php / search.php).
   parseList(html) {
     var list = [];
-    // Pull every anchor that wraps a coverimg. Site uses single-quoted attrs.
-    var rx = /<a[^>]+href='(anime\.php\?[\w]+)'[^>]*>\s*<img[^>]+class='coverimg'[^>]+src='([^']+)'[^>]+alt='([^']*)'/g;
+    // Pull every anchor that wraps a cover image. Site uses double-quoted attrs;
+    // images have no class, just src + alt.
+    var rx = /<a[^>]+href="(anime\.php\?[^"]+)"[^>]*>\s*<img[^>]+src="([^"]+)"[^>]*alt="([^"]*)"/g;
     var seen = {};
     var m;
     while ((m = rx.exec(html)) !== null) {
@@ -126,24 +125,26 @@ class DefaultExtension extends MProvider {
   async getDetail(url) {
     var html = await this.fetchHtml(url);
 
-    // Title
+    // Title — site now uses <h1> instead of a classed div.
     var name = "";
-    var nameMatch = html.match(/<div class='infotitle c'>([^<]+)<\/div>/);
+    var nameMatch = html.match(/<h1>([^<]+)<\/h1>/);
+    if (!nameMatch) nameMatch = html.match(/<div class="infotitle[^"]*">([^<]+)<\/div>/);
     if (nameMatch) name = this._decodeHtml(nameMatch[1].trim());
 
     // Cover image.
-    // The detail page uses class='posterimg' for the main anime poster.
-    // Do NOT use 'coverimg' — those are thumbnails for related/recommended
-    // anime that appear further down the page and would give the wrong image.
-    // Fall back to the og:image meta tag which always points to the correct art.
+    // The detail page marks the main poster with alt="... Anime Poster".
+    // alt comes before src in the actual markup; try that order first then reversed.
+    // Fall back to og:image which always points to the correct art.
     var imageUrl = "";
-    var posterMatch = html.match(/<img[^>]+class='[^']*posterimg[^']*'[^>]+src='([^']+)'/);
+    var posterMatch = html.match(/<img\b[^>]*\balt="[^"]*Anime Poster[^"]*"[^>]*\bsrc="([^"]+)"/);
+    if (!posterMatch) posterMatch = html.match(/<img\b[^>]*\bsrc="([^"]+)"[^>]*\balt="[^"]*Anime Poster[^"]*"/);
     if (posterMatch) {
       var rel = posterMatch[1];
       imageUrl = rel.indexOf("http") === 0 ? rel : this.source.baseUrl + "/" + rel.replace(/^\/+/, "");
     }
     if (!imageUrl) {
-      var og = html.match(/<meta property='og:image' content='([^']+)'/);
+      var og = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/);
+      if (!og) og = html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/);
       if (og) imageUrl = og[1];
     }
 
