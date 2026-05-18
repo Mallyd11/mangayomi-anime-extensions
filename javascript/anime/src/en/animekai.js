@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.8",
+    "version": "1.0.9",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -197,21 +197,29 @@ class DefaultExtension extends MProvider {
       this.source.baseUrl + "/ajax/links/list?token=" + epToken + "&_=" + tokenB,
       this.ajaxHeaders
     );
-    var serverDoc = new Document(JSON.parse(serverRes.body).result);
-    var groups = serverDoc.select("div.server-items");
+    var serverHtml = JSON.parse(serverRes.body).result;
+
+    // Parse groups+servers via regex — Mangayomi's Document API fails on multi-class
+    // selectors (e.g. "server-items lang-group" doesn't match div.server-items)
+    var groups = [];
+    var curGroup = null;
+    var rx = /<div[^>]*server-items[^>]*data-id="([^"]+)"|<span[^>]*class="server"[^>]*data-lid="([^"]+)"[^>]*>([^<]*)/g;
+    var mm;
+    while ((mm = rx.exec(serverHtml)) !== null) {
+      if (mm[1] !== undefined) {
+        curGroup = { sourceType: mm[1], servers: [] };
+        groups.push(curGroup);
+      } else if (mm[2] !== undefined && curGroup) {
+        curGroup.servers.push({ serverId: mm[2], serverName: mm[3].trim() || "Server" });
+      }
+    }
 
     for (var group of groups) {
-      var sourceType = group.attr("data-id");
-      var serverEls = group.select("span.server");
-
-      for (var serverEl of serverEls) {
-        var serverId = serverEl.attr("data-lid");
-        var serverName = serverEl.text.trim();
-
+      for (var serverObj of group.servers) {
         try {
-          var tokenC = await this.encKai(serverId);
+          var tokenC = await this.encKai(serverObj.serverId);
           var linkRes = await this.client.get(
-            this.source.baseUrl + "/ajax/links/view?id=" + serverId + "&_=" + tokenC,
+            this.source.baseUrl + "/ajax/links/view?id=" + serverObj.serverId + "&_=" + tokenC,
             this.ajaxHeaders
           );
           var kaiEncoded = JSON.parse(linkRes.body).result;
@@ -243,7 +251,7 @@ class DefaultExtension extends MProvider {
             streams.push({
               url: m3u8Url,
               originalUrl: m3u8Url,
-              quality: serverName + " [" + sourceType + "]",
+              quality: serverObj.serverName + " [" + group.sourceType + "]",
               subtitles: subtitles,
               headers: {
                 "User-Agent": this.ua,
