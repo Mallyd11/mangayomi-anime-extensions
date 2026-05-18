@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.7",
+    "version": "1.1.8",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -349,21 +349,32 @@ class DefaultExtension extends MProvider {
               var masterUrl = decoded.sources[0].file;
               var label = server.serverName + " [" + group.sourceType + "]";
 
-              step = group.sourceType + si + "_resolveHls";
-              var resolved = await this.resolveHlsPlaylist(masterUrl, streamHeaders);
-
-              if (resolved.kind === "master") {
-                for (var v = 0; v < resolved.variants.length; v++) {
+              // Only resolve a master HLS playlist if the URL ends in .m3u8 —
+              // megaup CDN URLs have no extension so pass them straight through.
+              if (masterUrl.indexOf(".m3u8") >= 0) {
+                step = group.sourceType + si + "_resolveHls";
+                var resolved = await this.resolveHlsPlaylist(masterUrl, streamHeaders);
+                if (resolved.kind === "master") {
+                  for (var v = 0; v < resolved.variants.length; v++) {
+                    streams.push({
+                      url: resolved.variants[v].url,
+                      originalUrl: masterUrl,
+                      quality: resolved.variants[v].label + " - " + label,
+                      subtitles: subtitles,
+                      headers: streamHeaders,
+                    });
+                  }
+                } else {
                   streams.push({
-                    url: resolved.variants[v].url,
+                    url: masterUrl,
                     originalUrl: masterUrl,
-                    quality: resolved.variants[v].label + " - " + label,
+                    quality: label,
                     subtitles: subtitles,
                     headers: streamHeaders,
                   });
                 }
               } else {
-                // flat or fetch-failed — emit master URL as-is
+                // No .m3u8 extension (megaup CDN) — emit URL directly
                 streams.push({
                   url: masterUrl,
                   originalUrl: masterUrl,
