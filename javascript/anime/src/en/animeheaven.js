@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.5",
+    "version": "0.0.6",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -49,9 +49,8 @@ class DefaultExtension extends MProvider {
   // Parse a list page (popular.php / new.php / search.php).
   parseList(html) {
     var list = [];
-    // Pull every anchor that wraps a cover image. Site uses double-quoted attrs;
-    // images have no class, just src + alt.
-    var rx = /<a[^>]+href="(anime\.php\?[^"]+)"[^>]*>\s*<img[^>]+src="([^"]+)"[^>]*alt="([^"]*)"/g;
+    // Site uses single-quoted attrs; cover images carry class='coverimg'.
+    var rx = /<a[^>]+href='(anime\.php\?[\w]+)'[^>]*>\s*<img[^>]+class='coverimg'[^>]+src='([^']+)'[^>]+alt='([^']*)'/g;
     var seen = {};
     var m;
     while ((m = rx.exec(html)) !== null) {
@@ -125,26 +124,22 @@ class DefaultExtension extends MProvider {
   async getDetail(url) {
     var html = await this.fetchHtml(url);
 
-    // Title — site now uses <h1> instead of a classed div.
+    // Title
     var name = "";
-    var nameMatch = html.match(/<h1>([^<]+)<\/h1>/);
-    if (!nameMatch) nameMatch = html.match(/<div class="infotitle[^"]*">([^<]+)<\/div>/);
+    var nameMatch = html.match(/<div class='infotitle c'>([^<]+)<\/div>/);
     if (nameMatch) name = this._decodeHtml(nameMatch[1].trim());
 
-    // Cover image.
-    // The detail page marks the main poster with alt="... Anime Poster".
-    // alt comes before src in the actual markup; try that order first then reversed.
+    // Cover image — detail page uses class='posterimg' for the main poster.
+    // Do NOT match 'coverimg'; those are related-anime thumbnails lower on the page.
     // Fall back to og:image which always points to the correct art.
     var imageUrl = "";
-    var posterMatch = html.match(/<img\b[^>]*\balt="[^"]*Anime Poster[^"]*"[^>]*\bsrc="([^"]+)"/);
-    if (!posterMatch) posterMatch = html.match(/<img\b[^>]*\bsrc="([^"]+)"[^>]*\balt="[^"]*Anime Poster[^"]*"/);
+    var posterMatch = html.match(/<img[^>]+class='[^']*posterimg[^']*'[^>]+src='([^']+)'/);
     if (posterMatch) {
       var rel = posterMatch[1];
       imageUrl = rel.indexOf("http") === 0 ? rel : this.source.baseUrl + "/" + rel.replace(/^\/+/, "");
     }
     if (!imageUrl) {
-      var og = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/);
-      if (!og) og = html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/);
+      var og = html.match(/<meta property='og:image' content='([^']+)'/);
       if (og) imageUrl = og[1];
     }
 
