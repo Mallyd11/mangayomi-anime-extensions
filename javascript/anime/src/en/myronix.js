@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.9",
+    "version": "0.1.0",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -114,7 +114,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getLatestUpdates(page) {
-    var data = await this.gql(PAGE_MEDIA_QUERY, { page: page, perPage: 24, sort: ["UPDATED_AT_DESC"] });
+    var data = await this.gql(PAGE_MEDIA_QUERY, { page: page, perPage: 24, sort: ["UPDATED_AT_DESC"], status: "RELEASING" });
     var p = (data && data.Page) || {};
     return { list: this.parseMedia(p.media), hasNextPage: (p.pageInfo && p.pageInfo.hasNextPage) || false };
   }
