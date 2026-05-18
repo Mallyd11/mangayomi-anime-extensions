@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.7",
+    "version": "1.0.8",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -51,9 +51,10 @@ class DefaultExtension extends MProvider {
   }
 
   async decKai(text) {
-    var res = await this.client.get(
-      "https://enc-dec.app/api/dec-kai?text=" + encodeURIComponent(text),
-      this.encDecHeaders
+    var res = await this.client.post(
+      "https://enc-dec.app/api/dec-kai",
+      { "Content-Type": "application/json", "User-Agent": this.ua },
+      JSON.stringify({ text: text })
     );
     var result = JSON.parse(res.body).result;
     return typeof result === "string" ? JSON.parse(result) : result;
@@ -170,7 +171,7 @@ class DefaultExtension extends MProvider {
           var epTitle = titleEl ? titleEl.text.trim() : "Episode " + num;
           var langs = ep.attr("langs");
           var langTag = langs === "2" || langs === "3" ? " [Sub+Dub]" : " [Sub]";
-          chapters.push({ name: "E" + num + ": " + epTitle + langTag, url: epToken });
+          chapters.push({ name: "E" + num + ": " + epTitle + langTag, url: this.source.baseUrl + "/iframe/" + epToken });
         }
       } catch (e) {}
     }
@@ -188,7 +189,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getVideoList(url) {
-    var epToken = url;
+    var epToken = url.includes("/iframe/") ? url.split("/iframe/").pop() : url;
     var streams = [];
 
     var tokenB = await this.encKai(epToken);
@@ -217,11 +218,12 @@ class DefaultExtension extends MProvider {
           var decrypted = await this.decKai(kaiEncoded);
           var megaUrl = decrypted.url;
           var megaDomain = megaUrl.match(/https?:\/\/([^\/]+)/)[1];
-          var megaToken = megaUrl.replace(/\/$/, "").split("/").pop();
+          var megaReferer = "https://" + megaDomain + "/";
+          var mediaUrl = megaUrl.replace("/e/", "/media/");
 
           var megaRes = await this.client.get(
-            "https://" + megaDomain + "/media/" + megaToken,
-            { "User-Agent": this.ua, "Referer": megaUrl }
+            mediaUrl,
+            { "User-Agent": this.ua, "Referer": megaReferer }
           );
           var megaEncoded = JSON.parse(megaRes.body).result;
           var decoded = await this.decMega(megaEncoded);
@@ -245,7 +247,7 @@ class DefaultExtension extends MProvider {
               subtitles: subtitles,
               headers: {
                 "User-Agent": this.ua,
-                "Referer": "https://" + megaDomain + "/",
+                "Referer": megaReferer,
               },
             });
             break;
