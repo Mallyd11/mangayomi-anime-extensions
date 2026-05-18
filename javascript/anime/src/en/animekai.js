@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.6",
+    "version": "1.0.7",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -216,12 +216,11 @@ class DefaultExtension extends MProvider {
           var kaiEncoded = JSON.parse(linkRes.body).result;
           var decrypted = await this.decKai(kaiEncoded);
           var megaUrl = decrypted.url;
-
-          var parts = megaUrl.replace(/\/$/, "").split("/");
-          var megaToken = parts[parts.length - 1];
+          var megaDomain = megaUrl.match(/https?:\/\/([^\/]+)/)[1];
+          var megaToken = megaUrl.replace(/\/$/, "").split("/").pop();
 
           var megaRes = await this.client.get(
-            "https://megaup.cc/media/" + megaToken,
+            "https://" + megaDomain + "/media/" + megaToken,
             { "User-Agent": this.ua, "Referer": megaUrl }
           );
           var megaEncoded = JSON.parse(megaRes.body).result;
@@ -246,7 +245,7 @@ class DefaultExtension extends MProvider {
               subtitles: subtitles,
               headers: {
                 "User-Agent": this.ua,
-                "Referer": "https://megaup.cc/",
+                "Referer": "https://" + megaDomain + "/",
               },
             });
             break;
