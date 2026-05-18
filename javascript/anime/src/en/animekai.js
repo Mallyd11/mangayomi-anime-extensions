@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.5",
+    "version": "1.0.6",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -55,7 +55,8 @@ class DefaultExtension extends MProvider {
       "https://enc-dec.app/api/dec-kai?text=" + encodeURIComponent(text),
       this.encDecHeaders
     );
-    return JSON.parse(res.body).result;
+    var result = JSON.parse(res.body).result;
+    return typeof result === "string" ? JSON.parse(result) : result;
   }
 
   async decMega(text) {
@@ -64,7 +65,8 @@ class DefaultExtension extends MProvider {
       { "Content-Type": "application/json", "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" },
       JSON.stringify({ text: text, agent: this.ua })
     );
-    return JSON.parse(res.body).result;
+    var result = JSON.parse(res.body).result;
+    return typeof result === "string" ? JSON.parse(result) : result;
   }
 
   parseList(body) {
