@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.4",
+    "version": "1.0.5",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -67,36 +67,37 @@ class DefaultExtension extends MProvider {
     return JSON.parse(res.body).result;
   }
 
-  parseList(doc) {
+  parseList(body) {
     var list = [];
-    var items = doc.select("div.aitem");
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      var anchor = item.selectFirst("a.poster");
-      var href = anchor ? anchor.attr("href") : "";
+    var rx = /<div class="aitem">[\s\S]*?<a href="([^"]*)" class="poster">[\s\S]*?data-src="([^"]*)"[\s\S]*?<a class="title"[^>]*title="([^"]*)"/g;
+    var m;
+    while ((m = rx.exec(body)) !== null) {
+      var href = m[1];
+      var imageUrl = m[2];
+      var name = m[3];
       var link = href.startsWith("http") ? href : this.source.baseUrl + href;
-      var titleEl = item.selectFirst("a.title");
-      var name = titleEl ? (titleEl.attr("title") || titleEl.text) : "";
-      var img = item.selectFirst(".poster img");
-      var imageUrl = img ? (img.attr("data-src") || img.attr("src")) : "";
       if (name && link) list.push({ name, imageUrl, link });
     }
     return list;
   }
 
-  hasNextPage(doc) {
-    return !!doc.selectFirst("ul.pagination a[rel=next]");
+  hasNextPage(body) {
+    return /rel=["']next["']/.test(body);
+  }
+
+  async fetchBody(path) {
+    var url = path.startsWith("http") ? path : this.source.baseUrl + path;
+    var res = await this.client.get(url, this.headers);
+    return res.body;
   }
 
   async fetchDoc(path) {
-    var url = path.startsWith("http") ? path : this.source.baseUrl + path;
-    var res = await this.client.get(url, this.headers);
-    return new Document(res.body);
+    return new Document(await this.fetchBody(path));
   }
 
   async getPopular(page) {
-    var doc = await this.fetchDoc("/browser?sort=most_viewed&page=" + page);
-    return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
+    var body = await this.fetchBody("/browser?sort=most_viewed&page=" + page);
+    return { list: this.parseList(body), hasNextPage: this.hasNextPage(body) };
   }
 
   get supportsLatest() {
@@ -104,15 +105,15 @@ class DefaultExtension extends MProvider {
   }
 
   async getLatestUpdates(page) {
-    var doc = await this.fetchDoc("/updates?page=" + page);
-    return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
+    var body = await this.fetchBody("/updates?page=" + page);
+    return { list: this.parseList(body), hasNextPage: this.hasNextPage(body) };
   }
 
   async search(query, page, filters) {
-    var doc = await this.fetchDoc(
+    var body = await this.fetchBody(
       "/browser?keyword=" + encodeURIComponent(query) + "&page=" + page
     );
-    return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
+    return { list: this.parseList(body), hasNextPage: this.hasNextPage(body) };
   }
 
   statusCode(status) {
@@ -218,7 +219,7 @@ class DefaultExtension extends MProvider {
           var megaToken = parts[parts.length - 1];
 
           var megaRes = await this.client.get(
-            "https://megaup.net/media/" + megaToken,
+            "https://megaup.cc/media/" + megaToken,
             { "User-Agent": this.ua, "Referer": megaUrl }
           );
           var megaEncoded = JSON.parse(megaRes.body).result;
@@ -243,7 +244,7 @@ class DefaultExtension extends MProvider {
               subtitles: subtitles,
               headers: {
                 "User-Agent": this.ua,
-                "Referer": "https://megaup.net/",
+                "Referer": "https://megaup.cc/",
               },
             });
             break;
