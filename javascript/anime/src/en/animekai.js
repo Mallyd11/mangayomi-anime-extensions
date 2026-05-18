@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.0",
+    "version": "1.1.1",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -204,6 +204,7 @@ class DefaultExtension extends MProvider {
     // Chapter URLs are stored as baseUrl/iframe/{epToken}
     var epToken = url.includes("/iframe/") ? url.split("/iframe/").pop() : url;
     var streams = [];
+    var errors = [];
 
     try {
       // Step 1: encrypt the episode token to request the server list
@@ -223,11 +224,9 @@ class DefaultExtension extends MProvider {
       var mm;
       while ((mm = srx.exec(serverHtml)) !== null) {
         if (mm[1] !== undefined) {
-          // New source-type group (sub / softsub / dub)
           curGroup = { sourceType: mm[1], servers: [] };
           groups.push(curGroup);
         } else if (mm[2] !== undefined && curGroup) {
-          // Server entry within the current group
           curGroup.servers.push({
             serverId: mm[2],
             serverName: mm[3].trim() || "Server",
@@ -235,37 +234,32 @@ class DefaultExtension extends MProvider {
         }
       }
 
+      errors.push("groups:" + groups.length);
+
       // Step 3: for each group try servers in order until one resolves
       for (var gi = 0; gi < groups.length; gi++) {
         var group = groups[gi];
         for (var si = 0; si < group.servers.length; si++) {
           var server = group.servers[si];
           try {
-            // Encrypt the server lid, fetch the encrypted stream link
             var tokenC = await this.encKai(server.serverId);
             var linkBody = await this.fetchAjax(
               "/ajax/links/view?id=" + server.serverId + "&_=" + tokenC
             );
             var kaiEncoded = JSON.parse(linkBody).result;
-
-            // Decrypt to get { url: "https://megaup.xx/e/{token}", skip: {...} }
             var decrypted = await this.decKai(kaiEncoded);
             var megaUrl = decrypted.url;
 
-            // Derive domain and Referer from the embed URL
             var domainM = megaUrl.match(/https?:\/\/([^\/]+)/);
             var megaDomain = domainM[1];
             var megaReferer = "https://" + megaDomain + "/";
-
-            // /e/ → /media/ gives the encrypted media-info endpoint
             var mediaUrl = megaUrl.replace("/e/", "/media/");
+
             var megaRes = await this.client.get(mediaUrl, {
               "User-Agent": this.ua,
               "Referer": megaReferer,
             });
             var megaEncoded = JSON.parse(megaRes.body).result;
-
-            // Decrypt media info to get HLS sources + subtitle tracks
             var decoded = await this.decMega(megaEncoded);
 
             var subtitles = [];
@@ -287,12 +281,26 @@ class DefaultExtension extends MProvider {
                 subtitles: subtitles,
                 headers: { "User-Agent": this.ua, "Referer": megaReferer },
               });
-              break; // one stream per source type is enough
+              break;
             }
-          } catch (e) {}
+          } catch (e) {
+            errors.push(group.sourceType + si + ":" + String(e).substring(0, 60));
+          }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      errors.push("outer:" + String(e).substring(0, 100));
+    }
+
+    // If no streams found, surface one debug entry so the error is visible
+    if (streams.length === 0) {
+      streams.push({
+        url: "https://anikai.to",
+        quality: "[DEBUG] " + errors.join(" | ").substring(0, 300),
+        subtitles: [],
+        headers: {},
+      });
+    }
 
     return streams;
   }
