@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.3",
+    "version": "1.0.4",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -95,7 +95,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var doc = await this.fetchDoc("/browser?sort=trending&page=" + page);
+    var doc = await this.fetchDoc("/browser?sort=most_viewed&page=" + page);
     return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
   }
 
@@ -104,7 +104,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getLatestUpdates(page) {
-    var doc = await this.fetchDoc("/recently-updated?page=" + page);
+    var doc = await this.fetchDoc("/updates?page=" + page);
     return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
   }
 
