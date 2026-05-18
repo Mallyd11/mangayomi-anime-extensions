@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.2",
+    "version": "1.1.3",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -204,20 +204,21 @@ class DefaultExtension extends MProvider {
     // Chapter URLs are stored as baseUrl/iframe/{epToken}
     var epToken = url.includes("/iframe/") ? url.split("/iframe/").pop() : url;
     var streams = [];
-    var errors = [];
+    var step = "init";
 
     try {
-      // Step 1: encrypt the episode token to request the server list
+      step = "encKai";
       var tokenB = await this.encKai(epToken);
+
+      step = "serverList";
       var serverBody = await this.fetchAjax(
         "/ajax/links/list?token=" + epToken + "&_=" + tokenB
       );
+
+      step = "parseServerJson";
       var serverHtml = JSON.parse(serverBody).result;
 
-      // Step 2: parse server groups + server entries from the HTML.
-      // NOTE: Mangayomi's Document API does exact class matching, so
-      //   doc.select("div.server-items") misses <div class="server-items lang-group">.
-      // We use a single-pass regex scan instead.
+      step = "regex";
       var groups = [];
       var curGroup = null;
       var srx = /<div[^>]*server-items[^>]*data-id="([^"]+)"|<span[^>]*class="server"[^>]*data-lid="([^"]+)"[^>]*>([^<]*)/g;
@@ -234,33 +235,45 @@ class DefaultExtension extends MProvider {
         }
       }
 
-      errors.push("groups:" + groups.length);
+      step = "groups_" + groups.length;
 
-      // Step 3: for each group try servers in order until one resolves
       for (var gi = 0; gi < groups.length; gi++) {
         var group = groups[gi];
         for (var si = 0; si < group.servers.length; si++) {
           var server = group.servers[si];
           try {
+            step = group.sourceType + si + "_encSrv";
             var tokenC = await this.encKai(server.serverId);
+
+            step = group.sourceType + si + "_linkView";
             var linkBody = await this.fetchAjax(
               "/ajax/links/view?id=" + server.serverId + "&_=" + tokenC
             );
+
+            step = group.sourceType + si + "_decKai";
             var kaiEncoded = JSON.parse(linkBody).result;
             var decrypted = await this.decKai(kaiEncoded);
-            var megaUrl = decrypted.url;
 
+            step = group.sourceType + si + "_megaUrl";
+            var megaUrl = decrypted.url;
             var domainM = megaUrl.match(/https?:\/\/([^\/]+)/);
             var megaDomain = domainM[1];
             var megaReferer = "https://" + megaDomain + "/";
             var mediaUrl = megaUrl.replace("/e/", "/media/");
 
+            step = group.sourceType + si + "_mediaFetch";
             var megaRes = await this.client.get(mediaUrl, {
               "User-Agent": this.ua,
               "Referer": megaReferer,
             });
+
+            step = group.sourceType + si + "_mediaBody_" + String(megaRes.body).substring(0, 15);
             var megaEncoded = JSON.parse(megaRes.body).result;
+
+            step = group.sourceType + si + "_decMega";
             var decoded = await this.decMega(megaEncoded);
+
+            step = group.sourceType + si + "_src_" + (decoded && decoded.sources ? decoded.sources.length : 0);
 
             var subtitles = [];
             if (decoded.tracks) {
@@ -284,21 +297,21 @@ class DefaultExtension extends MProvider {
               break;
             }
           } catch (e) {
-            errors.push(group.sourceType + si + ":" + String(e).substring(0, 60));
+            step = "ERR@" + step + ":" + String(e).substring(0, 80);
           }
         }
       }
     } catch (e) {
-      errors.push("outer:" + String(e).substring(0, 100));
+      step = "ERR@" + step + ":" + String(e).substring(0, 100);
     }
 
-    // If no streams found, surface a debug entry with error info in the quality name.
-    // Uses a real m3u8 URL so Mangayomi doesn't filter the entry out.
+    // If no streams found, surface a debug entry. Quality name shows the last
+    // step reached (or error) so we can pinpoint where the chain breaks.
     if (streams.length === 0) {
       streams.push({
         url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
         originalUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-        quality: "[DBG] " + errors.join(" | ").substring(0, 250),
+        quality: "[DBG] " + step,
         subtitles: [],
         headers: {},
       });
