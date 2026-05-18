@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -245,12 +245,20 @@ class DefaultExtension extends MProvider {
     }
 
     var episodeId = "allanime:" + showId + ":" + epNum;
-    var streams   = [];
-    var seen      = {};
+
+    // Read preferred language — sub is default
+    var pref = "sub";
+    try { pref = new SharedPreferences().get("myronix_pref_lang") || "sub"; } catch (e) {}
+
+    // Collect sub and dub streams separately so we can order them by preference
+    var subStreams = [];
+    var dubStreams = [];
+    var seen       = {};
     var categories = ["sub", "dub"];
 
     for (var ci = 0; ci < categories.length; ci++) {
       var category = categories[ci];
+      var bucket   = category === "sub" ? subStreams : dubStreams;
       try {
         // Server "Default" → Wix CDN (publicly accessible).
         // Server "Ok" uses signed, IP-bound okcdn.ru URLs that only work from
@@ -297,7 +305,7 @@ class DefaultExtension extends MProvider {
                 var vk  = v.url + "|" + category;
                 if (seen[vk]) continue;
                 seen[vk] = true;
-                streams.push({
+                bucket.push({
                   url: v.url, originalUrl: srcUrl,
                   quality: v.label + " [" + category.toUpperCase() + "]",
                   headers: streamHeaders, subtitles: subtitles,
@@ -308,7 +316,7 @@ class DefaultExtension extends MProvider {
               var mk = srcUrl + "|" + category;
               if (!seen[mk]) {
                 seen[mk] = true;
-                streams.push({
+                bucket.push({
                   url: srcUrl, originalUrl: srcUrl,
                   quality: "HLS [" + category.toUpperCase() + "]",
                   headers: streamHeaders, subtitles: subtitles,
@@ -320,7 +328,7 @@ class DefaultExtension extends MProvider {
             var dk = srcUrl + "|" + category;
             if (!seen[dk]) {
               seen[dk] = true;
-              streams.push({
+              bucket.push({
                 url: srcUrl, originalUrl: srcUrl,
                 quality: (src.quality || "Auto") + " [" + category.toUpperCase() + "]",
                 headers: streamHeaders, subtitles: subtitles,
@@ -331,9 +339,26 @@ class DefaultExtension extends MProvider {
       } catch (e) { /* skip on any error */ }
     }
 
-    return streams;
+    // Return preferred language first
+    return pref === "dub"
+      ? dubStreams.concat(subStreams)
+      : subStreams.concat(dubStreams);
   }
 
   getFilterList() { return []; }
-  getSourcePreferences() { return []; }
+
+  getSourcePreferences() {
+    return [
+      {
+        key: "myronix_pref_lang",
+        listPreference: {
+          title: "Preferred language",
+          summary: "Which audio appears first in the stream list",
+          valueIndex: 0,
+          entries: ["Sub", "Dub"],
+          entryValues: ["sub", "dub"],
+        },
+      },
+    ];
+  }
 }
