@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.6",
+    "version": "1.1.7",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -72,6 +72,60 @@ class DefaultExtension extends MProvider {
     );
     var result = JSON.parse(res.body).result;
     return typeof result === "string" ? JSON.parse(result) : result;
+  }
+
+  // Fetch an HLS playlist and resolve it into individual quality variants.
+  // Returns:
+  //   { kind: "master", variants: [{url, label}, ...] }  — one URL per quality
+  //   { kind: "flat" }                                    — already a segment list
+  //   { kind: "fetch-failed" }                            — request failed
+  async resolveHlsPlaylist(playlistUrl, headers) {
+    try {
+      var res = await this.client.get(playlistUrl, headers);
+      if (!res || !res.body) return { kind: "fetch-failed" };
+      var body = res.body;
+
+      var hasStreamInf = body.indexOf("#EXT-X-STREAM-INF") >= 0;
+      var hasExtinf    = body.indexOf("#EXTINF") >= 0;
+
+      // Flat segment playlist — already playable as-is
+      if (hasExtinf && !hasStreamInf) return { kind: "flat" };
+
+      // Not an m3u8 at all (e.g. error page)
+      if (!hasStreamInf) return { kind: "flat" };
+
+      // Master playlist: extract every variant line
+      var lastSlash = playlistUrl.lastIndexOf("/");
+      var baseDir   = lastSlash > 0 ? playlistUrl.substring(0, lastSlash + 1) : playlistUrl;
+      var variants  = [];
+      var lines     = body.split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+        var resMatch   = line.match(/RESOLUTION=\d+x(\d+)/);
+        var resolution = resMatch ? resMatch[1] + "p" : null;
+        for (var j = i + 1; j < lines.length; j++) {
+          var u = lines[j].trim();
+          if (!u || u.charAt(0) === "#") continue;
+          var variantUrl = u.indexOf("http") === 0 ? u : baseDir + u;
+          variants.push({ url: variantUrl, label: resolution || "Auto" });
+          break;
+        }
+      }
+
+      if (variants.length === 0) return { kind: "flat" };
+
+      // Sort highest resolution first
+      variants.sort(function(a, b) {
+        var aRes = parseInt((a.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
+        var bRes = parseInt((b.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
+        return bRes - aRes;
+      });
+
+      return { kind: "master", variants: variants };
+    } catch (e) {
+      return { kind: "fetch-failed" };
+    }
   }
 
   // Parse the anime grid present on /browser and /updates pages
@@ -258,13 +312,19 @@ class DefaultExtension extends MProvider {
             var megaUrl = decrypted.url;
             var domainM = megaUrl.match(/https?:\/\/([^\/]+)/);
             var megaDomain = domainM[1];
-            var megaReferer = "https://" + megaDomain + "/";
             var mediaUrl = megaUrl.replace("/e/", "/media/");
+
+            // Headers that the CDN expects: Origin + Referer from the embed page
+            var streamHeaders = {
+              "User-Agent": this.ua,
+              "Referer": megaUrl,
+              "Origin": "https://" + megaDomain,
+            };
 
             step = group.sourceType + si + "_mediaFetch";
             var megaRes = await this.client.get(mediaUrl, {
               "User-Agent": this.ua,
-              "Referer": megaReferer,
+              "Referer": "https://" + megaDomain + "/",
             });
 
             step = group.sourceType + si + "_mediaBody_" + String(megaRes.body).substring(0, 15);
@@ -286,15 +346,34 @@ class DefaultExtension extends MProvider {
             }
 
             if (decoded.sources && decoded.sources.length > 0) {
-              var m3u8 = decoded.sources[0].file;
-              streams.push({
-                url: m3u8,
-                originalUrl: m3u8,
-                quality: server.serverName + " [" + group.sourceType + "]",
-                subtitles: subtitles,
-                headers: { "User-Agent": this.ua, "Referer": megaUrl },
-              });
-              break;
+              var masterUrl = decoded.sources[0].file;
+              var label = server.serverName + " [" + group.sourceType + "]";
+
+              step = group.sourceType + si + "_resolveHls";
+              var resolved = await this.resolveHlsPlaylist(masterUrl, streamHeaders);
+
+              if (resolved.kind === "master") {
+                for (var v = 0; v < resolved.variants.length; v++) {
+                  streams.push({
+                    url: resolved.variants[v].url,
+                    originalUrl: masterUrl,
+                    quality: resolved.variants[v].label + " - " + label,
+                    subtitles: subtitles,
+                    headers: streamHeaders,
+                  });
+                }
+              } else {
+                // flat or fetch-failed — emit master URL as-is
+                streams.push({
+                  url: masterUrl,
+                  originalUrl: masterUrl,
+                  quality: label,
+                  subtitles: subtitles,
+                  headers: streamHeaders,
+                });
+              }
+
+              if (streams.length > 0) break;
             }
           } catch (e) {
             step = "ERR@" + step + ":" + String(e).substring(0, 80);
@@ -305,8 +384,7 @@ class DefaultExtension extends MProvider {
       step = "ERR@" + step + ":" + String(e).substring(0, 100);
     }
 
-    // If no streams found, surface a debug entry. Quality name shows the last
-    // step reached (or error) so we can pinpoint where the chain breaks.
+    // If no streams found, surface a debug entry so we can see where it broke
     if (streams.length === 0) {
       streams.push({
         url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
