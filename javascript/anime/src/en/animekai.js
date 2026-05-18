@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.4",
+    "version": "1.1.6",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -292,7 +292,7 @@ class DefaultExtension extends MProvider {
                 originalUrl: m3u8,
                 quality: server.serverName + " [" + group.sourceType + "]",
                 subtitles: subtitles,
-                headers: { "User-Agent": this.ua, "Referer": megaReferer },
+                headers: { "User-Agent": this.ua, "Referer": megaUrl },
               });
               break;
             }
