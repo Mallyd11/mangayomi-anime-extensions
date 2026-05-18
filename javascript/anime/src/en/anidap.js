@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.5",
+    "version": "1.4.6",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -35,6 +35,17 @@ var PAGE_MEDIA_QUERY = [
   "pageInfo{currentPage hasNextPage}",
   "media(type:ANIME,isAdult:false,search:$search,sort:$sort){",
   "id title{romaji english native} coverImage{large medium}",
+  "}}}"
+].join("");
+
+// Returns episodes that recently aired (TIME_DESC) — matches anidap.se "Recent Episodes".
+// perPage is set higher than needed to absorb adult/duplicate filtering.
+var RECENT_EPISODES_QUERY = [
+  "query RecentEp($page:Int,$perPage:Int,$before:Int){",
+  "Page(page:$page,perPage:$perPage){",
+  "pageInfo{currentPage hasNextPage}",
+  "airingSchedules(notYetAired:false,airingAt_lesser:$before,sort:[TIME_DESC]){",
+  "media{id isAdult title{romaji english native} coverImage{large medium}}",
   "}}}"
 ].join("");
 
@@ -134,9 +145,31 @@ class DefaultExtension extends MProvider {
   }
 
   async getLatestUpdates(page) {
-    var data = await this.gql(PAGE_MEDIA_QUERY, { page: page, perPage: 24, sort: ["UPDATED_AT_DESC"] });
-    var p = (data && data.Page) || {};
-    return { list: this.parseMedia(p.media), hasNextPage: !!(p.pageInfo && p.pageInfo.hasNextPage) };
+    // Use AniList's airing schedule (sorted newest-first) to mirror the
+    // "Recent Episodes" feed on anidap.se.  UPDATED_AT_DESC was sorting by
+    // when AniList metadata changed — not when episodes actually aired.
+    var self = this;
+    var now  = Math.floor(Date.now() / 1000);
+    var data = await this.gql(RECENT_EPISODES_QUERY, { page: page, perPage: 40, before: now });
+    var p    = (data && data.Page) || {};
+
+    // Deduplicate: same series can have multiple airing schedule entries.
+    var seen = {};
+    var list = [];
+    (p.airingSchedules || []).forEach(function(sched) {
+      var m = sched && sched.media;
+      if (!m || m.isAdult || seen[m.id]) return;
+      seen[m.id] = true;
+      var name = self.titleByPref(m.title);
+      if (!name) return;
+      list.push({
+        name: name,
+        link: String(m.id),
+        imageUrl: (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "",
+      });
+    });
+
+    return { list: list, hasNextPage: !!(p.pageInfo && p.pageInfo.hasNextPage) };
   }
 
   async search(query, page, filters) {
