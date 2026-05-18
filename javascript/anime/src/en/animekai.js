@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.1",
+    "version": "1.1.2",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -292,11 +292,13 @@ class DefaultExtension extends MProvider {
       errors.push("outer:" + String(e).substring(0, 100));
     }
 
-    // If no streams found, surface one debug entry so the error is visible
+    // If no streams found, surface a debug entry with error info in the quality name.
+    // Uses a real m3u8 URL so Mangayomi doesn't filter the entry out.
     if (streams.length === 0) {
       streams.push({
-        url: "https://anikai.to",
-        quality: "[DEBUG] " + errors.join(" | ").substring(0, 300),
+        url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+        originalUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+        quality: "[DBG] " + errors.join(" | ").substring(0, 250),
         subtitles: [],
         headers: {},
       });
