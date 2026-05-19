@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.9",
+    "version": "1.1.10",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -291,6 +291,8 @@ class DefaultExtension extends MProvider {
 
       step = "groups_" + groups.length;
 
+      // Try EVERY server in every group — different servers may use different
+      // CDN domains. We collect all streams rather than stopping at the first.
       for (var gi = 0; gi < groups.length; gi++) {
         var group = groups[gi];
         for (var si = 0; si < group.servers.length; si++) {
@@ -312,17 +314,20 @@ class DefaultExtension extends MProvider {
             var megaUrl = decrypted.url;
             var domainM = megaUrl.match(/https?:\/\/([^\/]+)/);
             var megaDomain = domainM[1];
+            // Referer = domain root per official megaup.py sample
+            var megaReferer = "https://" + megaDomain + "/";
             var mediaUrl = megaUrl.replace("/e/", "/media/");
 
+            // Stream headers: domain root Referer (not the full /e/ embed URL)
             var streamHeaders = {
               "User-Agent": this.ua,
-              "Referer": megaUrl,
+              "Referer": megaReferer,
             };
 
             step = group.sourceType + si + "_mediaFetch";
             var megaRes = await this.client.get(mediaUrl, {
               "User-Agent": this.ua,
-              "Referer": "https://" + megaDomain + "/",
+              "Referer": megaReferer,
             });
 
             step = group.sourceType + si + "_mediaBody_" + String(megaRes.body).substring(0, 15);
@@ -343,12 +348,17 @@ class DefaultExtension extends MProvider {
               }
             }
 
-            if (decoded.sources && decoded.sources.length > 0) {
-              var masterUrl = decoded.sources[0].file;
-              var label = server.serverName + " [" + group.sourceType + "]";
+            // Iterate ALL sources (not just [0]) in case different CDN domains
+            var sourceList = decoded.sources || [];
+            for (var sri = 0; sri < sourceList.length; sri++) {
+              var masterUrl = sourceList[sri].file;
+              if (!masterUrl) continue;
 
-              // Only resolve a master HLS playlist if the URL ends in .m3u8 —
-              // megaup CDN URLs have no extension so pass them straight through.
+              // Show the CDN hostname in the quality label for easy identification
+              var cdnHostM = masterUrl.match(/https?:\/\/([^\/]+)/);
+              var cdnHost = cdnHostM ? cdnHostM[1] : "?";
+              var label = server.serverName + " [" + group.sourceType + "] @" + cdnHost;
+
               if (masterUrl.indexOf(".m3u8") >= 0) {
                 step = group.sourceType + si + "_resolveHls";
                 var resolved = await this.resolveHlsPlaylist(masterUrl, streamHeaders);
@@ -372,7 +382,7 @@ class DefaultExtension extends MProvider {
                   });
                 }
               } else {
-                // No .m3u8 extension (megaup CDN) — emit URL directly
+                // No .m3u8 extension — emit URL directly
                 streams.push({
                   url: masterUrl,
                   originalUrl: masterUrl,
@@ -381,28 +391,6 @@ class DefaultExtension extends MProvider {
                   headers: streamHeaders,
                 });
               }
-
-              // Diagnostic: fetch the CDN URL and show first bytes of response
-              // so we can see what rrr.lab27core.site actually returns.
-              try {
-                var diagR = await this.client.get(masterUrl, streamHeaders);
-                var diagBody = String(diagR.body).replace(/[\r\n]/g, "|").substring(0, 70);
-                streams.push({
-                  url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                  originalUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                  quality: "[DBG] s=" + diagR.statusCode + " " + diagBody,
-                  subtitles: [], headers: {},
-                });
-              } catch (diagE) {
-                streams.push({
-                  url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                  originalUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                  quality: "[DBG] CDN_ERR:" + String(diagE).substring(0, 60),
-                  subtitles: [], headers: {},
-                });
-              }
-
-              if (streams.length > 0) break;
             }
           } catch (e) {
             step = "ERR@" + step + ":" + String(e).substring(0, 80);
