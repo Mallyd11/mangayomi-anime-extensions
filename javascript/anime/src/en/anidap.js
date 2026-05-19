@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.4",
+    "version": "1.5.5",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -104,10 +104,14 @@ class DefaultExtension extends MProvider {
     return this.getPreference("anidap_base_url") || this.source.baseUrl;
   }
 
-  // Headers for requests to anidap.se (Remix .data routes, Cloudflare-protected)
+  // Headers for requests to anidap.se (Remix .data routes, Cloudflare-protected).
+  // User-Agent is intentionally NOT set here — Mangayomi's HTTP client uses the
+  // same UA as the WebView that solved the CF challenge.  If we override it with
+  // a different UA, Cloudflare rejects the cf_clearance cookie (it is
+  // cryptographically bound to the UA that solved the challenge) and every retry
+  // after the webview bypass still shows the CF error page.
   get siteHeaders() {
     return {
-      "User-Agent": this.ua,
       "Accept": "application/json, */*",
       "Referer": this.getBaseUrl() + "/",
     };
@@ -222,10 +226,14 @@ class DefaultExtension extends MProvider {
   // required for all chad.anidap.se API calls.  It is embedded in the Remix
   // turbo-stream response at /info/{anilistId}.data as a flat serialised array.
   //
-  // NOTE: anidap.se is Cloudflare-protected. If this request fails the first
-  // time, Mangayomi will show a "Failed to bypass Cloudflare" dialog.
-  // Tap "bypass it manually in the webview" — the clearance cookie is then
-  // stored and all subsequent requests succeed automatically.
+  // anidap.se is Cloudflare-protected.  If this request fails, Mangayomi shows
+  // a "bypass Cloudflare" dialog.  Complete the challenge in the webview —
+  // Mangayomi then retries with the cf_clearance cookie it extracted.
+  //
+  // IMPORTANT: siteHeaders must NOT set User-Agent.  The cf_clearance cookie is
+  // cryptographically bound to the UA that solved the challenge (the WebView's
+  // UA).  If the HTTP client sends a different UA, CF rejects the cookie and the
+  // bypass loop never escapes.
 
   extractSlug(arr) {
     if (!Array.isArray(arr)) return null;
