@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.4",
+    "version": "1.2.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -156,7 +156,6 @@ class DefaultExtension extends MProvider {
     var epSlug = "/eps/" + id;
     var epData = await this.request(epSlug);
 
-    var epThumbPref = this.getPreference("animetsu_pref_ep_thumbnail");
     var epDescPref = this.getPreference("animetsu_pref_ep_description");
     epData.forEach((item) => {
       var ep_num = item.ep_num;
@@ -165,7 +164,7 @@ class DefaultExtension extends MProvider {
       var isFiller = item.is_filler;
       var token = `${id}/${ep_num}`;
 
-      var thumbnailUrl = (epThumbPref !== false) && item.img ? this.getProxyMediaUrl(item.img) : null;
+      var thumbnailUrl = item.img ? this.getProxyMediaUrl(item.img) : null;
       var epDescription = (epDescPref !== false) ? item.desc : null;
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
@@ -302,11 +301,13 @@ class DefaultExtension extends MProvider {
         }, skipAttrs));
       } else {
         // pahe = AES-128 encrypted HLS.
-        // Setting originalUrl with .m3u8 extension tells Mangayomi's download manager
-        // to use HLS segment download mode (fetch playlist → download each segment)
-        // instead of saving the raw playlist text as a "file".
+        // Appending "#.m3u8" as a URL fragment makes Mangayomi's download manager
+        // detect this as HLS (url.contains('.m3u8') = true) and download all segments
+        // instead of saving the raw playlist text as a file. The fragment is stripped
+        // by Dart's HTTP client before the request reaches swiftstream, so the server
+        // always receives the clean token URL and returns the m3u8 normally.
         streams.push(Object.assign({
-          url: link,
+          url: link + "#.m3u8",
           originalUrl: link + ".m3u8",
           quality: this.streamNamer(quality, audioType, serverName),
           headers: hdr,
@@ -351,10 +352,9 @@ class DefaultExtension extends MProvider {
               if (!nextLine) continue;
               var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
               var stream = Object.assign({
-                url: variantUrl,
-                // .m3u8 suffix tells Mangayomi's downloader this is HLS —
-                // it will fetch the playlist then download each segment token,
-                // rather than saving the raw playlist text as the "file".
+                // "#.m3u8" fragment: Mangayomi detects HLS via url.contains('.m3u8'),
+                // Dart's HTTP client strips the fragment so swiftstream gets the clean URL.
+                url: variantUrl + "#.m3u8",
                 originalUrl: variantUrl + ".m3u8",
                 quality: this.streamNamer(resolution + " [DL]", "soft" + audioType, "kite"),
                 headers: hdr,
@@ -371,7 +371,7 @@ class DefaultExtension extends MProvider {
 
       if (!parsed) {
         streams.push(Object.assign({
-          url: masterUrl,
+          url: masterUrl + "#.m3u8",
           originalUrl: masterUrl + ".m3u8",
           quality: this.streamNamer("Auto [DL]", "soft" + audioType, "kite"),
           headers: hdr,
@@ -500,14 +500,6 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["English", "Romaji", "Native"],
           entryValues: ["english", "romaji", "native"],
-        },
-      },
-      {
-        key: "animetsu_pref_ep_thumbnail",
-        switchPreferenceCompat: {
-          title: "Episode thumbail",
-          summary: "",
-          value: true,
         },
       },
       {
