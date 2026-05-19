@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.0",
+    "version": "1.5.1",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -416,11 +416,6 @@ class DefaultExtension extends MProvider {
       for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
       return null;
     }
-    function defaultProvider(list) {
-      for (var i = 0; i < list.length; i++) { if (list[i].default) return list[i]; }
-      return list[0] || null;
-    }
-
     var audioPref = this.getPreference("anidap_audio_pref");
 
     // ── Stream order ───────────────────────────────────────────────────────
@@ -437,23 +432,39 @@ class DefaultExtension extends MProvider {
     // If mochi IS the default provider (e.g. dub on newer shows) only one
     // entry is added for that type to avoid a duplicate sources request.
 
-    var subMochi   = findProvider(subProviders, "mochi");
-    var dubMochi   = findProvider(dubProviders, "mochi");
-    var subDefault = defaultProvider(subProviders);
-    var dubDefault = defaultProvider(dubProviders);
+    var subMochi = findProvider(subProviders, "mochi");
+    var dubMochi = findProvider(dubProviders, "mochi");
 
-    // Build one group (HLS default + mochi) for a given audio type.
-    function audioGroup(type, defProv, mochiProv) {
-      var group = [];
-      if (defProv) group.push({ type: type, provider: defProv });
-      // Add mochi only when it is not already the default provider.
-      if (mochiProv && (!defProv || mochiProv.id !== defProv.id))
+    // Return the best non-mochi HLS provider from a list:
+    // prefer the one marked default, else the first non-mochi entry.
+    function hlsProvider(list) {
+      var fallback = null;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === "mochi") continue;
+        if (list[i].default) return list[i];
+        if (!fallback) fallback = list[i];
+      }
+      return fallback;
+    }
+
+    // Build one group for a given audio type:
+    //   1. best HLS provider  (reliable playback)
+    //   2. mochi              (MP4 direct, for downloads)
+    // If mochi IS the only provider, it's added as both play and download.
+    function audioGroup(type, providers, mochiProv) {
+      var group  = [];
+      var hlsProv = hlsProvider(providers);
+      if (hlsProv)  group.push({ type: type, provider: hlsProv });
+      if (mochiProv && (!hlsProv || mochiProv.id !== hlsProv.id))
         group.push({ type: type, provider: mochiProv });
+      // If there's nothing at all, fall back to whatever is first.
+      if (group.length === 0 && providers.length > 0)
+        group.push({ type: type, provider: providers[0] });
       return group;
     }
 
-    var subGroup = audioGroup("sub", subDefault, subMochi);
-    var dubGroup = audioGroup("dub", dubDefault, dubMochi);
+    var subGroup = audioGroup("sub", subProviders, subMochi);
+    var dubGroup = audioGroup("dub", dubProviders, dubMochi);
 
     // Preferred audio goes first; the other audio follows.
     var categories = (audioPref === "dub")
@@ -482,9 +493,18 @@ class DefaultExtension extends MProvider {
 
         var subtitles = [];
         (tracks || []).forEach(function(t) {
-          if (t && (t.url || t.file)) {
-            subtitles.push({ file: t.url || t.file, label: t.label || t.lang || "Unknown" });
-          }
+          if (!t) return;
+          var file = t.url || t.file;
+          if (!file) return;
+          // Skip thumbnail sprite tracks — their cue text is "thumb.jpg#xywh=…"
+          // which Mangayomi renders as garbled on-screen text.
+          var kind  = (t.kind  || "").toLowerCase();
+          var label = (t.label || "").toLowerCase();
+          if (kind === "thumbnails" || kind === "chapters" || kind === "metadata") return;
+          if (label.indexOf("thumbnail") >= 0) return;
+          if (file.indexOf("#xywh=") >= 0) return;
+          if (/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(file)) return;
+          subtitles.push({ file: file, label: t.label || t.lang || "Unknown" });
         });
 
         for (var k = 0; k < sources.length; k++) {
@@ -494,13 +514,12 @@ class DefaultExtension extends MProvider {
 
           srcUrl = this.transformUrl(srcUrl, cat.provider.id);
 
-          // mochi always reports quality "auto" — relabel it "MP4" so
-          // the user knows it is a direct downloadable file, not HLS.
-          // For all other providers keep the quality string as-is.
+          // mochi reports quality "auto" or "default" — relabel as "MP4"
+          // so the user knows it is a direct downloadable file, not HLS.
           var rawQ   = (src.quality || "").toLowerCase();
-          var qLabel = (cat.provider.id === "mochi" && rawQ === "auto")
-            ? "MP4"
-            : (src.quality || "Auto");
+          var isMochiGeneric = cat.provider.id === "mochi" &&
+            (rawQ === "auto" || rawQ === "default" || rawQ === "");
+          var qLabel = isMochiGeneric ? "MP4" : (src.quality || "Auto");
           var quality = qLabel +
             " [" + cat.type.toUpperCase() + "] " +
             cat.provider.id.toUpperCase();
