@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -166,7 +166,7 @@ class DefaultExtension extends MProvider {
       var token = `${id}/${ep_num}`;
 
       var thumbnailUrl = (epThumbPref !== false) ? this.getProxyMediaUrl(item.img) : null;
-      var epDescription = epDescPref ? item.desc : null;
+      var epDescription = (epDescPref !== false) ? item.desc : null;
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
         : null;
@@ -187,10 +187,10 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     var serverPref = this.getPreference("animetsu_pref_stream_server");
-    if (serverPref.length < 1) serverPref.push("pahe");
+    if (!serverPref || serverPref.length < 1) serverPref = ["pahe", "kite", "meg"];
 
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
-    if (audioPref.length < 1) audioPref.push("sub");
+    if (!audioPref || audioPref.length < 1) audioPref = ["sub"];
 
     var combinations = [];
     for (var serverName of serverPref) {
@@ -240,7 +240,7 @@ class DefaultExtension extends MProvider {
       return score(b) - score(a);
     }
 
-    if (!dlPref) {
+    if (dlPref === false) {
       var results = await streamPromise;
       return results.flat().sort(dlFirst);
     }
