@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.13",
+    "version": "1.1.14",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -383,24 +383,39 @@ class DefaultExtension extends MProvider {
               }
             }
 
-            // ── Direct download URL ────────────────────────────────────────
-            // dec-mega returns a `download` field pointing to megaup.cc itself
-            // (not a CDN subdomain). megaup.cc resolves fine in public DNS.
-            //
-            // Critical: add Range: bytes=0- so libmpv/media_kit treats this as
-            // a progressive MP4 stream (the same way animetsu handles megaup's
-            // "meg" server). Without a Range header the player may buffer the
-            // whole file or not start at all.
+            // ── Direct download URL — probed for diagnostics ───────────────
+            // dec-mega returns a `download` field at megaup.cc (confirmed by
+            // the [MP4@megaup.cc] labels). We probe it with the extension
+            // client to find out WHY it doesn't play:
+            //   200-bin  → accessible, returns video bytes — player issue
+            //   200-html → server returns a login/error page (auth required)
+            //   403      → auth required
+            //   err(…)   → threw exception (CDN redirect → NXDOMAIN, or blocked)
+            // The status is baked into the quality label so we can read it.
             var dlUrl = decoded.download || decoded.downloadUrl || "";
             if (dlUrl && dlUrl.indexOf("http") === 0) {
               var dlHostM = dlUrl.match(/https?:\/\/([^\/]+)/);
               var dlHost = dlHostM ? dlHostM[1] : "?";
+              var dlProbeTag = "?";
+              try {
+                var dlProbe = await this.client.get(dlUrl, {
+                  "User-Agent": this.ua,
+                  "Referer": megaReferer,
+                  "Range": "bytes=0-1023",
+                });
+                var dlSt = dlProbe.statusCode || 0;
+                // Detect whether we got HTML (login/error page) or binary (video)
+                var dlBodySnip = String(dlProbe.body || "").substring(0, 12);
+                var dlIsHtml = dlBodySnip.charAt(0) === "<";
+                dlProbeTag = dlSt + (dlIsHtml ? "html" : "bin");
+              } catch (e) {
+                // Exception = redirect to NXDOMAIN CDN, or hard block
+                dlProbeTag = "err:" + String(e).replace(/\s+/g, " ").substring(0, 25);
+              }
               streams.push({
                 url: dlUrl,
-                // .mp4 suffix on originalUrl so Mangayomi routes this as a
-                // direct video stream (isMediaVideo = true) rather than HLS.
                 originalUrl: /\.(mp4|mkv|webm)/i.test(dlUrl) ? dlUrl : dlUrl + ".mp4",
-                quality: "[MP4@" + dlHost + "] " + server.serverName + " [" + group.sourceType + "]",
+                quality: "[MP4:" + dlProbeTag + "@" + dlHost + "] " + server.serverName + " [" + group.sourceType + "]",
                 subtitles: subtitles,
                 headers: {
                   "User-Agent": this.ua,
