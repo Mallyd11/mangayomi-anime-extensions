@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.7",
+    "version": "1.3.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -215,7 +215,7 @@ class DefaultExtension extends MProvider {
           if (serverName == "pahe" || serverName == "meg") {
             return this.getPaheMegStreams(epData.sources, audioType, serverName, skips);
           } else if (serverName == "kite") {
-            return await this.getKiteStreams(epData, audioType, skips);
+            return this.getKiteStreams(epData, audioType, skips);
           }
           return [];
         } catch (e) {
@@ -318,7 +318,7 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  async getKiteStreams(epData, audioType, skips) {
+  getKiteStreams(epData, audioType, skips) {
     var hdr = this.getHeaders();
     var skipAttrs = skips ? {
       introStart: skips.intro?.start,
@@ -326,7 +326,6 @@ class DefaultExtension extends MProvider {
       outroStart: skips.outro?.start,
       outroEnd:   skips.outro?.end,
     } : {};
-    var streams = [];
 
     var subtitles = [];
     if (epData.hasOwnProperty("subs")) {
@@ -335,56 +334,24 @@ class DefaultExtension extends MProvider {
       });
     }
 
-    for (var item of epData.sources) {
+    var streams = [];
+    for (var i = 0; i < epData.sources.length; i++) {
+      var item = epData.sources[i];
       var masterUrl = this.getProxyMediaUrl(item.url);
-      var baseDir = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
-      var parsed = false;
-      var warmupFetches = [];
-
-      try {
-        var res = await this.client.get(masterUrl, hdr);
-        if (res.statusCode == 200) {
-          var lines = res.body.split("\n");
-          for (var i = 0; i < lines.length; i++) {
-            if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
-              var resMatch = lines[i].match(/RESOLUTION=(\d+x\d+)/);
-              var resolution = resMatch ? resMatch[1] : "Auto";
-              var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
-              if (!nextLine) continue;
-              var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
-              // Pre-warm swiftstream: hit the variant URL now so the first playback
-              // or download request doesn't hit a cold-start 503/buffer.
-              warmupFetches.push(this.client.get(variantUrl, hdr));
-              var stream = Object.assign({
-                url: variantUrl,
-                originalUrl: variantUrl + ".m3u8",
-                quality: this.streamNamer(resolution + " [DL]", "soft" + audioType, "kite"),
-                headers: hdr,
-              }, skipAttrs);
-              if (!parsed) {
-                stream.subtitles = subtitles;
-                parsed = true;
-              }
-              streams.push(stream);
-            }
-          }
-          // Wait for all warmup fetches to complete before returning, so swiftstream
-          // is ready by the time the user taps play or starts a download.
-          await Promise.allSettled(warmupFetches);
-        }
-      } catch (e) {}
-
-      if (!parsed) {
-        streams.push(Object.assign({
-          url: masterUrl,
-          originalUrl: masterUrl + ".m3u8",
-          quality: this.streamNamer("Auto [DL]", "soft" + audioType, "kite"),
-          headers: hdr,
-          subtitles: subtitles,
-        }, skipAttrs));
-      }
+      // Give libmpv the master m3u8 directly. libmpv handles the full adaptive
+      // chain (master → variant → segments) natively. Previously we parsed the
+      // master and gave variant URLs, but this caused cold-start buffering because
+      // swiftstream's proxy initializes its session on the master request — a client
+      // that jumps straight to a variant URL hits a cold proxy and buffers.
+      var stream = Object.assign({
+        url: masterUrl,
+        originalUrl: masterUrl + ".m3u8",
+        quality: this.streamNamer("1080p [DL]", "soft" + audioType, "kite"),
+        headers: hdr,
+      }, skipAttrs);
+      if (i === 0) stream.subtitles = subtitles;
+      streams.push(stream);
     }
-
     return streams;
   }
 
