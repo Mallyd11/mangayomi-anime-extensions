@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -187,7 +187,7 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     var serverPref = this.getPreference("animetsu_pref_stream_server");
-    if (!serverPref || serverPref.length < 1) serverPref = ["pahe", "kite", "meg"];
+    if (!serverPref || serverPref.length < 1) serverPref = ["pahe", "kite"];
 
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
     if (!audioPref || audioPref.length < 1) audioPref = ["sub"];
@@ -225,19 +225,26 @@ class DefaultExtension extends MProvider {
       })
     );
 
-    // Sort helper — priority order for Mangayomi's download manager:
-    //   _kwikDl=true (score 3) — kwik→owocdn direct BD MP4, best for offline
-    //   _megDl=true  (score 2) — swiftstream proxy MP4 (.mp4 suffix + Range header)
-    //   [DL]         (score 1) — unencrypted HLS (kite), segment-based download
-    //   (none)       (score 0) — AES-128 encrypted HLS (pahe), streaming only
+    // Sort: Pahe first (reliable, works for streaming + download), then Kite,
+    // then kwik direct MP4, then Meg. Within each server, higher resolution first.
     function dlFirst(a, b) {
-      function score(s) {
-        if (s._kwikDl) return 3;
-        if (s._megDl) return 2;
-        if ((s.quality || "").includes("[DL]")) return 1;
+      function serverScore(s) {
+        const q = (s.quality || "").toUpperCase();
+        if (q.includes(": PAHE")) return 40;  // Pahe — most reliable
+        if (q.includes(": KITE")) return 30;  // Kite — unencrypted HLS
+        if (s._kwikDl)           return 20;  // kwik direct MP4
+        if (s._megDl)            return 10;  // Meg — loads slowly
         return 0;
       }
-      return score(b) - score(a);
+      function resScore(s) {
+        const q = (s.quality || "").toUpperCase();
+        if (q.includes("2160") || q.includes("4K"))  return 4;
+        if (q.includes("1920") || q.includes("1080")) return 3;
+        if (q.includes("1280") || q.includes("720"))  return 2;
+        if (q.includes("480"))                        return 1;
+        return 0;
+      }
+      return (serverScore(b) + resScore(b)) - (serverScore(a) + resScore(a));
     }
 
     if (dlPref === false) {
@@ -526,7 +533,7 @@ class DefaultExtension extends MProvider {
         multiSelectListPreference: {
           title: "Preferred server",
           summary: "Choose the server/s you want to extract streams from",
-          values: ["pahe", "kite", "meg"],
+          values: ["pahe", "kite"],
           entries: ["Pahe", "Kite", "Meg"],
           entryValues: ["pahe", "kite", "meg"],
         },
