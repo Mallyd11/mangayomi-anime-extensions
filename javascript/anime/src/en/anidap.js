@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.7",
+    "version": "1.4.8",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -420,36 +420,45 @@ class DefaultExtension extends MProvider {
 
     // ── Stream order ───────────────────────────────────────────────────────
     //
-    // mochi returns a direct MP4 file (~238 MB, mp4.24stream.xyz) — the
-    // ONLY provider that Mangayomi can download.  All other providers (uwu,
-    // mimi, yuki, etc.) serve AES-128 encrypted HLS which can be played in
-    // the app but cannot be saved as a file.
+    // Two provider tiers:
     //
-    // Not all shows have mochi.  Older / less popular series (e.g. AoT S1)
-    // only have uwu / mimi / yuki.  Fetching mochi-only for those shows
-    // produces an empty category list → "video list empty" error.
+    //  HLS (uwu / default)  — AES-128 encrypted segments, plays perfectly
+    //    in Mangayomi's ExoPlayer but cannot be saved as a file.
     //
-    // Strategy: prefer mochi (direct MP4); fall back to the default HLS
-    // provider when mochi is absent.  At most 2 sources requests per call.
+    //  mochi                — direct MP4 (~238 MB, mp4.24stream.xyz).
+    //    Mangayomi's player may buffer with application/octet-stream MIME;
+    //    HLS is more reliable for in-app playback.  mochi IS the only
+    //    stream Mangayomi can download — users pick it from the quality
+    //    picker when they want to save an episode offline.
+    //
+    // Strategy (2 sources requests max per call):
+    //   Sub preferred → default-sub HLS  +  mochi-sub (if available)
+    //   Dub preferred → mochi-dub (if available)  +  default-dub HLS
+    //
+    // Shows without mochi (older/completed series) get HLS-only — at
+    // least they are always playable.
 
-    var subMochi    = findProvider(subProviders, "mochi");
-    var dubMochi    = findProvider(dubProviders, "mochi");
-    var subFallback = subMochi ? null : defaultProvider(subProviders);
-    var dubFallback = dubMochi ? null : defaultProvider(dubProviders);
+    var subMochi   = findProvider(subProviders, "mochi");
+    var dubMochi   = findProvider(dubProviders, "mochi");
+    var subDefault = defaultProvider(subProviders);
+    var dubDefault = defaultProvider(dubProviders);
 
     var categories = [];
     if (audioPref === "dub") {
-      // Dub preferred — dub first, sub as fallback audio
-      if      (dubMochi)    categories.push({ type: "dub", provider: dubMochi });
-      else if (dubFallback) categories.push({ type: "dub", provider: dubFallback });
-      if      (subMochi)    categories.push({ type: "sub", provider: subMochi });
-      else if (subFallback) categories.push({ type: "sub", provider: subFallback });
+      // Dub preferred — mochi dub first (download), then HLS dub (play)
+      if (dubMochi && dubMochi !== dubDefault)
+        categories.push({ type: "dub", provider: dubMochi });
+      if (dubDefault)
+        categories.push({ type: "dub", provider: dubDefault });
+      // Sub as second audio — HLS only (avoid extra mochi request)
+      if (subDefault && subDefault.id !== (dubDefault && dubDefault.id))
+        categories.push({ type: "sub", provider: subDefault });
     } else {
-      // Sub preferred (default) — sub first so Mangayomi auto-downloads it
-      if      (subMochi)    categories.push({ type: "sub", provider: subMochi });
-      else if (subFallback) categories.push({ type: "sub", provider: subFallback });
-      if      (dubMochi)    categories.push({ type: "dub", provider: dubMochi });
-      else if (dubFallback) categories.push({ type: "dub", provider: dubFallback });
+      // Sub preferred — HLS sub first (plays reliably), mochi after (download)
+      if (subDefault)
+        categories.push({ type: "sub", provider: subDefault });
+      if (subMochi && subMochi.id !== (subDefault && subDefault.id))
+        categories.push({ type: "sub", provider: subMochi });
     }
 
     var streams = [];
