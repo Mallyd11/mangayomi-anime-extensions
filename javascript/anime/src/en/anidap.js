@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.5",
+    "version": "1.5.6",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -38,6 +38,13 @@ var CHAD = "https://chad.anidap.se/rest/api";
 // backward-compatible with history entries created by earlier extension versions,
 // preventing duplicate episodes from appearing in the library.
 var _slugCache = {};
+
+// ─── Title cache ──────────────────────────────────────────────────────────────
+//
+// getDetail() has the anime title from AniList.  Storing it here lets
+// getVideoList() use it for the chad search fallback without an extra AniList
+// request, even when the slug cache is cold (e.g. after app restart).
+var _titleCache = {}; // anilistId → { romaji, english, native }
 
 // ─── getVideoList cache ───────────────────────────────────────────────────────
 //
@@ -248,23 +255,53 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  async getSlug(anilistId) {
+  async getSlug(anilistId, titleObj) {
     // Return from cache — avoids repeated Cloudflare hits for the same show.
     var cached = _slugCache[String(anilistId)];
     if (cached) return cached;
+
+    // Primary: Cloudflare-protected info.data endpoint.
+    // After the webview CF bypass, Mangayomi retries with the cf_clearance cookie.
+    // siteHeaders intentionally omits User-Agent so the clearance (which is bound
+    // to the WebView's UA) is valid for the retry.
     try {
       var res = await this.client.get(
         this.getBaseUrl() + "/info/" + anilistId + ".data",
         this.siteHeaders
       );
-      if (res.statusCode !== 200 || !res.body) return null;
-      var arr  = JSON.parse(res.body);
-      var slug = this.extractSlug(arr);
-      if (slug) _slugCache[String(anilistId)] = slug;
-      return slug;
-    } catch (e) {
-      return null;
-    }
+      if (res.statusCode === 200 && res.body) {
+        var arr  = JSON.parse(res.body);
+        var slug = this.extractSlug(arr);
+        if (slug) { _slugCache[String(anilistId)] = slug; return slug; }
+      }
+    } catch (e) { /* fall through to chad search */ }
+
+    // Fallback: search chad.anidap.se (no Cloudflare) by title, then match by
+    // anilistId in the results.  This runs only when the CF lookup fails (e.g.
+    // the user's device/version of Mangayomi can't pass the CF TLS check).
+    var title = titleObj && (titleObj.romaji || titleObj.english || titleObj.native);
+    if (!title) return null;
+    try {
+      var q   = encodeURIComponent(title.slice(0, 60));
+      var sr  = await this.client.get(CHAD + "/search?q=" + q, this.chadHeaders);
+      if (sr.statusCode === 200 && sr.body) {
+        var items = JSON.parse(sr.body);
+        if (!Array.isArray(items)) items = items.results || items.data || [];
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          var itemAid = item.anilistId || item.anilist_id || item.anilist;
+          if (String(itemAid) === String(anilistId)) {
+            var s = item.id || item.slug;
+            if (s && typeof s === "string" && s.indexOf("-") >= 0) {
+              _slugCache[String(anilistId)] = s;
+              return s;
+            }
+          }
+        }
+      }
+    } catch (e) { /* search failed — return null below */ }
+
+    return null;
   }
 
   // ── chad.anidap.se REST API ────────────────────────────────────────────────
@@ -383,9 +420,12 @@ class DefaultExtension extends MProvider {
     var status      = this.statusCode(m.status);
     var isMovie     = m.format === "MOVIE";
 
-    // Fetch slug (hits Cloudflare-protected anidap.se — manual webview bypass
-    // may be needed on first use; clearance cookie persists after that).
-    var slug = await this.getSlug(anilistId);
+    // Cache the title so getVideoList() can use it for the chad search fallback
+    // without an extra AniList request when the slug cache is cold.
+    _titleCache[String(anilistId)] = m.title || {};
+
+    // Fetch slug — tries CF-protected info.data first, then chad search fallback.
+    var slug = await this.getSlug(anilistId, m.title);
 
     var chapters = [];
 
@@ -453,8 +493,10 @@ class DefaultExtension extends MProvider {
 
     // Resolve slug — hits _slugCache first (populated by getDetail), so the
     // Cloudflare-protected endpoint is only called if the cache is cold.
+    // _titleCache feeds the chad search fallback inside getSlug() so no extra
+    // AniList request is needed even when the slug cache is cold.
     // Also handles legacy URLs that still have the slug as parts[2].
-    var slug = parts[2] || await this.getSlug(anilistId);
+    var slug = parts[2] || await this.getSlug(anilistId, _titleCache[anilistId]);
     if (!slug) return [];
 
     var servers      = await this.chadServers(slug, epNum);
