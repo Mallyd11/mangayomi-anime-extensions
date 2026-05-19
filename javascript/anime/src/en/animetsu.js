@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.5",
+    "version": "1.2.6",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -229,8 +229,8 @@ class DefaultExtension extends MProvider {
     function dlFirst(a, b) {
       function serverScore(s) {
         const q = (s.quality || "").toUpperCase();
-        if (q.includes(": PAHE")) return 40;  // Pahe — most reliable
-        if (q.includes(": KITE")) return 30;  // Kite — unencrypted HLS
+        if (q.includes(": KITE")) return 40;  // Kite — only server with working downloads
+        if (q.includes(": PAHE")) return 30;  // Pahe — reliable streaming
         if (s._kwikDl)           return 20;  // kwik direct MP4
         if (s._megDl)            return 10;  // Meg — loads slowly
         return 0;
