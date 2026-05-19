@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.1",
+    "version": "1.5.2",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -26,6 +26,19 @@ const mangayomiSources = [
 
 // chad.anidap.se is the dedicated REST API subdomain (no Cloudflare)
 var CHAD = "https://chad.anidap.se/rest/api";
+
+// ─── getVideoList cache ───────────────────────────────────────────────────────
+//
+// Mangayomi calls getVideoList() for both playback AND download of the same
+// episode. Without caching this doubles the chad API request count, reliably
+// hitting the per-IP rate limit (429) on the second call and returning an empty
+// stream list — which is why "nothing happens" on download.
+//
+// The cache keeps the last result per chapter URL for up to 5 minutes.
+// mochi Authorization tokens expire in 3 days so a 5-min cache is safe.
+var _vlCache   = {};
+var _vlCacheTs = {};
+var VL_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // ─── AniList GraphQL (browse / search / metadata) ────────────────────────────
 
@@ -394,6 +407,13 @@ class DefaultExtension extends MProvider {
   // ── Video list ─────────────────────────────────────────────────────────────
 
   async getVideoList(url) {
+    // Return cached result if still fresh — avoids the double rate-limit hit
+    // that occurs when Mangayomi calls getVideoList for both playback and download.
+    var _now = Date.now();
+    if (_vlCache[url] && _now - (_vlCacheTs[url] || 0) < VL_CACHE_TTL_MS) {
+      return _vlCache[url];
+    }
+
     // Chapter URL format: "{anilistId}|{epNum}|{slug}"
     var parts     = url.split("|");
     var anilistId = parts[0] || "";
@@ -412,10 +432,6 @@ class DefaultExtension extends MProvider {
     var subProviders = servers.subProviders || [];
     var dubProviders = servers.dubProviders || [];
 
-    function findProvider(list, id) {
-      for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
-      return null;
-    }
     var audioPref = this.getPreference("anidap_audio_pref");
 
     // ── Stream order ───────────────────────────────────────────────────────
@@ -425,15 +441,9 @@ class DefaultExtension extends MProvider {
     // only controls which audio group is listed first (i.e. what the
     // player auto-selects by default).
     //
-    // Per audio type, two tiers are emitted when available:
-    //   1. default HLS provider (uwu etc.) — AES-128 HLS, plays reliably
-    //   2. mochi                           — direct MP4, use for downloads
-    //
-    // If mochi IS the default provider (e.g. dub on newer shows) only one
-    // entry is added for that type to avoid a duplicate sources request.
-
-    var subMochi = findProvider(subProviders, "mochi");
-    var dubMochi = findProvider(dubProviders, "mochi");
+    // Per audio type, up to two tiers are emitted:
+    //   1. best HLS provider (uwu/mimi etc.) — AES-128 HLS, reliable playback
+    //   2. mochi                              — direct MP4, best for downloads
 
     // Return the best non-mochi HLS provider from a list:
     // prefer the one marked default, else the first non-mochi entry.
@@ -447,10 +457,17 @@ class DefaultExtension extends MProvider {
       return fallback;
     }
 
+    // Synthetic mochi provider object — used so we always attempt a mochi fetch
+    // even when it is absent from the /servers list.  The chad /sources endpoint
+    // returns valid MP4 data for mochi on most episodes regardless of the servers
+    // list; a graceful try/catch means failures are silently skipped.
+    var MOCHI_PROV = { id: "mochi", default: false };
+
     // Build one group for a given audio type:
-    //   1. best HLS provider  (reliable playback)
-    //   2. mochi              (MP4 direct, for downloads)
-    // If mochi IS the only provider, it's added as both play and download.
+    //   1. best HLS provider  (reliable playback, AES-128 HLS)
+    //   2. mochi              (direct MP4 — best for downloads)
+    // We ALWAYS attempt mochi (via MOCHI_PROV) so downloads have a direct-file
+    // option even on shows that no longer list mochi in their /servers response.
     function audioGroup(type, providers, mochiProv) {
       var group  = [];
       var hlsProv = hlsProvider(providers);
@@ -463,8 +480,8 @@ class DefaultExtension extends MProvider {
       return group;
     }
 
-    var subGroup = audioGroup("sub", subProviders, subMochi);
-    var dubGroup = audioGroup("dub", dubProviders, dubMochi);
+    var subGroup = audioGroup("sub", subProviders, MOCHI_PROV);
+    var dubGroup = audioGroup("dub", dubProviders, MOCHI_PROV);
 
     // Preferred audio goes first; the other audio follows.
     var categories = (audioPref === "dub")
@@ -538,6 +555,9 @@ class DefaultExtension extends MProvider {
       } catch (e) { /* skip this category on error */ }
     }
 
+    // Store in cache before returning so a follow-up download call is free.
+    _vlCache[url]   = streams;
+    _vlCacheTs[url] = Date.now();
     return streams;
   }
 
