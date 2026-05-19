@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.14",
+    "version": "1.1.15",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -267,11 +267,24 @@ class DefaultExtension extends MProvider {
     };
   }
 
+  getPreference(key) {
+    return new SharedPreferences().get(key);
+  }
+
   async getVideoList(url) {
     // Chapter URLs are stored as baseUrl/iframe/{epToken}
     var epToken = url.includes("/iframe/") ? url.split("/iframe/").pop() : url;
     var streams = [];
     var step = "init";
+
+    // Optional Cloudflare Worker proxy URL (configured in source preferences).
+    // megaup's CDN domains (rrr.*) only exist inside Cloudflare's network —
+    // they are NXDOMAIN in public DNS. A Cloudflare Worker running on CF's
+    // infrastructure CAN resolve them and relay the HLS content (m3u8 + TS
+    // segments + AES-128 keys) to the player.
+    // When set, every CDN stream is routed via: proxyBase + "?url=" + cdnUrl
+    var rawProxy = this.getPreference("animekai_proxy_url") || "";
+    var proxyBase = rawProxy.replace(/\/+$/, ""); // strip trailing slash
 
     try {
       step = "encKai";
@@ -383,91 +396,69 @@ class DefaultExtension extends MProvider {
               }
             }
 
-            // ── Direct download URL — probed for diagnostics ───────────────
-            // dec-mega returns a `download` field at megaup.cc (confirmed by
-            // the [MP4@megaup.cc] labels). We probe it with the extension
-            // client to find out WHY it doesn't play:
-            //   200-bin  → accessible, returns video bytes — player issue
-            //   200-html → server returns a login/error page (auth required)
-            //   403      → auth required
-            //   err(…)   → threw exception (CDN redirect → NXDOMAIN, or blocked)
-            // The status is baked into the quality label so we can read it.
-            var dlUrl = decoded.download || decoded.downloadUrl || "";
-            if (dlUrl && dlUrl.indexOf("http") === 0) {
-              var dlHostM = dlUrl.match(/https?:\/\/([^\/]+)/);
-              var dlHost = dlHostM ? dlHostM[1] : "?";
-              var dlProbeTag = "?";
-              try {
-                var dlProbe = await this.client.get(dlUrl, {
-                  "User-Agent": this.ua,
-                  "Referer": megaReferer,
-                  "Range": "bytes=0-1023",
-                });
-                var dlSt = dlProbe.statusCode || 0;
-                // Detect whether we got HTML (login/error page) or binary (video)
-                var dlBodySnip = String(dlProbe.body || "").substring(0, 12);
-                var dlIsHtml = dlBodySnip.charAt(0) === "<";
-                dlProbeTag = dlSt + (dlIsHtml ? "html" : "bin");
-              } catch (e) {
-                // Exception = redirect to NXDOMAIN CDN, or hard block
-                dlProbeTag = "err:" + String(e).replace(/\s+/g, " ").substring(0, 25);
-              }
-              streams.push({
-                url: dlUrl,
-                originalUrl: /\.(mp4|mkv|webm)/i.test(dlUrl) ? dlUrl : dlUrl + ".mp4",
-                quality: "[MP4:" + dlProbeTag + "@" + dlHost + "] " + server.serverName + " [" + group.sourceType + "]",
-                subtitles: subtitles,
-                headers: {
-                  "User-Agent": this.ua,
-                  "Referer": megaReferer,
-                  "Range": "bytes=0-",
-                },
-              });
-            }
-
             // ── HLS / CDN sources ──────────────────────────────────────────
-            // Iterate ALL sources (not just [0]) in case different CDN domains
+            // megaup CDN domains (rrr.*) are NXDOMAIN in public DNS — they
+            // only resolve inside Cloudflare's network. If a Cloudflare Worker
+            // proxy is configured in source preferences, all CDN stream URLs
+            // are routed through it. The Worker fetches from the CDN (internal
+            // Cloudflare routing) and rewrites m3u8 playlist URLs so every
+            // subsequent request (variant playlists, TS segments, AES-128 key
+            // URIs) also goes through the proxy. Without a proxy the streams
+            // are emitted directly — they may work on networks where the CDN
+            // resolves, but typically show [cdn-err] and buffer forever.
             var sourceList = decoded.sources || [];
             for (var sri = 0; sri < sourceList.length; sri++) {
               var masterUrl = sourceList[sri].file;
               if (!masterUrl) continue;
 
-              // Show the CDN hostname in the quality label for easy identification
               var cdnHostM = masterUrl.match(/https?:\/\/([^\/]+)/);
               var cdnHost = cdnHostM ? cdnHostM[1] : "?";
               var label = server.serverName + " [" + group.sourceType + "] @" + cdnHost;
 
               if (masterUrl.indexOf(".m3u8") >= 0) {
-                step = group.sourceType + si + "_resolveHls";
-                var resolved = await this.resolveHlsPlaylist(masterUrl, streamHeaders);
-                if (resolved.kind === "master") {
-                  // resolveHlsPlaylist succeeded — CDN reachable from extension
-                  // client. Emit individual quality variants.
-                  for (var v = 0; v < resolved.variants.length; v++) {
+                if (proxyBase) {
+                  // ── Proxy path ───────────────────────────────────────────
+                  // Route the master m3u8 through the Cloudflare Worker.
+                  // The Worker rewrites all URLs inside the playlist (variant
+                  // m3u8 refs, TS segment refs, AES-128 key URIs) so every
+                  // subsequent player request also goes through the proxy.
+                  var proxiedUrl = proxyBase + "?url=" + encodeURIComponent(masterUrl);
+                  streams.push({
+                    url: proxiedUrl,
+                    originalUrl: masterUrl, // .m3u8 extension → player treats as HLS
+                    quality: label + " [proxy]",
+                    subtitles: subtitles,
+                    headers: { "User-Agent": this.ua },
+                  });
+                } else {
+                  // ── Direct path (no proxy) ────────────────────────────────
+                  // Try to resolve variants — succeeds only if CDN is reachable
+                  // from the extension client (uncommon). If not, emit master
+                  // URL directly and let the device player try.
+                  step = group.sourceType + si + "_resolveHls";
+                  var resolved = await this.resolveHlsPlaylist(masterUrl, streamHeaders);
+                  if (resolved.kind === "master") {
+                    for (var v = 0; v < resolved.variants.length; v++) {
+                      streams.push({
+                        url: resolved.variants[v].url,
+                        originalUrl: masterUrl,
+                        quality: resolved.variants[v].label + " - " + label,
+                        subtitles: subtitles,
+                        headers: streamHeaders,
+                      });
+                    }
+                  } else {
+                    var kindTag = resolved.kind === "fetch-failed" ? " [cdn-err]" : " [hls]";
                     streams.push({
-                      url: resolved.variants[v].url,
+                      url: masterUrl,
                       originalUrl: masterUrl,
-                      quality: resolved.variants[v].label + " - " + label,
+                      quality: label + kindTag,
                       subtitles: subtitles,
                       headers: streamHeaders,
                     });
                   }
-                } else {
-                  // CDN unreachable from extension client (fetch-failed) or
-                  // already a segment playlist (flat). Emit the master URL
-                  // directly and let the device's native player handle it —
-                  // the device may have different DNS than the extension client.
-                  var kindTag = resolved.kind === "fetch-failed" ? " [cdn-err]" : " [hls]";
-                  streams.push({
-                    url: masterUrl,
-                    originalUrl: masterUrl,
-                    quality: label + kindTag,
-                    subtitles: subtitles,
-                    headers: streamHeaders,
-                  });
                 }
               } else {
-                // No .m3u8 extension — emit URL directly
                 streams.push({
                   url: masterUrl,
                   originalUrl: masterUrl,
@@ -486,16 +477,15 @@ class DefaultExtension extends MProvider {
       step = "ERR@" + step + ":" + String(e).substring(0, 100);
     }
 
-    // Sort by DNS reliability:
-    //   score 0 — [MP4] direct download from megaup.cc (no CDN subdomain)
-    //   score 1 — rrr.megaup.cc CDN (main domain, slightly more likely to resolve)
-    //   score 2 — other CDN subdomains (rrr.*.site etc.)
+    // Sort: proxy streams first (most likely to work), then rrr.megaup.cc,
+    // then other CDN subdomains, then debug/unknown entries last.
     streams.sort(function(a, b) {
       function score(s) {
         var q = s.quality || "";
         var u = s.url || "";
-        if (q.indexOf("[MP4]") >= 0) return 0;
+        if (q.indexOf("[proxy]") >= 0) return 0;
         if (u.indexOf("megaup.cc") >= 0) return 1;
+        if (q.indexOf("[SRV@") >= 0) return 9; // non-megaup debug entries
         return 2;
       }
       return score(a) - score(b);
@@ -516,6 +506,17 @@ class DefaultExtension extends MProvider {
   }
 
   getSourcePreferences() {
-    return [];
+    return [
+      {
+        key: "animekai_proxy_url",
+        editTextPreference: {
+          title: "CDN proxy URL (required for playback)",
+          summary: "megaup's CDN is only accessible inside Cloudflare's network. Deploy the Cloudflare Worker from the extension notes and paste its URL here (e.g. https://YOUR_WORKER.workers.dev). Leave blank to disable.",
+          value: "",
+          dialogTitle: "Cloudflare Worker proxy URL",
+          dialogMessage: "Enter your Cloudflare Worker URL. Streams will be routed through it so the CDN is reachable.",
+        },
+      },
+    ];
   }
 }
