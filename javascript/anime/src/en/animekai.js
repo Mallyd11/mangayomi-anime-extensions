@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.11",
+    "version": "1.1.12",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -107,7 +107,20 @@ class DefaultExtension extends MProvider {
         for (var j = i + 1; j < lines.length; j++) {
           var u = lines[j].trim();
           if (!u || u.charAt(0) === "#") continue;
-          var variantUrl = u.indexOf("http") === 0 ? u : baseDir + u;
+          var variantUrl;
+          if (u.indexOf("http") === 0) {
+            // Absolute URL — use as-is
+            variantUrl = u;
+          } else if (u.charAt(0) === "/") {
+            // Absolute path — join with origin only (scheme+host), not baseDir.
+            // Using baseDir here would produce a double path like:
+            //   https://cdn.host/a/b/  +  /a/b/720.m3u8  →  /a/b//a/b/720.m3u8 (wrong)
+            var originM = playlistUrl.match(/^https?:\/\/[^\/]+/);
+            variantUrl = originM ? originM[0] + u : baseDir + u;
+          } else {
+            // Relative path — resolve against base directory
+            variantUrl = baseDir + u;
+          }
           variants.push({ url: variantUrl, label: resolution || "Auto" });
           break;
         }
@@ -348,6 +361,25 @@ class DefaultExtension extends MProvider {
               }
             }
 
+            // ── Direct download URL ────────────────────────────────────────
+            // dec-mega may return a `download` field pointing to megaup.cc
+            // itself (not a CDN subdomain). megaup.cc resolves fine in public
+            // DNS; CDN subdomains (rrr.*) often do not. Try the download URL
+            // first — it bypasses CDN DNS issues entirely.
+            var dlUrl = decoded.download || decoded.downloadUrl || "";
+            if (dlUrl && dlUrl.indexOf("http") === 0) {
+              streams.push({
+                url: dlUrl,
+                // Append .mp4 hint to originalUrl so Mangayomi classifies this
+                // as a direct-video stream rather than HLS.
+                originalUrl: /\.(mp4|mkv|webm)/i.test(dlUrl) ? dlUrl : dlUrl + ".mp4",
+                quality: "[MP4] " + server.serverName + " [" + group.sourceType + "]",
+                subtitles: subtitles,
+                headers: streamHeaders,
+              });
+            }
+
+            // ── HLS / CDN sources ──────────────────────────────────────────
             // Iterate ALL sources (not just [0]) in case different CDN domains
             var sourceList = decoded.sources || [];
             for (var sri = 0; sri < sourceList.length; sri++) {
@@ -363,6 +395,8 @@ class DefaultExtension extends MProvider {
                 step = group.sourceType + si + "_resolveHls";
                 var resolved = await this.resolveHlsPlaylist(masterUrl, streamHeaders);
                 if (resolved.kind === "master") {
+                  // resolveHlsPlaylist succeeded — CDN reachable from extension
+                  // client. Emit individual quality variants.
                   for (var v = 0; v < resolved.variants.length; v++) {
                     streams.push({
                       url: resolved.variants[v].url,
@@ -373,10 +407,15 @@ class DefaultExtension extends MProvider {
                     });
                   }
                 } else {
+                  // CDN unreachable from extension client (fetch-failed) or
+                  // already a segment playlist (flat). Emit the master URL
+                  // directly and let the device's native player handle it —
+                  // the device may have different DNS than the extension client.
+                  var kindTag = resolved.kind === "fetch-failed" ? " [cdn-err]" : " [hls]";
                   streams.push({
                     url: masterUrl,
                     originalUrl: masterUrl,
-                    quality: label,
+                    quality: label + kindTag,
                     subtitles: subtitles,
                     headers: streamHeaders,
                   });
@@ -401,13 +440,19 @@ class DefaultExtension extends MProvider {
       step = "ERR@" + step + ":" + String(e).substring(0, 100);
     }
 
-    // Sort: put rrr.megaup.cc streams first — those use megaup's own CDN
-    // which is always resolvable. Custom CDN domains (.shop21pro.site etc.)
-    // may fail DNS on some networks and end up later in the list.
+    // Sort by DNS reliability:
+    //   score 0 — [MP4] direct download from megaup.cc (no CDN subdomain)
+    //   score 1 — rrr.megaup.cc CDN (main domain, slightly more likely to resolve)
+    //   score 2 — other CDN subdomains (rrr.*.site etc.)
     streams.sort(function(a, b) {
-      var aM = (a.url || "").indexOf("megaup.cc") >= 0 ? 0 : 1;
-      var bM = (b.url || "").indexOf("megaup.cc") >= 0 ? 0 : 1;
-      return aM - bM;
+      function score(s) {
+        var q = s.quality || "";
+        var u = s.url || "";
+        if (q.indexOf("[MP4]") >= 0) return 0;
+        if (u.indexOf("megaup.cc") >= 0) return 1;
+        return 2;
+      }
+      return score(a) - score(b);
     });
 
     // If no streams found, surface a debug entry so we can see where it broke
