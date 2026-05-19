@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.8",
+    "version": "1.1.9",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -314,11 +314,9 @@ class DefaultExtension extends MProvider {
             var megaDomain = domainM[1];
             var mediaUrl = megaUrl.replace("/e/", "/media/");
 
-            // Headers that the CDN expects: Origin + Referer from the embed page
             var streamHeaders = {
               "User-Agent": this.ua,
               "Referer": megaUrl,
-              "Origin": "https://" + megaDomain,
             };
 
             step = group.sourceType + si + "_mediaFetch";
@@ -381,6 +379,26 @@ class DefaultExtension extends MProvider {
                   quality: label,
                   subtitles: subtitles,
                   headers: streamHeaders,
+                });
+              }
+
+              // Diagnostic: fetch the CDN URL and show first bytes of response
+              // so we can see what rrr.lab27core.site actually returns.
+              try {
+                var diagR = await this.client.get(masterUrl, streamHeaders);
+                var diagBody = String(diagR.body).replace(/[\r\n]/g, "|").substring(0, 70);
+                streams.push({
+                  url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                  originalUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                  quality: "[DBG] s=" + diagR.statusCode + " " + diagBody,
+                  subtitles: [], headers: {},
+                });
+              } catch (diagE) {
+                streams.push({
+                  url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                  originalUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                  quality: "[DBG] CDN_ERR:" + String(diagE).substring(0, 60),
+                  subtitles: [], headers: {},
                 });
               }
 
