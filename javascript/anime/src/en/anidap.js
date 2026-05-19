@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.9",
+    "version": "1.5.0",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -425,46 +425,40 @@ class DefaultExtension extends MProvider {
 
     // ── Stream order ───────────────────────────────────────────────────────
     //
-    // Two provider tiers:
+    // Both sub AND dub are always included so the user can switch audio
+    // in the quality picker without changing any setting.  The preference
+    // only controls which audio group is listed first (i.e. what the
+    // player auto-selects by default).
     //
-    //  HLS (uwu / default)  — AES-128 encrypted segments, plays perfectly
-    //    in Mangayomi's ExoPlayer but cannot be saved as a file.
+    // Per audio type, two tiers are emitted when available:
+    //   1. default HLS provider (uwu etc.) — AES-128 HLS, plays reliably
+    //   2. mochi                           — direct MP4, use for downloads
     //
-    //  mochi                — direct MP4 (~238 MB, mp4.24stream.xyz).
-    //    Mangayomi's player may buffer with application/octet-stream MIME;
-    //    HLS is more reliable for in-app playback.  mochi IS the only
-    //    stream Mangayomi can download — users pick it from the quality
-    //    picker when they want to save an episode offline.
-    //
-    // Strategy (2 sources requests max per call):
-    //   Sub preferred → default-sub HLS  +  mochi-sub (if available)
-    //   Dub preferred → mochi-dub (if available)  +  default-dub HLS
-    //
-    // Shows without mochi (older/completed series) get HLS-only — at
-    // least they are always playable.
+    // If mochi IS the default provider (e.g. dub on newer shows) only one
+    // entry is added for that type to avoid a duplicate sources request.
 
     var subMochi   = findProvider(subProviders, "mochi");
     var dubMochi   = findProvider(dubProviders, "mochi");
     var subDefault = defaultProvider(subProviders);
     var dubDefault = defaultProvider(dubProviders);
 
-    var categories = [];
-    if (audioPref === "dub") {
-      // Dub preferred — mochi dub first (download), then HLS dub (play)
-      if (dubMochi && dubMochi !== dubDefault)
-        categories.push({ type: "dub", provider: dubMochi });
-      if (dubDefault)
-        categories.push({ type: "dub", provider: dubDefault });
-      // Sub as second audio — HLS only (avoid extra mochi request)
-      if (subDefault && subDefault.id !== (dubDefault && dubDefault.id))
-        categories.push({ type: "sub", provider: subDefault });
-    } else {
-      // Sub preferred — HLS sub first (plays reliably), mochi after (download)
-      if (subDefault)
-        categories.push({ type: "sub", provider: subDefault });
-      if (subMochi && subMochi.id !== (subDefault && subDefault.id))
-        categories.push({ type: "sub", provider: subMochi });
+    // Build one group (HLS default + mochi) for a given audio type.
+    function audioGroup(type, defProv, mochiProv) {
+      var group = [];
+      if (defProv) group.push({ type: type, provider: defProv });
+      // Add mochi only when it is not already the default provider.
+      if (mochiProv && (!defProv || mochiProv.id !== defProv.id))
+        group.push({ type: type, provider: mochiProv });
+      return group;
     }
+
+    var subGroup = audioGroup("sub", subDefault, subMochi);
+    var dubGroup = audioGroup("dub", dubDefault, dubMochi);
+
+    // Preferred audio goes first; the other audio follows.
+    var categories = (audioPref === "dub")
+      ? dubGroup.concat(subGroup)
+      : subGroup.concat(dubGroup);
 
     var streams = [];
     var seen    = {};
@@ -557,10 +551,10 @@ class DefaultExtension extends MProvider {
       {
         key: "anidap_audio_pref",
         listPreference: {
-          title: "Preferred audio",
-          summary: "Sub or Dub priority",
+          title: "Default audio",
+          summary: "Both sub and dub are always available in the quality picker. This sets which one the player selects automatically.",
           valueIndex: 0,
-          entries: ["Sub", "Dub"],
+          entries: ["Sub (default)", "Dub (default)"],
           entryValues: ["sub", "dub"],
         },
       },
