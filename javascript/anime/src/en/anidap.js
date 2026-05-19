@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.3",
+    "version": "1.5.4",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -478,31 +478,32 @@ class DefaultExtension extends MProvider {
       return fallback;
     }
 
-    // Synthetic mochi provider object — used so we always attempt a mochi fetch
-    // even when it is absent from the /servers list.  The chad /sources endpoint
-    // returns valid MP4 data for mochi on most episodes regardless of the servers
-    // list; a graceful try/catch means failures are silently skipped.
-    var MOCHI_PROV = { id: "mochi", default: false };
-
     // Build one group for a given audio type:
-    //   1. best HLS provider  (reliable playback, AES-128 HLS)
-    //   2. mochi              (direct MP4 — best for downloads)
-    // We ALWAYS attempt mochi (via MOCHI_PROV) so downloads have a direct-file
-    // option even on shows that no longer list mochi in their /servers response.
-    function audioGroup(type, providers, mochiProv) {
-      var group  = [];
+    //   1. best HLS provider (uwu/mimi etc.) — AES-128 HLS, plays reliably
+    //   2. mochi if explicitly listed in /servers — download-only MP4
+    //
+    // NOTE: mochi CDN always serves Content-Type: application/octet-stream with
+    // no file extension, so Mangayomi's player cannot identify it as video.
+    // Mochi URLs only work as downloads (saved to disk), not for playback.
+    // We include mochi only when the site lists it in /servers to keep API calls
+    // low (2-3 per call vs 5 with always-try-mochi) and avoid rate limits.
+    function audioGroup(type, providers) {
+      var group   = [];
       var hlsProv = hlsProvider(providers);
-      if (hlsProv)  group.push({ type: type, provider: hlsProv });
-      if (mochiProv && (!hlsProv || mochiProv.id !== hlsProv.id))
-        group.push({ type: type, provider: mochiProv });
-      // If there's nothing at all, fall back to whatever is first.
+      if (hlsProv) group.push({ type: type, provider: hlsProv });
+      // Include mochi only when the site explicitly offers it.
+      for (var _i = 0; _i < providers.length; _i++) {
+        if (providers[_i].id === "mochi" && providers[_i] !== hlsProv)
+          group.push({ type: type, provider: providers[_i] });
+      }
+      // Nothing matched: fall back to first available provider.
       if (group.length === 0 && providers.length > 0)
         group.push({ type: type, provider: providers[0] });
       return group;
     }
 
-    var subGroup = audioGroup("sub", subProviders, MOCHI_PROV);
-    var dubGroup = audioGroup("dub", dubProviders, MOCHI_PROV);
+    var subGroup = audioGroup("sub", subProviders);
+    var dubGroup = audioGroup("dub", dubProviders);
 
     // Preferred audio goes first; the other audio follows.
     var categories = (audioPref === "dub")
