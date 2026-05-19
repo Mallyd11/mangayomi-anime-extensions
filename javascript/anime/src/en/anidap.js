@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.4.8",
+    "version": "1.4.9",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -266,17 +266,18 @@ class DefaultExtension extends MProvider {
   //
   // Derived from anidap.se/assets/api-BgbRfQAC.js transform map:
   //
-  //   uwu:   regex-replace vault-*.owocdn.top/stream/ → sv6.otakuu.se/storage/
+  //   uwu:   regex-replace vault-*.owocdn.top/stream/ → uwu.24stream.xyz/storage/
   //   mochi: string-replace tools.fast4speed.rsvp    → mp4.24stream.xyz/storage
   //   miku:  regex-replace any origin               → ply.24stream.xyz/media/
+  //   wave:  regex-replace any origin               → wv.24stream.xyz/
   //
-  //   The following providers use u(t,{origin:"<cdn>"}) — an origin-swap:
+  //   The following providers use origin-swap (replaceOrigin):
   //   nuri → rapid-cloud.co   shiro → kem.clvd.xyz      kami → krussdomi.com
   //   yuki → megaplay.buzz    koto  → megacloud.blog/    miru → senshi.live/
   //   maze → ayy-eu.1stkmgv1.com    kiwi  → 4spromax.site/
-  //   mimi → vibeplayer.site/ (same origin = identity)   zaza → anizone.to
+  //   mimi → otakuhg.site     zaza  → anizone.to
   //
-  //   wave, vee, beep: identity (no transform).
+  //   vee, beep: identity (no transform).
 
   // Replace only the scheme+host part of a URL, preserving path/query/hash.
   replaceOrigin(url, newOrigin) {
@@ -295,7 +296,7 @@ class DefaultExtension extends MProvider {
       case "uwu":
         return url.replace(
           /https:\/\/vault-\d+\.(owo|uwu)cdn\.top\/stream\//,
-          "https://sv6.otakuu.se/storage/"
+          "https://uwu.24stream.xyz/storage/"
         );
       case "mochi":
         return url.replace(
@@ -319,7 +320,11 @@ class DefaultExtension extends MProvider {
       case "kiwi":  return this.replaceOrigin(url, "https://4spromax.site");
       case "zaza":  return this.replaceOrigin(url, "https://anizone.to");
 
-      // ── identity providers (mimi, wave, vee, beep) ────────────────────────
+      // ── remaining providers ────────────────────────────────────────────────
+      case "mimi": return this.replaceOrigin(url, "https://otakuhg.site");
+      case "wave": return url.replace(/https?:\/\/[^/]+\//, "https://wv.24stream.xyz/");
+
+      // vee, beep — identity (no transform)
       default: return url;
     }
   }
