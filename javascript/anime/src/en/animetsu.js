@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.18",
+    "version": "1.2.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -209,10 +209,14 @@ class DefaultExtension extends MProvider {
 
           if (!epData.hasOwnProperty("sources")) return [];
 
+          var skips = this.getPreference("animetsu_pref_skip_timestamps") && epData.skips
+            ? epData.skips
+            : null;
+
           if (serverName == "pahe" || serverName == "meg") {
-            return this.getPaheMegStreams(epData.sources, audioType, serverName);
+            return this.getPaheMegStreams(epData.sources, audioType, serverName, skips);
           } else if (serverName == "kite") {
-            return await this.getKiteStreams(epData, audioType);
+            return await this.getKiteStreams(epData, audioType, skips);
           }
           return [];
         } catch (e) {
@@ -253,8 +257,14 @@ class DefaultExtension extends MProvider {
     return `${res.toUpperCase()} - ${dubType.toUpperCase()} : ${serverName.toUpperCase()}`;
   }
 
-  getPaheMegStreams(epData, audioType, serverName) {
+  getPaheMegStreams(epData, audioType, serverName, skips) {
     var hdr = this.getHeaders();
+    var skipAttrs = skips ? {
+      introStart: skips.intro?.start,
+      introEnd:   skips.intro?.end,
+      outroStart: skips.outro?.start,
+      outroEnd:   skips.outro?.end,
+    } : {};
     var streams = [];
 
     epData.forEach((item) => {
@@ -276,29 +286,35 @@ class DefaultExtension extends MProvider {
         // → Mangayomi routes to direct-streaming download path), while url stays
         // as the real plain token URL that actually serves 206 MP4 content.
         var megHdr = Object.assign({}, hdr, { "Range": "bytes=0-" });
-        streams.push({
+        streams.push(Object.assign({
           url: link,                  // real URL — plain token, Range → 206 MP4
           originalUrl: link + ".mp4", // fake suffix — tricks isMediaVideo() = true
           quality: this.streamNamer(quality + " [DL]", audioType, serverName),
           headers: megHdr,
           _megDl: true,
-        });
+        }, skipAttrs));
       } else {
         // pahe = AES-128 encrypted HLS — streaming only, not downloadable offline.
-        streams.push({
+        streams.push(Object.assign({
           url: link,
           originalUrl: link,
           quality: this.streamNamer(quality, audioType, serverName),
           headers: hdr,
-        });
+        }, skipAttrs));
       }
     });
 
     return streams;
   }
 
-  async getKiteStreams(epData, audioType) {
+  async getKiteStreams(epData, audioType, skips) {
     var hdr = this.getHeaders();
+    var skipAttrs = skips ? {
+      introStart: skips.intro?.start,
+      introEnd:   skips.intro?.end,
+      outroStart: skips.outro?.start,
+      outroEnd:   skips.outro?.end,
+    } : {};
     var streams = [];
 
     var subtitles = [];
@@ -324,12 +340,12 @@ class DefaultExtension extends MProvider {
               var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
               if (!nextLine) continue;
               var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
-              var stream = {
+              var stream = Object.assign({
                 url: variantUrl,
                 originalUrl: variantUrl,
                 quality: this.streamNamer(resolution + " [DL]", "soft" + audioType, "kite"),
                 headers: hdr,
-              };
+              }, skipAttrs);
               if (!parsed) {
                 stream.subtitles = subtitles;
                 parsed = true;
@@ -341,13 +357,13 @@ class DefaultExtension extends MProvider {
       } catch (e) {}
 
       if (!parsed) {
-        streams.push({
+        streams.push(Object.assign({
           url: masterUrl,
           originalUrl: masterUrl,
           quality: this.streamNamer("Auto [DL]", "soft" + audioType, "kite"),
           headers: hdr,
           subtitles: subtitles,
-        });
+        }, skipAttrs));
       }
     }
 
@@ -486,6 +502,14 @@ class DefaultExtension extends MProvider {
         switchPreferenceCompat: {
           title: "Episode description",
           summary: "",
+          value: true,
+        },
+      },
+      {
+        key: "animetsu_pref_skip_timestamps",
+        switchPreferenceCompat: {
+          title: "Include intro/outro skip timestamps",
+          summary: "Pass intro and outro timestamps to Mangayomi's skip button. Requires 'Enable AniSkip' to be on in Mangayomi player settings.",
           value: true,
         },
       },
