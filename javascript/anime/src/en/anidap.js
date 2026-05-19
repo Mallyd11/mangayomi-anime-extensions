@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.2",
+    "version": "1.5.3",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -26,6 +26,18 @@ const mangayomiSources = [
 
 // chad.anidap.se is the dedicated REST API subdomain (no Cloudflare)
 var CHAD = "https://chad.anidap.se/rest/api";
+
+// ─── Slug cache ───────────────────────────────────────────────────────────────
+//
+// The slug (e.g. "attack-on-titan-xyz12") is fetched from the Cloudflare-
+// protected anidap.se/info/{id}.data endpoint.  Caching it in memory means the
+// Cloudflare hit only happens once per show per app session — subsequent
+// getVideoList() calls find the slug here immediately.
+//
+// Chapter URLs are stored as "{anilistId}|{epNum}" (NO slug).  This keeps them
+// backward-compatible with history entries created by earlier extension versions,
+// preventing duplicate episodes from appearing in the library.
+var _slugCache = {};
 
 // ─── getVideoList cache ───────────────────────────────────────────────────────
 //
@@ -229,14 +241,19 @@ class DefaultExtension extends MProvider {
   }
 
   async getSlug(anilistId) {
+    // Return from cache — avoids repeated Cloudflare hits for the same show.
+    var cached = _slugCache[String(anilistId)];
+    if (cached) return cached;
     try {
       var res = await this.client.get(
         this.getBaseUrl() + "/info/" + anilistId + ".data",
         this.siteHeaders
       );
       if (res.statusCode !== 200 || !res.body) return null;
-      var arr = JSON.parse(res.body);
-      return this.extractSlug(arr);
+      var arr  = JSON.parse(res.body);
+      var slug = this.extractSlug(arr);
+      if (slug) _slugCache[String(anilistId)] = slug;
+      return slug;
     } catch (e) {
       return null;
     }
@@ -372,8 +389,12 @@ class DefaultExtension extends MProvider {
         var chName = isMovie ? title : ("E" + num + " — " + title);
         chapters.push({
           name: chName,
-          // Embed slug in chapter URL so getVideoList() needs no extra round-trip.
-          url: anilistId + "|" + num + "|" + slug,
+          // URL is "{anilistId}|{epNum}" — NO slug embedded.
+          // getVideoList() resolves the slug via _slugCache (populated above),
+          // so no extra Cloudflare hit is needed during playback/download.
+          // Keeping the URL slug-free means it matches history entries created
+          // by earlier extension versions, preventing duplicate chapters.
+          url: anilistId + "|" + num,
           thumbnailUrl: ep.img || null,
           description: ep.description || null,
           isFiller: ep.isFiller || false,
@@ -414,19 +435,19 @@ class DefaultExtension extends MProvider {
       return _vlCache[url];
     }
 
-    // Chapter URL format: "{anilistId}|{epNum}|{slug}"
+    // Chapter URL format: "{anilistId}|{epNum}"
+    // (older versions embedded the slug as a third segment — still handled below)
     var parts     = url.split("|");
     var anilistId = parts[0] || "";
     var epNum     = parts[1] || "";
-    var slug      = parts[2] || "";
 
     if (!anilistId || !epNum) return [];
 
-    // Stub chapters (no slug) require a live slug fetch.
-    if (!slug) {
-      slug = await this.getSlug(anilistId);
-      if (!slug) return [];
-    }
+    // Resolve slug — hits _slugCache first (populated by getDetail), so the
+    // Cloudflare-protected endpoint is only called if the cache is cold.
+    // Also handles legacy URLs that still have the slug as parts[2].
+    var slug = parts[2] || await this.getSlug(anilistId);
+    if (!slug) return [];
 
     var servers      = await this.chadServers(slug, epNum);
     var subProviders = servers.subProviders || [];
