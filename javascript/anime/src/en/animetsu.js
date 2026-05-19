@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -165,7 +165,7 @@ class DefaultExtension extends MProvider {
       var isFiller = item.is_filler;
       var token = `${id}/${ep_num}`;
 
-      var thumbnailUrl = epThumbPref ? this.getProxyMediaUrl(item.img) : null;
+      var thumbnailUrl = (epThumbPref !== false) ? this.getProxyMediaUrl(item.img) : null;
       var epDescription = epDescPref ? item.desc : null;
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
@@ -209,7 +209,7 @@ class DefaultExtension extends MProvider {
 
           if (!epData.hasOwnProperty("sources")) return [];
 
-          var skips = this.getPreference("animetsu_pref_skip_timestamps") && epData.skips
+          var skips = (this.getPreference("animetsu_pref_skip_timestamps") !== false) && epData.skips
             ? epData.skips
             : null;
 
