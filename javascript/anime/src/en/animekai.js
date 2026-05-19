@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.17",
+    "version": "1.1.18",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -418,78 +418,19 @@ class DefaultExtension extends MProvider {
               if (masterUrl.indexOf(".m3u8") >= 0) {
                 if (proxyBase) {
                   // ── Proxy path ───────────────────────────────────────────
-                  // Fetch the master m3u8 through the Worker right now in the
-                  // extension. The Worker rewrites every URL inside it
-                  // (variants, segments, AES-128 key URIs) to go through the
-                  // Worker itself. We parse those pre-rewritten variant URLs
-                  // and hand them directly to the player — so the player never
-                  // has to resolve any CDN URL itself. This avoids the problem
-                  // of the player resolving relative URLs in a proxied context
-                  // (which breaks when CDN URLs are absolute or when HTTP
-                  // clients normalise // in URL paths).
-                  var probeUrl = proxyBase + "?url=" + encodeURIComponent(masterUrl);
-                  try {
-                    var pr = await this.client.get(probeUrl, { "User-Agent": this.ua });
-                    var ps = pr ? pr.statusCode : 0;
-                    var pb = String(pr && pr.body ? pr.body : "");
-                    if (ps === 200 && pb.indexOf("#EXTM3U") >= 0) {
-                      // Worker returned valid rewritten m3u8. Parse variants.
-                      var plines = pb.split("\n");
-                      var pvars = [];
-                      for (var pi = 0; pi < plines.length; pi++) {
-                        if (plines[pi].trim().indexOf("#EXT-X-STREAM-INF") !== 0) continue;
-                        var prm = plines[pi].match(/RESOLUTION=\d+x(\d+)/);
-                        var plb = prm ? prm[1] + "p" : null;
-                        for (var pj = pi + 1; pj < plines.length; pj++) {
-                          var pu = plines[pj].trim();
-                          if (!pu || pu.charAt(0) === "#") continue;
-                          pvars.push({ url: pu, label: plb });
-                          break;
-                        }
-                      }
-                      if (pvars.length > 0) {
-                        // Sort highest resolution first
-                        pvars.sort(function(a, b) {
-                          var ar = parseInt((a.label || "0").replace(/\D/g, ""), 10) || 0;
-                          var br = parseInt((b.label || "0").replace(/\D/g, ""), 10) || 0;
-                          return br - ar;
-                        });
-                        for (var pvi = 0; pvi < pvars.length; pvi++) {
-                          streams.push({
-                            url: pvars[pvi].url,          // already a Worker URL
-                            originalUrl: masterUrl,
-                            quality: (pvars[pvi].label || "Auto") + " - " + label + " [proxy]",
-                            subtitles: subtitles,
-                            headers: { "User-Agent": this.ua },
-                          });
-                        }
-                      } else {
-                        // Flat playlist — no variants, use probed URL directly
-                        streams.push({
-                          url: probeUrl,
-                          originalUrl: masterUrl,
-                          quality: label + " [proxy]",
-                          subtitles: subtitles,
-                          headers: { "User-Agent": this.ua },
-                        });
-                      }
-                    } else {
-                      // Worker/proxy couldn't reach CDN — show diagnostic
-                      streams.push({
-                        url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                        quality: "[PROXY-ERR:" + ps + ":" + pb.substring(0, 18) + "] " + label,
-                        subtitles: [],
-                        headers: {},
-                      });
-                    }
-                  } catch (pe) {
-                    streams.push({
-                      url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                      quality: "[PROXY-EX:" + String(pe).substring(0, 25) + "] " + label,
-                      subtitles: [],
-                      headers: {},
-                    });
-                  }
+                  // Hand the master m3u8 URL to the Cloudflare Worker.
+                  // The Worker fetches from the CDN and rewrites every URL
+                  // inside the playlist (variant m3u8 refs, TS segment refs,
+                  // AES-128 key URIs) so that all subsequent player requests
+                  // also go through the Worker. The player never touches the
+                  // CDN directly.
+                  streams.push({
+                    url: proxyBase + "?url=" + encodeURIComponent(masterUrl),
+                    originalUrl: masterUrl,
+                    quality: label + " [proxy]",
+                    subtitles: subtitles,
+                    headers: { "User-Agent": this.ua },
+                  });
                 } else {
                   // ── Direct path (no proxy) ────────────────────────────────
                   // Try to resolve variants — succeeds only if CDN is reachable
