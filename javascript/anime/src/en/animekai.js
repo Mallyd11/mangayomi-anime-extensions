@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.12",
+    "version": "1.1.13",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -323,10 +323,32 @@ class DefaultExtension extends MProvider {
             var kaiEncoded = JSON.parse(linkBody).result;
             var decrypted = await this.decKai(kaiEncoded);
 
-            step = group.sourceType + si + "_megaUrl";
+            step = group.sourceType + si + "_embedUrl";
             var megaUrl = decrypted.url;
             var domainM = megaUrl.match(/https?:\/\/([^\/]+)/);
-            var megaDomain = domainM[1];
+            var megaDomain = domainM ? domainM[1] : "";
+
+            // ── Server-type routing ────────────────────────────────────────
+            // Only the megaup/megacloud chain is implemented. For any other
+            // host, surface a debug entry in the quality picker so we know
+            // what alternative servers are available on AnimeKai.
+            var isMegaup = megaDomain.indexOf("megaup") >= 0
+                        || megaDomain.indexOf("megacloud") >= 0;
+            if (!isMegaup) {
+              // Surface the server domain as a debug quality entry.
+              // If this shows a known host (streamtape, doodstream, etc.)
+              // we can add a proper extractor for it.
+              streams.push({
+                url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                originalUrl: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+                quality: "[SRV@" + megaDomain + "] " + server.serverName + " [" + group.sourceType + "]",
+                subtitles: [],
+                headers: {},
+              });
+              continue;
+            }
+
+            step = group.sourceType + si + "_megaUrl";
             // Referer = domain root per official megaup.py sample
             var megaReferer = "https://" + megaDomain + "/";
             var mediaUrl = megaUrl.replace("/e/", "/media/");
@@ -362,20 +384,29 @@ class DefaultExtension extends MProvider {
             }
 
             // ── Direct download URL ────────────────────────────────────────
-            // dec-mega may return a `download` field pointing to megaup.cc
-            // itself (not a CDN subdomain). megaup.cc resolves fine in public
-            // DNS; CDN subdomains (rrr.*) often do not. Try the download URL
-            // first — it bypasses CDN DNS issues entirely.
+            // dec-mega returns a `download` field pointing to megaup.cc itself
+            // (not a CDN subdomain). megaup.cc resolves fine in public DNS.
+            //
+            // Critical: add Range: bytes=0- so libmpv/media_kit treats this as
+            // a progressive MP4 stream (the same way animetsu handles megaup's
+            // "meg" server). Without a Range header the player may buffer the
+            // whole file or not start at all.
             var dlUrl = decoded.download || decoded.downloadUrl || "";
             if (dlUrl && dlUrl.indexOf("http") === 0) {
+              var dlHostM = dlUrl.match(/https?:\/\/([^\/]+)/);
+              var dlHost = dlHostM ? dlHostM[1] : "?";
               streams.push({
                 url: dlUrl,
-                // Append .mp4 hint to originalUrl so Mangayomi classifies this
-                // as a direct-video stream rather than HLS.
+                // .mp4 suffix on originalUrl so Mangayomi routes this as a
+                // direct video stream (isMediaVideo = true) rather than HLS.
                 originalUrl: /\.(mp4|mkv|webm)/i.test(dlUrl) ? dlUrl : dlUrl + ".mp4",
-                quality: "[MP4] " + server.serverName + " [" + group.sourceType + "]",
+                quality: "[MP4@" + dlHost + "] " + server.serverName + " [" + group.sourceType + "]",
                 subtitles: subtitles,
-                headers: streamHeaders,
+                headers: {
+                  "User-Agent": this.ua,
+                  "Referer": megaReferer,
+                  "Range": "bytes=0-",
+                },
               });
             }
 
