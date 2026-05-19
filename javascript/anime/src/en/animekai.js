@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.15",
+    "version": "1.1.16",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -418,11 +418,15 @@ class DefaultExtension extends MProvider {
               if (masterUrl.indexOf(".m3u8") >= 0) {
                 if (proxyBase) {
                   // ── Proxy path ───────────────────────────────────────────
-                  // Route the master m3u8 through the Cloudflare Worker.
-                  // The Worker rewrites all URLs inside the playlist (variant
-                  // m3u8 refs, TS segment refs, AES-128 key URIs) so every
-                  // subsequent player request also goes through the proxy.
-                  var proxiedUrl = proxyBase + "?url=" + encodeURIComponent(masterUrl);
+                  // Route the master m3u8 through a reverse proxy using the
+                  // swiftstream.top/proxy-style path concatenation format:
+                  //   proxyBase + cdnUrl
+                  // e.g. https://swiftstream.top/proxyhttps://rrr.megaup.cc/…
+                  // The proxy serves the raw m3u8 and the player resolves all
+                  // relative URLs in it against the proxied base URL, so every
+                  // subsequent request (variants, TS segments) also goes
+                  // through the proxy automatically.
+                  var proxiedUrl = proxyBase + masterUrl;
                   streams.push({
                     url: proxiedUrl,
                     originalUrl: masterUrl, // .m3u8 extension → player treats as HLS
@@ -511,10 +515,10 @@ class DefaultExtension extends MProvider {
         key: "animekai_proxy_url",
         editTextPreference: {
           title: "CDN proxy URL (required for playback)",
-          summary: "megaup's CDN is only accessible inside Cloudflare's network. Deploy the Cloudflare Worker from the extension notes and paste its URL here (e.g. https://YOUR_WORKER.workers.dev). Leave blank to disable.",
-          value: "",
-          dialogTitle: "Cloudflare Worker proxy URL",
-          dialogMessage: "Enter your Cloudflare Worker URL. Streams will be routed through it so the CDN is reachable.",
+          summary: "megaup's CDN is only accessible via a reverse proxy. Default uses swiftstream.top/proxy (same service as Animetsu — no setup needed). Change only if you want your own proxy.",
+          value: "https://swiftstream.top/proxy",
+          dialogTitle: "CDN proxy URL",
+          dialogMessage: "Streams are routed as: proxyUrl + cdnUrl. Default: https://swiftstream.top/proxy. Leave blank to disable proxying (streams will likely fail to load).",
         },
       },
     ];
