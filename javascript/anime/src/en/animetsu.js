@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.6",
+    "version": "1.2.7",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -307,7 +307,7 @@ class DefaultExtension extends MProvider {
         // by Dart's HTTP client before the request reaches swiftstream, so the server
         // always receives the clean token URL and returns the m3u8 normally.
         streams.push(Object.assign({
-          url: link + "#.m3u8",
+          url: link,
           originalUrl: link + ".m3u8",
           quality: this.streamNamer(quality, audioType, serverName),
           headers: hdr,
@@ -339,6 +339,7 @@ class DefaultExtension extends MProvider {
       var masterUrl = this.getProxyMediaUrl(item.url);
       var baseDir = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
       var parsed = false;
+      var warmupFetches = [];
 
       try {
         var res = await this.client.get(masterUrl, hdr);
@@ -351,10 +352,11 @@ class DefaultExtension extends MProvider {
               var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
               if (!nextLine) continue;
               var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
+              // Pre-warm swiftstream: hit the variant URL now so the first playback
+              // or download request doesn't hit a cold-start 503/buffer.
+              warmupFetches.push(this.client.get(variantUrl, hdr));
               var stream = Object.assign({
-                // "#.m3u8" fragment: Mangayomi detects HLS via url.contains('.m3u8'),
-                // Dart's HTTP client strips the fragment so swiftstream gets the clean URL.
-                url: variantUrl + "#.m3u8",
+                url: variantUrl,
                 originalUrl: variantUrl + ".m3u8",
                 quality: this.streamNamer(resolution + " [DL]", "soft" + audioType, "kite"),
                 headers: hdr,
@@ -366,12 +368,15 @@ class DefaultExtension extends MProvider {
               streams.push(stream);
             }
           }
+          // Wait for all warmup fetches to complete before returning, so swiftstream
+          // is ready by the time the user taps play or starts a download.
+          await Promise.allSettled(warmupFetches);
         }
       } catch (e) {}
 
       if (!parsed) {
         streams.push(Object.assign({
-          url: masterUrl + "#.m3u8",
+          url: masterUrl,
           originalUrl: masterUrl + ".m3u8",
           quality: this.streamNamer("Auto [DL]", "soft" + audioType, "kite"),
           headers: hdr,
