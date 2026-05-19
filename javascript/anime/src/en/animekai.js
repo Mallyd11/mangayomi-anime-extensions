@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikai.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.10",
+    "version": "1.1.11",
     "pkgPath": "anime/src/en/animekai.js",
   },
 ];
@@ -400,6 +400,15 @@ class DefaultExtension extends MProvider {
     } catch (e) {
       step = "ERR@" + step + ":" + String(e).substring(0, 100);
     }
+
+    // Sort: put rrr.megaup.cc streams first — those use megaup's own CDN
+    // which is always resolvable. Custom CDN domains (.shop21pro.site etc.)
+    // may fail DNS on some networks and end up later in the list.
+    streams.sort(function(a, b) {
+      var aM = (a.url || "").indexOf("megaup.cc") >= 0 ? 0 : 1;
+      var bM = (b.url || "").indexOf("megaup.cc") >= 0 ? 0 : 1;
+      return aM - bM;
+    });
 
     // If no streams found, surface a debug entry so we can see where it broke
     if (streams.length === 0) {
