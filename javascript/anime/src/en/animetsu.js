@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -594,7 +594,7 @@ class DefaultExtension extends MProvider {
         multiSelectListPreference: {
           title: "Preferred server",
           summary: "Choose the server/s you want to extract streams from",
-          values: ["pahe", "kite", "meg"],
+          values: ["pahe", "kite", "meg", "kiss"],
           entries: ["Pahe", "Kite", "Meg", "Kiss"],
           entryValues: ["pahe", "kite", "meg", "kiss"],
         },
