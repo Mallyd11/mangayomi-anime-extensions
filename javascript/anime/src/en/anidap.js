@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.17",
+    "version": "1.5.18",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -487,22 +487,22 @@ class DefaultExtension extends MProvider {
 
     // ── Stream order ───────────────────────────────────────────────────────
     //
-    // Both sub AND dub are always included so the user can switch audio
-    // in the quality picker without changing any setting.
-    //
     // Mangayomi auto-selects the FIRST stream for downloads (no picker shown).
-    // HLS streams (UWU/MIMI) play fine but use AES-128 encrypted segments
-    // that Mangayomi's downloader cannot decrypt → downloads spin forever.
-    // Mochi is a direct MP4 file the downloader can save in one request, but
-    // Mangayomi's player rejects it (Content-Type: application/octet-stream).
+    // HLS (UWU/MIMI) plays fine but its segments cannot be downloaded by
+    // Mangayomi's download manager.  Mochi is a direct MP4 — one file, no
+    // segments — that the downloader can save, but the player rejects it.
     //
-    // "Download mode" preference resolves this:
-    //   OFF (default) → HLS first: player auto-selects HLS, playback works.
-    //   ON            → Mochi first: downloader auto-selects mochi, download works.
-    //                   For playback, open quality picker and choose the HLS entry.
+    // Download mode:
+    //   OFF → HLS first (normal playback).
+    //   ON  → Mochi first so the downloader auto-selects it.
+    //         Mochi is force-tried even when the servers endpoint doesn't
+    //         list it — the CDN sometimes omits it from the index but still
+    //         serves it via the sources endpoint.  If unavailable the sources
+    //         call returns null and the entry is silently skipped.
+    //         All other providers are also included so the quality picker
+    //         shows every option the user can try manually.
 
-    // Return the best non-mochi HLS provider from a list:
-    // prefer the one marked default, else the first non-mochi entry.
+    // Return the best non-mochi HLS provider from a list.
     function hlsProvider(list) {
       var fallback = null;
       for (var i = 0; i < list.length; i++) {
@@ -513,33 +513,44 @@ class DefaultExtension extends MProvider {
       return fallback;
     }
 
-    // Build one group for a given audio type.
-    // dlMode === "on"  → mochi first (download-friendly)
-    // dlMode !== "on"  → HLS first  (playback-friendly, default)
-    function audioGroup(type, providers, dlMode) {
-      var group   = [];
-      var hlsProv = hlsProvider(providers);
+    var dlMode = this.getPreference("anidap_download_mode") || "off";
+
+    // Build stream category list for one audio type.
+    function audioGroup(type, providers) {
       if (dlMode === "on") {
+        var group = [];
+        // 1. Mochi first — forced attempt even if not in providers list.
+        //    If unavailable the sources API call returns null and it's skipped.
+        var hasMochi = false;
         for (var _i = 0; _i < providers.length; _i++) {
-          if (providers[_i].id === "mochi")
-            group.push({ type: type, provider: providers[_i] });
+          if (providers[_i].id === "mochi") { hasMochi = true; break; }
         }
-        if (hlsProv) group.push({ type: type, provider: hlsProv });
-      } else {
-        if (hlsProv) group.push({ type: type, provider: hlsProv });
+        if (!hasMochi)
+          group.push({ type: type, provider: { id: "mochi", default: false } });
         for (var _j = 0; _j < providers.length; _j++) {
-          if (providers[_j].id === "mochi" && providers[_j] !== hlsProv)
+          if (providers[_j].id === "mochi")
             group.push({ type: type, provider: providers[_j] });
         }
+        // 2. All other providers so the quality picker shows every option.
+        for (var _k = 0; _k < providers.length; _k++) {
+          if (providers[_k].id !== "mochi")
+            group.push({ type: type, provider: providers[_k] });
+        }
+        if (group.length === 0 && providers.length > 0)
+          group.push({ type: type, provider: providers[0] });
+        return group;
       }
-      if (group.length === 0 && providers.length > 0)
-        group.push({ type: type, provider: providers[0] });
-      return group;
+      // Playback mode: best HLS provider only.
+      var g = [];
+      var hlsProv = hlsProvider(providers);
+      if (hlsProv) g.push({ type: type, provider: hlsProv });
+      if (g.length === 0 && providers.length > 0)
+        g.push({ type: type, provider: providers[0] });
+      return g;
     }
 
-    var dlMode   = this.getPreference("anidap_download_mode") || "off";
-    var subGroup = audioGroup("sub", subProviders, dlMode);
-    var dubGroup = audioGroup("dub", dubProviders, dlMode);
+    var subGroup = audioGroup("sub", subProviders);
+    var dubGroup = audioGroup("dub", dubProviders);
 
     // Preferred audio goes first; the other audio follows.
     var categories = (audioPref === "dub")
