@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.7",
+    "version": "1.5.8",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -497,24 +497,29 @@ class DefaultExtension extends MProvider {
       return fallback;
     }
 
-    // Build one group for a given audio type:
-    //   1. best HLS provider (uwu/mimi etc.) — AES-128 HLS, plays reliably
-    //   2. mochi if explicitly listed in /servers — download-only MP4
+    // Build one group for a given audio type.
     //
-    // NOTE: mochi CDN always serves Content-Type: application/octet-stream with
-    // no file extension, so Mangayomi's player cannot identify it as video.
-    // Mochi URLs only work as downloads (saved to disk), not for playback.
-    // We include mochi only when the site lists it in /servers to keep API calls
-    // low (2-3 per call vs 5 with always-try-mochi) and avoid rate limits.
+    // Stream order: mochi FIRST, then best HLS provider.
+    //
+    // Mangayomi auto-selects the first stream for both playback and download
+    // (no quality picker).  Mochi is a single direct MP4 file — no segments,
+    // no AES encryption — so Mangayomi's download manager can fetch it in one
+    // request.  HLS streams (UWU/MIMI etc.) use AES-128 encrypted segments
+    // which Mangayomi's downloader cannot decrypt, causing the download to stall.
+    //
+    // Mochi serves Content-Type: application/octet-stream but the file is a
+    // real MP4; libmpv detects the format from the file header magic bytes and
+    // plays it correctly regardless of the content-type header.
     function audioGroup(type, providers) {
       var group   = [];
-      var hlsProv = hlsProvider(providers);
-      if (hlsProv) group.push({ type: type, provider: hlsProv });
-      // Include mochi only when the site explicitly offers it.
+      // 1. mochi first (direct MP4: works for download AND libmpv playback)
       for (var _i = 0; _i < providers.length; _i++) {
-        if (providers[_i].id === "mochi" && providers[_i] !== hlsProv)
+        if (providers[_i].id === "mochi")
           group.push({ type: type, provider: providers[_i] });
       }
+      // 2. best HLS provider as fallback when mochi is not offered
+      var hlsProv = hlsProvider(providers);
+      if (hlsProv) group.push({ type: type, provider: hlsProv });
       // Nothing matched: fall back to first available provider.
       if (group.length === 0 && providers.length > 0)
         group.push({ type: type, provider: providers[0] });
