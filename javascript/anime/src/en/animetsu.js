@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -165,7 +165,7 @@ class DefaultExtension extends MProvider {
       var isFiller = item.is_filler;
       var token = `${id}/${ep_num}`;
 
-      var thumbnailUrl = epThumbPref ? this.getProxyMediaUrl(item.img) : null;
+      var thumbnailUrl = epThumbPref ? this.getBaseUrl() + item.img : null;
       var epDescription = epDescPref ? item.desc : null;
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
@@ -248,16 +248,16 @@ class DefaultExtension extends MProvider {
 
       if (serverName === "meg") {
         // Meg serves direct MP4 via the swiftstream proxy.
-        // originalUrl ending in .mp4 tells Mangayomi's download manager to treat
-        // this as a direct file download. url stays as the plain token (no .mp4
-        // suffix) because swiftstream returns 500 for TOKEN.mp4 but serves the
-        // MP4 correctly for the plain token path.
-        // Range: bytes=0- signals resumable download support to Mangayomi.
+        // url is the plain token (no .mp4 suffix) — swiftstream returns 500
+        // for TOKEN.mp4 but serves the MP4 correctly at the plain token path.
+        // originalUrl ending in .mp4 hints Mangayomi's download manager that
+        // this is a direct file, without adding a Range header that would
+        // interfere with libmpv's own range management during playback.
         streams.push({
           url: link,
           originalUrl: link + ".mp4",
-          quality: this.streamNamer(quality + " [DL]", audioType, serverName),
-          headers: Object.assign({}, hdr, { "Range": "bytes=0-" }),
+          quality: this.streamNamer(quality, audioType, serverName),
+          headers: hdr,
         });
       } else {
         // pahe = AES-128 encrypted HLS — stream only, no download label
