@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.12",
+    "version": "1.5.13",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -158,16 +158,25 @@ class DefaultExtension extends MProvider {
       if (!name) return;
       list.push({
         name: name,
-        // "/?id=20954" resolves to the homepage (anidap.se ignores the
-        // query param).  Mangayomi constructs the CF WebView URL as
-        // source.baseUrl + link.  Using "/?id=…" opens the homepage rather
-        // than the anime detail page — the detail page has click-jacking
-        // overlay ads that redirect every tap to an ad site, making it
-        // impossible for the user to close the WebView after the Managed
-        // Challenge auto-resolves.  The homepage is a plain browse page
-        // without those overlays.  CF clearance is domain-wide, so solving
-        // it on the homepage also covers /info/{id}.data requests.
-        link: "/?id=" + String(m.id),
+        // Mangayomi constructs the CF WebView URL as source.baseUrl + link.
+        // We use the .data endpoint path directly so the WebView opens to
+        // https://anidap.se/info/20954.data — the exact URL that CF protects.
+        //
+        // Why .data and not /info/20954 (the HTML page)?
+        //   • The .data endpoint returns raw JSON (Remix turbo-stream).
+        //     There is no HTML, no UI, and no overlay/click-jacking ads.
+        //     The WebView shows plain text — nothing the user can accidentally
+        //     tap to get redirected to an ad site.
+        //   • The homepage (/?) does not trigger a CF challenge, so opening
+        //     the WebView there yields no cf_clearance cookie and the bypass
+        //     never succeeds.
+        //   • The HTML detail page (/info/20954) does trigger CF but has
+        //     full-page click-jacking ads that redirect every tap to an ad
+        //     site before the user can close the WebView.
+        //
+        // getDetail() parses the AniList ID with parseInt(url.replace(/[^0-9]/g,""))
+        // which strips the non-digit chars (/info/.data) and returns 20954. ✓
+        link: "/info/" + String(m.id) + ".data",
         imageUrl: (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "",
       });
     });
@@ -202,16 +211,25 @@ class DefaultExtension extends MProvider {
       if (!name) return;
       list.push({
         name: name,
-        // "/?id=20954" resolves to the homepage (anidap.se ignores the
-        // query param).  Mangayomi constructs the CF WebView URL as
-        // source.baseUrl + link.  Using "/?id=…" opens the homepage rather
-        // than the anime detail page — the detail page has click-jacking
-        // overlay ads that redirect every tap to an ad site, making it
-        // impossible for the user to close the WebView after the Managed
-        // Challenge auto-resolves.  The homepage is a plain browse page
-        // without those overlays.  CF clearance is domain-wide, so solving
-        // it on the homepage also covers /info/{id}.data requests.
-        link: "/?id=" + String(m.id),
+        // Mangayomi constructs the CF WebView URL as source.baseUrl + link.
+        // We use the .data endpoint path directly so the WebView opens to
+        // https://anidap.se/info/20954.data — the exact URL that CF protects.
+        //
+        // Why .data and not /info/20954 (the HTML page)?
+        //   • The .data endpoint returns raw JSON (Remix turbo-stream).
+        //     There is no HTML, no UI, and no overlay/click-jacking ads.
+        //     The WebView shows plain text — nothing the user can accidentally
+        //     tap to get redirected to an ad site.
+        //   • The homepage (/?) does not trigger a CF challenge, so opening
+        //     the WebView there yields no cf_clearance cookie and the bypass
+        //     never succeeds.
+        //   • The HTML detail page (/info/20954) does trigger CF but has
+        //     full-page click-jacking ads that redirect every tap to an ad
+        //     site before the user can close the WebView.
+        //
+        // getDetail() parses the AniList ID with parseInt(url.replace(/[^0-9]/g,""))
+        // which strips the non-digit chars (/info/.data) and returns 20954. ✓
+        link: "/info/" + String(m.id) + ".data",
         imageUrl: (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "",
       });
     });
