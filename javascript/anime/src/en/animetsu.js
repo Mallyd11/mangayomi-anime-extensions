@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.2",
+    "version": "1.3.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -248,17 +248,33 @@ class DefaultExtension extends MProvider {
       return (serverScore(b) + resScore(b)) - (serverScore(a) + resScore(a));
     }
 
+    // Wait for all stream sources (Pahe/Kite/Meg) to resolve, then sort so we
+    // know which stream will be auto-selected (index 0).
+    var streamResults = await streamPromise;
+    var allStreams = streamResults.flat().sort(dlFirst);
+
+    // Warm up the swiftstream session server-side before the video player starts.
+    // libmpv uses its own HTTP stack (not shared with the extension client), but
+    // swiftstream initialises its proxy session per-IP on the first incoming
+    // request. Fetching the first stream URL here — from the extension client,
+    // same device IP — triggers that server-side initialisation so libmpv's first
+    // request hits a warm proxy and plays immediately instead of buffering forever.
+    // This runs in parallel with kwik resolution so it adds no extra wait time.
+    var warmup = allStreams.length > 0
+      ? this.client.get(allStreams[0].url, allStreams[0].headers || {}).catch(function() {})
+      : Promise.resolve();
+
     if (dlPref === false) {
-      var results = await streamPromise;
-      return results.flat().sort(dlFirst);
+      await warmup;
+      return allStreams;
     }
 
-    var [streamResults, dlStreams] = await Promise.all([
-      streamPromise,
+    var [dlStreams] = await Promise.all([
       this.getDownloadStreams(url),
+      warmup,
     ]);
 
-    return [...streamResults.flat(), ...dlStreams].sort(dlFirst);
+    return [...allStreams, ...dlStreams].sort(dlFirst);
   }
 
   streamNamer(res, dubType, serverName) {
