@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.4",
+    "version": "1.2.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -496,9 +496,9 @@ class DefaultExtension extends MProvider {
       {
         key: "animetsu_pref_ep_thumbnail",
         switchPreferenceCompat: {
-          title: "Episode thumbail",
-          summary: "",
-          value: true,
+          title: "Episode thumbnail",
+          summary: "Thumbnails load via swiftstream.top which may be Cloudflare-blocked on some networks. Disabled by default.",
+          value: false,
         },
       },
       {
