@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.2",
+    "version": "1.3.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -311,7 +311,7 @@ class DefaultExtension extends MProvider {
               var stream = {
                 url: variantUrl,
                 originalUrl: variantUrl + ".m3u8",
-                quality: this.streamNamer(resolution + " [DL]", "soft" + audioType, "kite"),
+                quality: this.streamNamer(resolution, "soft" + audioType, "kite"),
                 headers: hdr,
               };
               if (!parsed) {
@@ -328,7 +328,7 @@ class DefaultExtension extends MProvider {
         streams.push({
           url: masterUrl,
           originalUrl: masterUrl + ".m3u8",
-          quality: this.streamNamer("Auto [DL]", "soft" + audioType, "kite"),
+          quality: this.streamNamer("Auto", "soft" + audioType, "kite"),
           headers: hdr,
           subtitles: subtitles,
         });
