@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.9",
+    "version": "1.3.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -156,7 +156,6 @@ class DefaultExtension extends MProvider {
     var epSlug = "/eps/" + id;
     var epData = await this.request(epSlug);
 
-    var epThumbPref = this.getPreference("animetsu_pref_ep_thumbnail");
     var epDescPref = this.getPreference("animetsu_pref_ep_description");
     epData.forEach((item) => {
       var ep_num = item.ep_num;
@@ -165,7 +164,6 @@ class DefaultExtension extends MProvider {
       var isFiller = item.is_filler;
       var token = `${id}/${ep_num}`;
 
-      var thumbnailUrl = epThumbPref ? this.getProxyMediaUrl(item.img) : null;
       var epDescription = epDescPref ? item.desc : null;
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
@@ -175,7 +173,6 @@ class DefaultExtension extends MProvider {
         name: epName,
         url: token,
         isFiller,
-        thumbnailUrl,
         description: epDescription,
         dateUpload: dateUpload,
       });
@@ -577,14 +574,6 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "animetsu_pref_ep_thumbnail",
-        switchPreferenceCompat: {
-          title: "Episode thumbnail",
-          summary: "Thumbnails load via swiftstream.top which may be Cloudflare-blocked on some networks. Disabled by default.",
-          value: false,
-        },
-      },
-      {
         key: "animetsu_pref_ep_description",
         switchPreferenceCompat: {
           title: "Episode description",
@@ -604,10 +593,10 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_stream_server",
         multiSelectListPreference: {
           title: "Preferred server",
-          summary: "Choose the server/s you want to extract streams from. Dio and Kiss require a fresh episode load (MongoDB ID embedded since v1.2.6).",
+          summary: "Choose the server/s you want to extract streams from",
           values: ["pahe", "kite", "meg"],
-          entries: ["Pahe (hard sub, multi quality)", "Kite (soft sub, multi quality)", "Meg (hard sub, multi quality)", "Dio (hard sub, multi quality)", "Kiss (soft sub, multi language)"],
-          entryValues: ["pahe", "kite", "meg", "dio", "kiss"],
+          entries: ["Pahe", "Kite", "Meg", "Kiss"],
+          entryValues: ["pahe", "kite", "meg", "kiss"],
         },
       },
       {
