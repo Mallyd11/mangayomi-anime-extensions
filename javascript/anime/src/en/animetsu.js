@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.8",
+    "version": "1.2.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -224,7 +224,7 @@ class DefaultExtension extends MProvider {
             var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
             if (!epData.hasOwnProperty("sources")) return [];
-            return this.getDioKissStreams(epData, audioType, serverName);
+            return await this.getDioKissStreams(epData, audioType, serverName);
           }
           return [];
         } catch (e) {
@@ -342,13 +342,15 @@ class DefaultExtension extends MProvider {
   }
 
   // Dio (hard sub, multi-quality HLS) and Kiss (soft sub, multi-language HLS).
-  // Pass the swiftstream proxy URL directly to libmpv — same pattern as Pahe/Meg.
-  // No pre-fetching: avoids cold-start failures where Mangayomi's client warms
-  // a token that then expires or is consumed before libmpv gets to play it.
-  // libmpv detects content-type from the GET response and handles HLS natively.
+  // Dio returns an HLS master with variant entries — pre-fetch and parse it so
+  // libmpv receives a specific variant URL rather than the master (Mangayomi's
+  // libmpv build cannot auto-select from an HLS master).
+  // Kiss returns a direct playlist — pass straight through like Pahe/Meg.
+  // In both cases originalUrl has no extension so libmpv (not M3u8Downloader)
+  // handles playback via content-type detection from the GET response.
   // Dio  = baked-in hardsub  → audio label shown without "soft" prefix.
   // Kiss = separate subtitle tracks → audio label shown with "soft" prefix.
-  getDioKissStreams(epData, audioType, serverName) {
+  async getDioKissStreams(epData, audioType, serverName) {
     var hdr = this.getHeaders();
     var streams = [];
 
@@ -361,19 +363,51 @@ class DefaultExtension extends MProvider {
 
     var isSoftSub = serverName === "kiss";
 
-    epData.sources.forEach((item, idx) => {
+    for (var item of epData.sources) {
       var masterUrl = this.getProxyMediaUrl(item.url);
       var audioLabel = isSoftSub ? "soft" + audioType : audioType;
-      var quality = item.quality ? item.quality : "auto";
-      var stream = {
-        url: masterUrl,
-        originalUrl: masterUrl,
-        quality: this.streamNamer(quality, audioLabel, serverName),
-        headers: hdr,
-      };
-      if (idx === 0) stream.subtitles = subtitles;
-      streams.push(stream);
-    });
+      var parsed = false;
+
+      // Only attempt master parsing for non-direct-playlist sources (old_hls == false).
+      if (!item.old_hls) {
+        try {
+          var baseDir = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+          var res = await this.client.get(masterUrl, hdr);
+          if (res.statusCode == 200) {
+            var lines = res.body.split("\n");
+            for (var i = 0; i < lines.length; i++) {
+              if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
+                var resMatch = lines[i].match(/RESOLUTION=(\d+x\d+)/);
+                var resolution = resMatch ? resMatch[1] : "Auto";
+                var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
+                if (!nextLine) continue;
+                var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
+                var stream = {
+                  url: variantUrl,
+                  originalUrl: variantUrl, // no extension — libmpv via content-type, not M3u8Downloader
+                  quality: this.streamNamer(resolution, audioLabel, serverName),
+                  headers: hdr,
+                };
+                if (!parsed) { stream.subtitles = subtitles; parsed = true; }
+                streams.push(stream);
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      // Direct playlist (old_hls == true) or master parse failed — pass through like Pahe.
+      if (!parsed) {
+        var stream = {
+          url: masterUrl,
+          originalUrl: masterUrl,
+          quality: this.streamNamer(item.quality || "auto", audioLabel, serverName),
+          headers: hdr,
+        };
+        if (streams.length === 0) stream.subtitles = subtitles;
+        streams.push(stream);
+      }
+    }
 
     return streams;
   }
