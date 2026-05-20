@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.20",
+    "version": "1.5.21",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -504,79 +504,93 @@ class DefaultExtension extends MProvider {
 
     // ── Stream helpers ─────────────────────────────────────────────────────
 
-    // Return the best non-mochi HLS provider from a list.
+    // Providers that typically serve direct MP4 files (downloadable).
+    // All others are assumed to be HLS/adaptive streams.
+    var MP4_PROVIDERS = { kiwi: true, mochi: true };
+
+    // Return the best HLS (non-MP4) provider from a list.
     function hlsProvider(list) {
       var fallback = null;
       for (var i = 0; i < list.length; i++) {
-        if (list[i].id === "mochi") continue;
+        if (MP4_PROVIDERS[list[i].id]) continue;
         if (list[i].default) return list[i];
         if (!fallback) fallback = list[i];
       }
       return fallback;
     }
 
-    // Build stream category — always picks the best HLS provider.
-    // Downloads are handled separately via the dedicated download endpoint.
-    function audioGroup(type, providers) {
-      var g = [];
-      var hlsProv = hlsProvider(providers);
-      if (hlsProv) g.push({ type: type, provider: hlsProv });
-      if (g.length === 0 && providers.length > 0)
-        g.push({ type: type, provider: providers[0] });
-      return g;
+    // Build provider ordering for one audio type.
+    //   Playback mode  → single best HLS provider only.
+    //   Download mode  → MP4 providers first (kiwi, mochi), then all others.
+    //                    More providers = more chances that one works.
+    function buildCategories(type, providers) {
+      if (dlMode !== "on") {
+        var best = hlsProvider(providers);
+        if (best) return [{ type: type, provider: best }];
+        if (providers.length) return [{ type: type, provider: providers[0] }];
+        return [];
+      }
+      // Download mode: MP4-first ordering, all providers included.
+      var mp4  = [];
+      var rest = [];
+      for (var i = 0; i < providers.length; i++) {
+        if (MP4_PROVIDERS[providers[i].id]) mp4.push(providers[i]);
+        else                                rest.push(providers[i]);
+      }
+      var ordered = mp4.concat(rest);
+      return ordered.map(function(p) { return { type: type, provider: p }; });
     }
 
-    var subGroup = audioGroup("sub", subProviders);
-    var dubGroup = audioGroup("dub", dubProviders);
+    var subCats = buildCategories("sub", subProviders);
+    var dubCats = buildCategories("dub", dubProviders);
 
-    // Preferred audio goes first; the other audio follows.
+    // Preferred audio type goes first.
     var categories = (audioPref === "dub")
-      ? dubGroup.concat(subGroup)
-      : subGroup.concat(dubGroup);
+      ? dubCats.concat(subCats)
+      : subCats.concat(dubCats);
 
     var streams = [];
     var seen    = {};
 
-    // ── Download mode: prepend direct download links ────────────────────────
+    // ── Download mode: prepend site download-endpoint links ────────────────
     //
-    // The site exposes a dedicated download endpoint that returns full video
-    // files (not HLS segments) — the same links used by the site's own
-    // download button.  These are auto-selected by Mangayomi's downloader
-    // because they are first in the list.  HLS streams still follow so the
-    // quality picker shows every available option.
+    // chad.anidap.se/rest/api/download uses the AniList ID directly (no slug,
+    // no Cloudflare) and returns the same links the site's download button uses.
+    // These are put first so Mangayomi's downloader auto-selects one.
+    // The /sources streams that follow act as a fallback.
     if (dlMode === "on") {
-      try {
-        var dlData = await this.chadDownload(anilistId, epNum);
-        if (dlData) {
-          // Respect audio preference — preferred type first.
-          var dlTypes = (audioPref === "dub") ? ["dub", "sub"] : ["sub", "dub"];
-          for (var dti = 0; dti < dlTypes.length; dti++) {
-            var dlAudio     = dlTypes[dti];
-            var dlAudioData = dlData[dlAudio];
-            if (!dlAudioData || !dlAudioData.download) continue;
-            var dlLinks = dlAudioData.download;
-            var dlKeys  = Object.keys(dlLinks);
-            for (var dki = 0; dki < dlKeys.length; dki++) {
-              var dlLabel = dlKeys[dki];      // e.g. "Kiwi-Stream-1080p"
-              var dlUrl   = dlLinks[dlLabel];
-              if (!dlUrl) continue;
-              var dlKey = dlUrl + "|" + dlAudio;
-              if (seen[dlKey]) continue;
-              seen[dlKey] = true;
-              streams.push({
-                url: dlUrl,
-                originalUrl: dlUrl,
-                quality: dlLabel + " [" + dlAudio.toUpperCase() + "] DOWNLOAD",
-                headers: { "User-Agent": this.ua, "Referer": this.getBaseUrl() + "/" },
-                subtitles: [],
-              });
-            }
+      var dlData = await this.chadDownload(anilistId, epNum);
+      if (dlData) {
+        var dlTypes = (audioPref === "dub") ? ["dub", "sub"] : ["sub", "dub"];
+        for (var dti = 0; dti < dlTypes.length; dti++) {
+          var dlAudio     = dlTypes[dti];
+          var dlAudioData = dlData[dlAudio];
+          // Support both { download: { label: url } } and { label: url } shapes.
+          var dlLinks = (dlAudioData && dlAudioData.download)
+            ? dlAudioData.download
+            : (dlAudioData && typeof dlAudioData === "object" ? dlAudioData : null);
+          if (!dlLinks) continue;
+          var dlKeys = Object.keys(dlLinks);
+          for (var dki = 0; dki < dlKeys.length; dki++) {
+            var dlLabel = dlKeys[dki];
+            var dlUrl   = dlLinks[dlLabel];
+            if (!dlUrl || typeof dlUrl !== "string") continue;
+            var dlKey = dlUrl + "|" + dlAudio;
+            if (seen[dlKey]) continue;
+            seen[dlKey] = true;
+            streams.push({
+              url: dlUrl,
+              originalUrl: dlUrl,
+              quality: dlLabel + " [" + dlAudio.toUpperCase() + "] DOWNLOAD",
+              headers: { "User-Agent": this.ua, "Referer": this.getBaseUrl() + "/" },
+              subtitles: [],
+            });
           }
         }
-      } catch (e) { /* download endpoint unavailable — fall through to HLS */ }
+      }
     }
 
-    // ── HLS streams (playback + fallback) ──────────────────────────────────
+    // ── Provider streams ───────────────────────────────────────────────────
 
     for (var ci = 0; ci < categories.length; ci++) {
       var cat = categories[ci];
@@ -633,7 +647,7 @@ class DefaultExtension extends MProvider {
             subtitles: subtitles,
           });
         }
-      } catch (e) { /* skip this category on error */ }
+      } catch (e) { /* skip this provider on error */ }
     }
 
     // Store in cache before returning so a follow-up download call is free.
