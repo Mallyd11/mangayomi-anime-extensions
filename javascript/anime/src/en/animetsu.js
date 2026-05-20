@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.7",
+    "version": "1.2.8",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -224,7 +224,7 @@ class DefaultExtension extends MProvider {
             var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
             if (!epData.hasOwnProperty("sources")) return [];
-            return await this.getDioKissStreams(epData, audioType, serverName);
+            return this.getDioKissStreams(epData, audioType, serverName);
           }
           return [];
         } catch (e) {
@@ -342,10 +342,13 @@ class DefaultExtension extends MProvider {
   }
 
   // Dio (hard sub, multi-quality HLS) and Kiss (soft sub, multi-language HLS).
-  // Both servers use MongoDB episode ID format and return HLS master m3u8 like Kite.
+  // Pass the swiftstream proxy URL directly to libmpv — same pattern as Pahe/Meg.
+  // No pre-fetching: avoids cold-start failures where Mangayomi's client warms
+  // a token that then expires or is consumed before libmpv gets to play it.
+  // libmpv detects content-type from the GET response and handles HLS natively.
   // Dio  = baked-in hardsub  → audio label shown without "soft" prefix.
   // Kiss = separate subtitle tracks → audio label shown with "soft" prefix.
-  async getDioKissStreams(epData, audioType, serverName) {
+  getDioKissStreams(epData, audioType, serverName) {
     var hdr = this.getHeaders();
     var streams = [];
 
@@ -358,50 +361,19 @@ class DefaultExtension extends MProvider {
 
     var isSoftSub = serverName === "kiss";
 
-    for (var item of epData.sources) {
+    epData.sources.forEach((item, idx) => {
       var masterUrl = this.getProxyMediaUrl(item.url);
-      var baseDir = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
-      var parsed = false;
-
-      try {
-        var res = await this.client.get(masterUrl, hdr);
-        if (res.statusCode == 200) {
-          var lines = res.body.split("\n");
-          for (var i = 0; i < lines.length; i++) {
-            if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
-              var resMatch = lines[i].match(/RESOLUTION=(\d+x\d+)/);
-              var resolution = resMatch ? resMatch[1] : "Auto";
-              var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
-              if (!nextLine) continue;
-              var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
-              var audioLabel = isSoftSub ? "soft" + audioType : audioType;
-              var stream = {
-                url: variantUrl,
-                originalUrl: variantUrl + ".m3u8",
-                quality: this.streamNamer(resolution + " [DL]", audioLabel, serverName),
-                headers: hdr,
-              };
-              if (!parsed) {
-                stream.subtitles = subtitles;
-                parsed = true;
-              }
-              streams.push(stream);
-            }
-          }
-        }
-      } catch (e) {}
-
-      if (!parsed) {
-        var audioLabel = isSoftSub ? "soft" + audioType : audioType;
-        streams.push({
-          url: masterUrl,
-          originalUrl: masterUrl + ".m3u8",
-          quality: this.streamNamer("Auto [DL]", audioLabel, serverName),
-          headers: hdr,
-          subtitles: subtitles,
-        });
-      }
-    }
+      var audioLabel = isSoftSub ? "soft" + audioType : audioType;
+      var quality = item.quality ? item.quality : "auto";
+      var stream = {
+        url: masterUrl,
+        originalUrl: masterUrl,
+        quality: this.streamNamer(quality, audioLabel, serverName),
+        headers: hdr,
+      };
+      if (idx === 0) stream.subtitles = subtitles;
+      streams.push(stream);
+    });
 
     return streams;
   }
