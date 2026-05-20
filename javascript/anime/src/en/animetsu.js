@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.4",
+    "version": "1.3.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -245,18 +245,7 @@ class DefaultExtension extends MProvider {
       return (serverScore(b) + resScore(b)) - (serverScore(a) + resScore(a));
     }
 
-    var allStreams = streams.flat().sort(dlFirst);
-
-    // Warm up the swiftstream proxy before the video player makes its first
-    // request. libmpv has its own HTTP stack separate from the extension client,
-    // but swiftstream initialises its backend session server-side on the first
-    // request from a given IP. Touching the first stream URL here triggers that
-    // init so libmpv hits a warm proxy and plays immediately.
-    if (allStreams.length > 0) {
-      await this.client.get(allStreams[0].url, allStreams[0].headers || {}).catch(function() {});
-    }
-
-    return allStreams;
+    return streams.flat().sort(dlFirst);
   }
 
   streamNamer(res, dubType, serverName) {
