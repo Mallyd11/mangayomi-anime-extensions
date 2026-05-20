@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.1",
+    "version": "1.3.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -409,58 +409,33 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  // Decode packer.js obfuscation (eval(function(p,a,c,k,e,d){...})) used on kwik.cx pages.
-  // Returns the unpacked JavaScript string, or null if pattern not found / decode failed.
-  decodePackerJs(html) {
-    try {
-      // Match the canonical packer invocation pattern
-      var m = html.match(/\(function\s*\(p,a,c,k,e,[a-z]\)\s*\{[\s\S]+?\}\s*\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*(\d+)\s*,\s*\d+\s*,\s*'((?:[^'\\]|\\.)*)'\s*\.split\s*\(\s*['"]\|['"]\s*\)/);
-      if (!m) return null;
-
-      var payload = m[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\");
-      var radix = parseInt(m[2]);
-      var keys = m[3].split("|");
-
-      // Custom base converter — parseInt only handles up to base 36; kwik uses base 62
-      var CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-      function fromBase(s) {
-        var n = 0;
-        for (var i = 0; i < s.length; i++) {
-          var d = CHARS.indexOf(s[i]);
-          if (d < 0 || d >= radix) return NaN;
-          n = n * radix + d;
-        }
-        return n;
-      }
-
-      return payload.replace(/\b([a-zA-Z0-9_$]+)\b/g, function(w) {
-        var n = fromBase(w);
-        return (!isNaN(n) && n >= 0 && n < keys.length && keys[n] !== "") ? keys[n] : w;
-      });
-    } catch (e) { return null; }
-  }
-
-  // Resolve a pahe.win shortlink → direct MP4 CDN URL (token+expiry embedded in URL).
-  // Strategy A: decode packer.js on the kwik page to extract the source URL without a POST.
-  // Strategy B: POST the kwik download form and capture the 302 Location redirect.
+  // Resolve a pahe.win shortlink → direct CDN URL via the kwik.cx download form.
+  // kwik removed packer.js obfuscation — CDN URL is only obtainable via POST → 302.
+  // CDN URLs are at vault-NN.owocdn.top/mp4/.../HASH?file=NAME.mp4
   async resolveKwikDownload(paheWinUrl) {
     try {
       var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-      // Step 1: GET pahe.win → the countdown JS contains the kwik URL
-      // e.g. $("a.redirect").attr("href","https://kwik.cx/f/HASH")
+      // Step 1: GET pahe.win → redirects to kwik.cx/f/HASH
       var paheRes = await this.client.get(paheWinUrl, {
         "User-Agent": ua,
         "Referer": "https://animetsu.bz/",
       });
       var paheBody = paheRes.body || "";
 
-      // Handle kwik.cx and any other kwik.* TLD, both /f/ and /e/ paths
-      var kwikMatch = paheBody.match(/["'](https?:\/\/kwik\.[a-z]{2,3}\/[ef]\/[A-Za-z0-9]+)["']/);
-      if (!kwikMatch) return null;
-      var kwikFileUrl = kwikMatch[1].replace("/e/", "/f/");
+      // If Mangayomi's client followed the redirect, paheRes.url is the kwik URL
+      var kwikFileUrl = null;
+      if (paheRes.url && paheRes.url.includes("kwik.")) {
+        kwikFileUrl = paheRes.url.replace("/e/", "/f/");
+      }
+      // Otherwise parse the kwik URL from the pahe.win HTML
+      if (!kwikFileUrl) {
+        var kwikMatch = paheBody.match(/["'](https?:\/\/kwik\.[a-z]{2,3}\/[ef]\/[A-Za-z0-9]+)["']/);
+        if (!kwikMatch) return null;
+        kwikFileUrl = kwikMatch[1].replace("/e/", "/f/");
+      }
 
-      // Step 2: GET the kwik download page
+      // Step 2: GET kwik.cx/f/HASH → extract CSRF token and form action
       var kwikRes = await this.client.get(kwikFileUrl, {
         "User-Agent": ua,
         "Referer": paheWinUrl,
@@ -468,17 +443,6 @@ class DefaultExtension extends MProvider {
       var kwikBody = kwikRes.body || "";
       if (kwikBody.length < 100) return null;
 
-      // Strategy A: decode packer.js → source URL (no POST, avoids redirect-capture problem)
-      var unpacked = this.decodePackerJs(kwikBody);
-      if (unpacked) {
-        var srcMatch = unpacked.match(/(?:source|src|file|url)\s*=\s*['"]([^'"]+\.mp4[^'"]*)['"]/i);
-        if (srcMatch && srcMatch[1].startsWith("http")) return srcMatch[1];
-        // Broader CDN URL search in decoded output
-        var cdnMatch = unpacked.match(/https?:\/\/[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-        if (cdnMatch) return cdnMatch[0];
-      }
-
-      // Strategy B: POST the download form; server 302s to the direct MP4 CDN URL
       var tokenMatch = kwikBody.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/)
                     || kwikBody.match(/value=["']([^"']{20,})["'][^>]*name=["']_token["']/);
       if (!tokenMatch) return null;
@@ -487,6 +451,7 @@ class DefaultExtension extends MProvider {
       if (!actionMatch) return null;
       var dlAction = actionMatch[1];
 
+      // Step 3: POST → server 302s to CDN URL (vault-NN.owocdn.top)
       var postRes = await this.client.post(
         dlAction,
         { "Content-Type": "application/x-www-form-urlencoded",
@@ -496,17 +461,20 @@ class DefaultExtension extends MProvider {
         "_token=" + encodeURIComponent(tokenMatch[1])
       );
 
-      // Case 1: redirect NOT followed — Location header holds the direct URL
+      // Case 1: redirect NOT followed — Location header holds the CDN URL
       if (postRes.headers) {
         var loc = postRes.headers["location"] || postRes.headers["Location"];
         if (loc && loc.startsWith("http")) return loc;
       }
-      // Case 2: redirect WAS followed — final URL accessible via .url property
-      if (postRes.url && /\.mp4/i.test(postRes.url)) return postRes.url;
-      // Case 3: text response body may contain the CDN URL
+      // Case 2: redirect WAS followed — postRes.url is the CDN URL (not a kwik domain)
+      if (postRes.url && !postRes.url.includes("kwik.") && postRes.url.startsWith("http")) {
+        return postRes.url;
+      }
+      // Case 3: CDN URL may appear as text in the response body
       if (postRes.body && typeof postRes.body === "string") {
-        var mp4Match = postRes.body.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-        if (mp4Match) return mp4Match[0];
+        var cdnMatch = postRes.body.match(/https?:\/\/[a-z0-9.-]*(?:owocdn|cdn)[^\s"'<>]*/i)
+                    || postRes.body.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
+        if (cdnMatch) return cdnMatch[0];
       }
 
       return null;
