@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.14",
+    "version": "1.5.15",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -610,7 +610,7 @@ class DefaultExtension extends MProvider {
         listPreference: {
           title: "Preferred title language",
           summary: "",
-          valueIndex: 0,
+          valueIndex: 1,
           entries: ["Romaji", "English", "Native"],
           entryValues: ["romaji", "english", "native"],
         },
