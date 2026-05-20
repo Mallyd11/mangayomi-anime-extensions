@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -159,6 +159,7 @@ class DefaultExtension extends MProvider {
       if (epRes.statusCode === 200) {
         var epJson = JSON.parse(epRes.body);
         var episodes = (epJson.data && epJson.data.episodes) || [];
+        var seenIds = {};
         for (var i = 0; i < episodes.length; i++) {
           var ep = episodes[i];
           // Parse "allanime:{showId}:{epNum}" → two colon positions
@@ -166,12 +167,20 @@ class DefaultExtension extends MProvider {
           var c1 = rawId.indexOf(":");
           var c2 = rawId.indexOf(":", c1 + 1);
           if (c1 < 0 || c2 < 0) continue;
+          // Deduplicate by episodeId
+          if (seenIds[rawId]) continue;
+          seenIds[rawId] = true;
           var showId = rawId.substring(c1 + 1, c2);
           var epNum  = rawId.substring(c2 + 1);
-          chapters.push({
-            name: ep.title || ("Episode " + ep.number),
-            url: showId + "|" + epNum,
-          });
+          // Build label: always prefix with episode number so the list is
+          // scannable. Skip redundant titles like "Episode 1" that add nothing.
+          var numStr   = String(ep.number);
+          var epTitle  = (ep.title || "").trim();
+          var fallback = "Episode " + numStr;
+          var label = (epTitle && epTitle !== fallback)
+            ? "E" + numStr + ": " + epTitle
+            : fallback;
+          chapters.push({ name: label, url: showId + "|" + epNum });
         }
       }
     } catch (e) { /* fall through */ }
