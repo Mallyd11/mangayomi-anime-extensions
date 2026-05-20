@@ -388,9 +388,9 @@ class DefaultExtension extends MProvider {
         sourceList = [data.sources];
       }
 
-      // Build subtitles list from tracks
+      // Build subtitles list from tracks — dub streams get no subtitles by default
       var subtitles = [];
-      if (Array.isArray(data.tracks)) {
+      if (audioType !== "dub" && Array.isArray(data.tracks)) {
         for (var t = 0; t < data.tracks.length; t++) {
           var track = data.tracks[t];
           if (track && track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
