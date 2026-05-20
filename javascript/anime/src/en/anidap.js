@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.16",
+    "version": "1.5.17",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -488,13 +488,18 @@ class DefaultExtension extends MProvider {
     // ── Stream order ───────────────────────────────────────────────────────
     //
     // Both sub AND dub are always included so the user can switch audio
-    // in the quality picker without changing any setting.  The preference
-    // only controls which audio group is listed first (i.e. what the
-    // player auto-selects by default).
+    // in the quality picker without changing any setting.
     //
-    // Per audio type, the best HLS provider (uwu/mimi etc.) is used.
-    // Mochi (direct MP4) is excluded — it serves Content-Type:
-    // application/octet-stream which Mangayomi's player rejects.
+    // Mangayomi auto-selects the FIRST stream for downloads (no picker shown).
+    // HLS streams (UWU/MIMI) play fine but use AES-128 encrypted segments
+    // that Mangayomi's downloader cannot decrypt → downloads spin forever.
+    // Mochi is a direct MP4 file the downloader can save in one request, but
+    // Mangayomi's player rejects it (Content-Type: application/octet-stream).
+    //
+    // "Download mode" preference resolves this:
+    //   OFF (default) → HLS first: player auto-selects HLS, playback works.
+    //   ON            → Mochi first: downloader auto-selects mochi, download works.
+    //                   For playback, open quality picker and choose the HLS entry.
 
     // Return the best non-mochi HLS provider from a list:
     // prefer the one marked default, else the first non-mochi entry.
@@ -509,22 +514,32 @@ class DefaultExtension extends MProvider {
     }
 
     // Build one group for a given audio type.
-    //
-    // Uses the best non-mochi HLS provider (prefer the default-flagged one,
-    // else the first available).  Mochi (direct MP4) is excluded — it serves
-    // Content-Type: application/octet-stream which Mangayomi's player rejects.
-    function audioGroup(type, providers) {
+    // dlMode === "on"  → mochi first (download-friendly)
+    // dlMode !== "on"  → HLS first  (playback-friendly, default)
+    function audioGroup(type, providers, dlMode) {
       var group   = [];
       var hlsProv = hlsProvider(providers);
-      if (hlsProv) group.push({ type: type, provider: hlsProv });
-      // Nothing matched: fall back to first available provider.
+      if (dlMode === "on") {
+        for (var _i = 0; _i < providers.length; _i++) {
+          if (providers[_i].id === "mochi")
+            group.push({ type: type, provider: providers[_i] });
+        }
+        if (hlsProv) group.push({ type: type, provider: hlsProv });
+      } else {
+        if (hlsProv) group.push({ type: type, provider: hlsProv });
+        for (var _j = 0; _j < providers.length; _j++) {
+          if (providers[_j].id === "mochi" && providers[_j] !== hlsProv)
+            group.push({ type: type, provider: providers[_j] });
+        }
+      }
       if (group.length === 0 && providers.length > 0)
         group.push({ type: type, provider: providers[0] });
       return group;
     }
 
-    var subGroup = audioGroup("sub", subProviders);
-    var dubGroup = audioGroup("dub", dubProviders);
+    var dlMode   = this.getPreference("anidap_download_mode") || "off";
+    var subGroup = audioGroup("sub", subProviders, dlMode);
+    var dubGroup = audioGroup("dub", dubProviders, dlMode);
 
     // Preferred audio goes first; the other audio follows.
     var categories = (audioPref === "dub")
@@ -574,7 +589,12 @@ class DefaultExtension extends MProvider {
 
           srcUrl = this.transformUrl(srcUrl, cat.provider.id);
 
-          var qLabel = src.quality || "Auto";
+          // Mochi reports quality "auto"/"default" — label it "MP4" so
+          // the user can identify it as a downloadable file in the picker.
+          var rawQ   = (src.quality || "").toLowerCase();
+          var isMochi = cat.provider.id === "mochi";
+          var qLabel  = (isMochi && (rawQ === "auto" || rawQ === "default" || rawQ === ""))
+            ? "MP4" : (src.quality || "Auto");
           var quality = qLabel +
             " [" + cat.type.toUpperCase() + "] " +
             cat.provider.id.toUpperCase();
@@ -633,6 +653,16 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub (default)", "Dub (default)"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "anidap_download_mode",
+        listPreference: {
+          title: "Download mode",
+          summary: "OFF: HLS first — tap an episode to play normally. ON: MP4 (Mochi) first — tap download to save the file. Switch back to OFF after downloading.",
+          valueIndex: 0,
+          entries: ["OFF — Playback (HLS first)", "ON — Download (MP4 first)"],
+          entryValues: ["off", "on"],
         },
       },
     ];
