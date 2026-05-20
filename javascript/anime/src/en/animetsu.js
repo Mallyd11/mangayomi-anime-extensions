@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.5",
+    "version": "1.1.8",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -156,6 +156,7 @@ class DefaultExtension extends MProvider {
     var epSlug = "/eps/" + id;
     var epData = await this.request(epSlug);
 
+    var epThumbPref = this.getPreference("animetsu_pref_ep_thumbnail");
     var epDescPref = this.getPreference("animetsu_pref_ep_description");
     epData.forEach((item) => {
       var ep_num = item.ep_num;
@@ -164,10 +165,8 @@ class DefaultExtension extends MProvider {
       var isFiller = item.is_filler;
       var token = `${id}/${ep_num}`;
 
-      // Use direct Animetsu URL for thumbnails — swiftstream proxy causes
-      // repeated image-load failures which hammer the proxy and degrade video.
-      var thumbnailUrl = item.img ? (baseUrl + item.img) : null;
-      var epDescription = (epDescPref !== false) ? item.desc : null;
+      var thumbnailUrl = epThumbPref ? this.getProxyMediaUrl(item.img) : null;
+      var epDescription = epDescPref ? item.desc : null;
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
         : null;
@@ -188,10 +187,10 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     var serverPref = this.getPreference("animetsu_pref_stream_server");
-    if (!serverPref || serverPref.length < 1) serverPref = ["pahe", "kite"];
+    if (serverPref.length < 1) serverPref.push("pahe");
 
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
-    if (!audioPref || audioPref.length < 1) audioPref = ["sub"];
+    if (audioPref.length < 1) audioPref.push("sub");
 
     var combinations = [];
     for (var serverName of serverPref) {
@@ -200,7 +199,9 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    var streams = await Promise.all(
+    var dlPref = this.getPreference("animetsu_pref_dl_links");
+
+    var streamPromise = Promise.all(
       combinations.map(async ({ serverName, audioType }) => {
         try {
           var epSlug = `/oppai/${url}?server=${serverName}&source_type=${audioType}`;
@@ -208,14 +209,10 @@ class DefaultExtension extends MProvider {
 
           if (!epData.hasOwnProperty("sources")) return [];
 
-          var skips = (this.getPreference("animetsu_pref_skip_timestamps") !== false) && epData.skips
-            ? epData.skips
-            : null;
-
           if (serverName == "pahe" || serverName == "meg") {
-            return this.getPaheMegStreams(epData.sources, audioType, serverName, skips);
+            return this.getPaheMegStreams(epData.sources, audioType, serverName);
           } else if (serverName == "kite") {
-            return this.getKiteStreams(epData, audioType, skips);
+            return await this.getKiteStreams(epData, audioType);
           }
           return [];
         } catch (e) {
@@ -224,97 +221,48 @@ class DefaultExtension extends MProvider {
       })
     );
 
-    // Pahe first (reliable, no cold-start), then Kite (downloads), then Meg.
-    // Within each server, higher resolution first.
-    function dlFirst(a, b) {
-      function serverScore(s) {
-        const q = (s.quality || "").toUpperCase();
-        if (q.includes(": PAHE")) return 20;
-        if (q.includes(": KITE")) return 10;
-        if (s._megDl)            return  5;
-        return 0;
-      }
-      function resScore(s) {
-        const q = (s.quality || "").toUpperCase();
-        if (q.includes("2160") || q.includes("4K"))   return 4;
-        if (q.includes("1920") || q.includes("1080"))  return 3;
-        if (q.includes("1280") || q.includes("720"))   return 2;
-        if (q.includes("480"))                         return 1;
-        return 0;
-      }
-      return (serverScore(b) + resScore(b)) - (serverScore(a) + resScore(a));
+    if (!dlPref) {
+      var results = await streamPromise;
+      return results.flat();
     }
 
-    return streams.flat().sort(dlFirst);
+    var [streamResults, dlStreams] = await Promise.all([
+      streamPromise,
+      this.getDownloadStreams(url),
+    ]);
+
+    return [...streamResults.flat(), ...dlStreams];
   }
 
   streamNamer(res, dubType, serverName) {
     return `${res.toUpperCase()} - ${dubType.toUpperCase()} : ${serverName.toUpperCase()}`;
   }
 
-  getPaheMegStreams(epData, audioType, serverName, skips) {
+  getPaheMegStreams(epData, audioType, serverName) {
     var hdr = this.getHeaders();
-    var skipAttrs = skips ? {
-      introStart: skips.intro?.start,
-      introEnd:   skips.intro?.end,
-      outroStart: skips.outro?.start,
-      outroEnd:   skips.outro?.end,
-    } : {};
     var streams = [];
 
     epData.forEach((item) => {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
-
-      if (serverName === "meg") {
-        // meg serves a direct MP4 via swiftstream proxy.
-        //
-        // Mangayomi's download_provider.dart checks `originalUrl` to classify
-        // the stream (isMediaVideo → .mp4 path), but uses `url` for the actual
-        // download/playback request. These are DIFFERENT fields.
-        //
-        // Problem: swiftstream returns 500 for TOKEN.mp4 (with or without Range)
-        // but 206 for plain TOKEN + Range: bytes=0-. So we cannot use the .mp4
-        // URL as the real download URL.
-        //
-        // Fix: set originalUrl to a fake .mp4 path (passes isMediaVideo() check
-        // → Mangayomi routes to direct-streaming download path), while url stays
-        // as the real plain token URL that actually serves 206 MP4 content.
-        var megHdr = Object.assign({}, hdr, { "Range": "bytes=0-" });
-        streams.push(Object.assign({
-          url: link,                  // real URL — plain token, Range → 206 MP4
-          originalUrl: link + ".mp4", // fake suffix — tricks isMediaVideo() = true
-          quality: this.streamNamer(quality + " [DL]", audioType, serverName),
-          headers: megHdr,
-          _megDl: true,
-        }, skipAttrs));
-      } else {
-        // pahe = AES-128 encrypted HLS.
-        // Appending "#.m3u8" as a URL fragment makes Mangayomi's download manager
-        // detect this as HLS (url.contains('.m3u8') = true) and download all segments
-        // instead of saving the raw playlist text as a file. The fragment is stripped
-        // by Dart's HTTP client before the request reaches swiftstream, so the server
-        // always receives the clean token URL and returns the m3u8 normally.
-        streams.push(Object.assign({
-          url: link,
-          originalUrl: link + ".m3u8",
-          quality: this.streamNamer(quality, audioType, serverName),
-          headers: hdr,
-        }, skipAttrs));
-      }
+      var isMp4 = item.type === "video/mp4" || item.old_hls === false;
+      var label = isMp4
+        ? this.streamNamer(quality + " [DL]", audioType, serverName)
+        : this.streamNamer(quality, audioType, serverName);
+      streams.push({
+        url: link,
+        originalUrl: link,
+        quality: label,
+        headers: hdr,
+      });
     });
 
     return streams;
   }
 
-  getKiteStreams(epData, audioType, skips) {
+  async getKiteStreams(epData, audioType) {
     var hdr = this.getHeaders();
-    var skipAttrs = skips ? {
-      introStart: skips.intro?.start,
-      introEnd:   skips.intro?.end,
-      outroStart: skips.outro?.start,
-      outroEnd:   skips.outro?.end,
-    } : {};
+    var streams = [];
 
     var subtitles = [];
     if (epData.hasOwnProperty("subs")) {
@@ -323,118 +271,188 @@ class DefaultExtension extends MProvider {
       });
     }
 
-    var streams = [];
-    for (var i = 0; i < epData.sources.length; i++) {
-      var item = epData.sources[i];
+    for (var item of epData.sources) {
       var masterUrl = this.getProxyMediaUrl(item.url);
-      // Give libmpv the master m3u8 directly. libmpv handles the full adaptive
-      // chain (master → variant → segments) natively. Previously we parsed the
-      // master and gave variant URLs, but this caused cold-start buffering because
-      // swiftstream's proxy initializes its session on the master request — a client
-      // that jumps straight to a variant URL hits a cold proxy and buffers.
-      var stream = Object.assign({
-        url: masterUrl,
-        originalUrl: masterUrl + ".m3u8",
-        quality: this.streamNamer("1080p [DL]", "soft" + audioType, "kite"),
-        headers: hdr,
-      }, skipAttrs);
-      if (i === 0) stream.subtitles = subtitles;
-      streams.push(stream);
+      var baseDir = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+      var parsed = false;
+
+      try {
+        var res = await this.client.get(masterUrl, hdr);
+        if (res.statusCode == 200) {
+          var lines = res.body.split("\n");
+          for (var i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
+              var resMatch = lines[i].match(/RESOLUTION=(\d+x\d+)/);
+              var resolution = resMatch ? resMatch[1] : "Auto";
+              var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
+              if (!nextLine) continue;
+              var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
+              var stream = {
+                url: variantUrl,
+                originalUrl: variantUrl,
+                quality: this.streamNamer(resolution, "soft" + audioType, "kite"),
+                headers: hdr,
+              };
+              if (!parsed) {
+                stream.subtitles = subtitles;
+                parsed = true;
+              }
+              streams.push(stream);
+            }
+          }
+        }
+      } catch (e) {}
+
+      if (!parsed) {
+        streams.push({
+          url: masterUrl,
+          originalUrl: masterUrl,
+          quality: this.streamNamer("Auto", "soft" + audioType, "kite"),
+          headers: hdr,
+          subtitles: subtitles,
+        });
+      }
     }
+
     return streams;
   }
 
-  // Resolve a pahe.win shortlink → direct MP4 CDN URL via kwik.cx.
-  // owocdn.top (the final CDN) is Cloudflare-protected; this chain only works
-  // when Mangayomi's HTTP client already holds a valid kwik.cx CF session.
+  // Decode packer.js obfuscation (eval(function(p,a,c,k,e,d){...})) used on kwik.cx pages.
+  // Returns the unpacked JavaScript string, or null if pattern not found / decode failed.
+  decodePackerJs(html) {
+    try {
+      // Match the canonical packer invocation pattern
+      var m = html.match(/\(function\s*\(p,a,c,k,e,[a-z]\)\s*\{[\s\S]+?\}\s*\(\s*'((?:[^'\\]|\\.)*)'\s*,\s*(\d+)\s*,\s*\d+\s*,\s*'((?:[^'\\]|\\.)*)'\s*\.split\s*\(\s*['"]\|['"]\s*\)/);
+      if (!m) return null;
+
+      var payload = m[1].replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+      var radix = parseInt(m[2]);
+      var keys = m[3].split("|");
+
+      // Custom base converter — parseInt only handles up to base 36; kwik uses base 62
+      var CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      function fromBase(s) {
+        var n = 0;
+        for (var i = 0; i < s.length; i++) {
+          var d = CHARS.indexOf(s[i]);
+          if (d < 0 || d >= radix) return NaN;
+          n = n * radix + d;
+        }
+        return n;
+      }
+
+      return payload.replace(/\b([a-zA-Z0-9_$]+)\b/g, function(w) {
+        var n = fromBase(w);
+        return (!isNaN(n) && n >= 0 && n < keys.length && keys[n] !== "") ? keys[n] : w;
+      });
+    } catch (e) { return null; }
+  }
+
+  // Resolve a pahe.win shortlink → direct MP4 CDN URL (token+expiry embedded in URL).
+  // Strategy A: decode packer.js on the kwik page to extract the source URL without a POST.
+  // Strategy B: POST the kwik download form and capture the 302 Location redirect.
   async resolveKwikDownload(paheWinUrl) {
     try {
       var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-      // Step 1: pahe.win embeds the kwik URL in JS before the CF countdown resolves.
+      // Step 1: GET pahe.win → the countdown JS contains the kwik URL
+      // e.g. $("a.redirect").attr("href","https://kwik.cx/f/HASH")
       var paheRes = await this.client.get(paheWinUrl, {
-        "User-Agent": ua, "Referer": "https://animetsu.bz/",
+        "User-Agent": ua,
+        "Referer": "https://animetsu.bz/",
       });
       var paheBody = paheRes.body || "";
+
+      // Handle kwik.cx and any other kwik.* TLD, both /f/ and /e/ paths
       var kwikMatch = paheBody.match(/["'](https?:\/\/kwik\.[a-z]{2,3}\/[ef]\/[A-Za-z0-9]+)["']/);
       if (!kwikMatch) return null;
       var kwikFileUrl = kwikMatch[1].replace("/e/", "/f/");
 
-      // Step 2: GET kwik.cx/f/{hash} — plain form, no packer obfuscation.
+      // Step 2: GET the kwik download page
       var kwikRes = await this.client.get(kwikFileUrl, {
-        "User-Agent": ua, "Referer": paheWinUrl,
+        "User-Agent": ua,
+        "Referer": paheWinUrl,
       });
       var kwikBody = kwikRes.body || "";
       if (kwikBody.length < 100) return null;
 
+      // Strategy A: decode packer.js → source URL (no POST, avoids redirect-capture problem)
+      var unpacked = this.decodePackerJs(kwikBody);
+      if (unpacked) {
+        var srcMatch = unpacked.match(/(?:source|src|file|url)\s*=\s*['"]([^'"]+\.mp4[^'"]*)['"]/i);
+        if (srcMatch && srcMatch[1].startsWith("http")) return srcMatch[1];
+        // Broader CDN URL search in decoded output
+        var cdnMatch = unpacked.match(/https?:\/\/[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
+        if (cdnMatch) return cdnMatch[0];
+      }
+
+      // Strategy B: POST the download form; server 302s to the direct MP4 CDN URL
       var tokenMatch = kwikBody.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/)
                     || kwikBody.match(/value=["']([^"']{20,})["'][^>]*name=["']_token["']/);
       if (!tokenMatch) return null;
+
       var actionMatch = kwikBody.match(/action=["'](https?:\/\/kwik\.[^"']+\/d\/[^"']+)["']/);
       if (!actionMatch) return null;
       var dlAction = actionMatch[1];
 
-      // Step 3: POST → 302 redirect to vault-*.owocdn.top MP4 CDN URL.
       var postRes = await this.client.post(
         dlAction,
         { "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": ua, "Referer": kwikFileUrl, "Origin": "https://kwik.cx" },
+          "User-Agent": ua,
+          "Referer": kwikFileUrl,
+          "Origin": "https://kwik.cx" },
         "_token=" + encodeURIComponent(tokenMatch[1])
       );
 
-      // Case 1: Location header (redirect not auto-followed)
+      // Case 1: redirect NOT followed — Location header holds the direct URL
       if (postRes.headers) {
         var loc = postRes.headers["location"] || postRes.headers["Location"];
         if (loc && loc.startsWith("http")) return loc;
       }
-      // Case 2: redirect was followed, final URL in .url
-      if (postRes.url && postRes.url !== dlAction && /\.(mp4|webm|mkv)/i.test(postRes.url)) {
-        return postRes.url;
-      }
-      // Case 3: body contains CDN URL
+      // Case 2: redirect WAS followed — final URL accessible via .url property
+      if (postRes.url && /\.mp4/i.test(postRes.url)) return postRes.url;
+      // Case 3: text response body may contain the CDN URL
       if (postRes.body && typeof postRes.body === "string") {
-        var hrefM = postRes.body.match(/href=["'](https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)["']/i);
-        if (hrefM) return hrefM[1];
-        var rawM = postRes.body.match(/https?:\/\/[a-z0-9-]+\.[a-z0-9.-]+\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-        if (rawM) return rawM[0];
+        var mp4Match = postRes.body.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
+        if (mp4Match) return mp4Match[0];
       }
+
       return null;
-    } catch (e) { return null; }
+    } catch (e) {
+      return null;
+    }
   }
 
-  // Resolve the kwik.cx → owocdn.top chain to get direct BD MP4 download links.
-  // These are the highest-quality offline-playable files available.
-  // _kwikDl:true gives them sort score 2 (above kite [DL] score 1) so Mangayomi
-  // picks them first for downloads.
-  // Silently returns [] on any failure — kite [DL] acts as automatic fallback.
+  // Fetch the /dl endpoint and resolve all kwik shortlinks to direct MP4 URLs
   async getDownloadStreams(url) {
-    var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-    var results = [];
-
     try {
       var dlData = await this.request("/dl/" + url);
-      if (!Array.isArray(dlData) || dlData.length === 0) return results;
+      if (!Array.isArray(dlData) || dlData.length === 0) return [];
 
-      var kwikStreams = await Promise.all(dlData.map(async (item) => {
-        try {
-          if (!item.link) return null;
-          var directUrl = await this.resolveKwikDownload(item.link);
-          if (!directUrl) return null;
-          return {
-            url: directUrl,
-            originalUrl: directUrl,
-            // "[DL]" so Mangayomi recognises it as downloadable.
-            // _kwikDl sorts it above kite [DL] streams (score 2 vs 1).
-            quality: (item.name || "Download") + " [DL]",
-            headers: { "User-Agent": ua, "Referer": "https://kwik.cx/" },
-            _kwikDl: true,
-          };
-        } catch (e) { return null; }
-      }));
-      results.push(...kwikStreams.filter(Boolean));
-    } catch (e) {}
+      var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-    return results;
+      var streams = await Promise.all(
+        dlData.map(async (item) => {
+          try {
+            if (!item.link) return null;
+            var directUrl = await this.resolveKwikDownload(item.link);
+            if (!directUrl) return null;
+            return {
+              url: directUrl,
+              originalUrl: directUrl,
+              quality: (item.name || "Download") + " [DIRECT DL]",
+              headers: { "User-Agent": ua },
+            };
+          } catch (e) {
+            return null;
+          }
+        })
+      );
+
+      return streams.filter(Boolean);
+    } catch (e) {
+      return [];
+    }
   }
 
   getFilterList() {
@@ -464,6 +482,14 @@ class DefaultExtension extends MProvider {
         },
       },
       {
+        key: "animetsu_pref_ep_thumbnail",
+        switchPreferenceCompat: {
+          title: "Episode thumbail",
+          summary: "",
+          value: true,
+        },
+      },
+      {
         key: "animetsu_pref_ep_description",
         switchPreferenceCompat: {
           title: "Episode description",
@@ -472,10 +498,10 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "animetsu_pref_skip_timestamps",
+        key: "animetsu_pref_dl_links",
         switchPreferenceCompat: {
-          title: "Include intro/outro skip timestamps",
-          summary: "Pass intro and outro timestamps to Mangayomi's skip button. Requires 'Enable AniSkip' to be on in Mangayomi player settings.",
+          title: "Fetch direct download links",
+          summary: "Resolve kwik.cx URLs for direct MP4 downloads (adds extra requests on episode load)",
           value: true,
         },
       },
@@ -484,7 +510,7 @@ class DefaultExtension extends MProvider {
         multiSelectListPreference: {
           title: "Preferred server",
           summary: "Choose the server/s you want to extract streams from",
-          values: ["pahe", "kite"],
+          values: ["pahe", "kite", "meg"],
           entries: ["Pahe", "Kite", "Meg"],
           entryValues: ["pahe", "kite", "meg"],
         },
