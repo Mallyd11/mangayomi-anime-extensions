@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.3",
+    "version": "1.3.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -200,9 +200,7 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    var dlPref = this.getPreference("animetsu_pref_dl_links");
-
-    var streamPromise = Promise.all(
+    var streams = await Promise.all(
       combinations.map(async ({ serverName, audioType }) => {
         try {
           var epSlug = `/oppai/${url}?server=${serverName}&source_type=${audioType}`;
@@ -226,55 +224,39 @@ class DefaultExtension extends MProvider {
       })
     );
 
-    // Sort: Pahe first (instant playback, no cold-start), then Kite (download use),
-    // then kwik direct MP4, then Meg. Within each server, higher resolution first.
+    // Pahe first (reliable, no cold-start), then Kite (downloads), then Meg.
+    // Within each server, higher resolution first.
     function dlFirst(a, b) {
       function serverScore(s) {
         const q = (s.quality || "").toUpperCase();
-        if (q.includes(": PAHE")) return 40;  // Pahe — instant playback, no cold-start
-        if (q.includes(": KITE")) return 30;  // Kite — use for downloads; cold-start on first load
-        if (s._kwikDl)           return 20;  // kwik direct MP4
-        if (s._megDl)            return 10;  // Meg — loads slowly
+        if (q.includes(": PAHE")) return 20;
+        if (q.includes(": KITE")) return 10;
+        if (s._megDl)            return  5;
         return 0;
       }
       function resScore(s) {
         const q = (s.quality || "").toUpperCase();
-        if (q.includes("2160") || q.includes("4K"))  return 4;
-        if (q.includes("1920") || q.includes("1080")) return 3;
-        if (q.includes("1280") || q.includes("720"))  return 2;
-        if (q.includes("480"))                        return 1;
+        if (q.includes("2160") || q.includes("4K"))   return 4;
+        if (q.includes("1920") || q.includes("1080"))  return 3;
+        if (q.includes("1280") || q.includes("720"))   return 2;
+        if (q.includes("480"))                         return 1;
         return 0;
       }
       return (serverScore(b) + resScore(b)) - (serverScore(a) + resScore(a));
     }
 
-    // Wait for all stream sources (Pahe/Kite/Meg) to resolve, then sort so we
-    // know which stream will be auto-selected (index 0).
-    var streamResults = await streamPromise;
-    var allStreams = streamResults.flat().sort(dlFirst);
+    var allStreams = streams.flat().sort(dlFirst);
 
-    // Warm up the swiftstream session server-side before the video player starts.
-    // libmpv uses its own HTTP stack (not shared with the extension client), but
-    // swiftstream initialises its proxy session per-IP on the first incoming
-    // request. Fetching the first stream URL here — from the extension client,
-    // same device IP — triggers that server-side initialisation so libmpv's first
-    // request hits a warm proxy and plays immediately instead of buffering forever.
-    // This runs in parallel with kwik resolution so it adds no extra wait time.
-    var warmup = allStreams.length > 0
-      ? this.client.get(allStreams[0].url, allStreams[0].headers || {}).catch(function() {})
-      : Promise.resolve();
-
-    if (dlPref === false) {
-      await warmup;
-      return allStreams;
+    // Warm up the swiftstream proxy before the video player makes its first
+    // request. libmpv has its own HTTP stack separate from the extension client,
+    // but swiftstream initialises its backend session server-side on the first
+    // request from a given IP. Touching the first stream URL here triggers that
+    // init so libmpv hits a warm proxy and plays immediately.
+    if (allStreams.length > 0) {
+      await this.client.get(allStreams[0].url, allStreams[0].headers || {}).catch(function() {});
     }
 
-    var [dlStreams] = await Promise.all([
-      this.getDownloadStreams(url),
-      warmup,
-    ]);
-
-    return [...allStreams, ...dlStreams].sort(dlFirst);
+    return allStreams;
   }
 
   streamNamer(res, dubType, serverName) {
@@ -505,14 +487,6 @@ class DefaultExtension extends MProvider {
         switchPreferenceCompat: {
           title: "Include intro/outro skip timestamps",
           summary: "Pass intro and outro timestamps to Mangayomi's skip button. Requires 'Enable AniSkip' to be on in Mangayomi player settings.",
-          value: true,
-        },
-      },
-      {
-        key: "animetsu_pref_dl_links",
-        switchPreferenceCompat: {
-          title: "Fetch direct download links",
-          summary: "Resolve kwik.cx → direct BD MP4 URLs for offline-playable downloads. On by default — disable only if episode loading becomes slow.",
           value: true,
         },
       },
