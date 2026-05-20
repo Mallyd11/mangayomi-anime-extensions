@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.3",
+    "version": "1.2.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -165,7 +165,7 @@ class DefaultExtension extends MProvider {
       var isFiller = item.is_filler;
       var token = `${id}/${ep_num}`;
 
-      var thumbnailUrl = epThumbPref ? this.getBaseUrl() + item.img : null;
+      var thumbnailUrl = epThumbPref ? this.getProxyMediaUrl(item.img) : null;
       var epDescription = epDescPref ? item.desc : null;
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
@@ -248,14 +248,13 @@ class DefaultExtension extends MProvider {
 
       if (serverName === "meg") {
         // Meg serves direct MP4 via the swiftstream proxy.
-        // url is the plain token (no .mp4 suffix) — swiftstream returns 500
-        // for TOKEN.mp4 but serves the MP4 correctly at the plain token path.
-        // originalUrl ending in .mp4 hints Mangayomi's download manager that
-        // this is a direct file, without adding a Range header that would
-        // interfere with libmpv's own range management during playback.
+        // url == originalUrl (no extension) — swiftstream's HEAD handler returns
+        // content-length: 2 which causes Mangayomi's direct-file downloader to
+        // reject the stream. Treating it like Pahe (plain URL, no extension)
+        // lets libmpv detect the content-type from the actual response instead.
         streams.push({
           url: link,
-          originalUrl: link + ".mp4",
+          originalUrl: link,
           quality: this.streamNamer(quality, audioType, serverName),
           headers: hdr,
         });
