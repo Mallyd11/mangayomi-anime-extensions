@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.5",
+    "version": "1.2.6",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -163,7 +163,7 @@ class DefaultExtension extends MProvider {
       var ep_title = item.name;
       var epName = format == "MOVIE" ? ep_title : `E${ep_num} : ${ep_title}`;
       var isFiller = item.is_filler;
-      var token = `${id}/${ep_num}`;
+      var token = `${id}/${ep_num}/${item.id}`;
 
       var thumbnailUrl = epThumbPref ? this.getProxyMediaUrl(item.img) : null;
       var epDescription = epDescPref ? item.desc : null;
@@ -192,6 +192,12 @@ class DefaultExtension extends MProvider {
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
     if (audioPref.length < 1) audioPref.push("sub");
 
+    // URL format: "{anilistId}/{ep_num}/{mongoEpId}"
+    // Legacy episodes saved before v1.2.6 have only "{anilistId}/{ep_num}" (2 parts).
+    var urlParts = url.split("/");
+    var anilistUrl = urlParts[0] + "/" + urlParts[1]; // used by pahe / kite / meg
+    var mongoEpId = urlParts.length >= 3 ? urlParts[2] : null; // used by dio / kiss
+
     var combinations = [];
     for (var serverName of serverPref) {
       for (var audioType of audioPref) {
@@ -204,15 +210,24 @@ class DefaultExtension extends MProvider {
     var streamPromise = Promise.all(
       combinations.map(async ({ serverName, audioType }) => {
         try {
-          var epSlug = `/oppai/${url}?server=${serverName}&source_type=${audioType}`;
-          var epData = await this.request(epSlug);
-
-          if (!epData.hasOwnProperty("sources")) return [];
-
           if (serverName == "pahe" || serverName == "meg") {
+            var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
+            var epData = await this.request(epSlug);
+            if (!epData.hasOwnProperty("sources")) return [];
             return this.getPaheMegStreams(epData.sources, audioType, serverName);
           } else if (serverName == "kite") {
+            var epSlug = `/oppai/${anilistUrl}?server=kite&source_type=${audioType}`;
+            var epData = await this.request(epSlug);
+            if (!epData.hasOwnProperty("sources")) return [];
             return await this.getKiteStreams(epData, audioType);
+          } else if (serverName == "dio" || serverName == "kiss") {
+            // Dio and Kiss only respond to MongoDB episode ID format.
+            // Skip gracefully for legacy episodes that lack a mongo ID in the URL.
+            if (!mongoEpId) return [];
+            var epSlug = `/oppai/${mongoEpId}/1?server=${serverName}&source_type=${audioType}`;
+            var epData = await this.request(epSlug);
+            if (!epData.hasOwnProperty("sources")) return [];
+            return await this.getDioKissStreams(epData, audioType, serverName);
           }
           return [];
         } catch (e) {
@@ -228,7 +243,7 @@ class DefaultExtension extends MProvider {
 
     var [streamResults, dlStreams] = await Promise.all([
       streamPromise,
-      this.getDownloadStreams(url),
+      this.getDownloadStreams(anilistUrl),
     ]);
 
     return [...streamResults.flat(), ...dlStreams];
@@ -320,6 +335,71 @@ class DefaultExtension extends MProvider {
           url: masterUrl,
           originalUrl: masterUrl + ".m3u8",
           quality: this.streamNamer("Auto [DL]", "soft" + audioType, "kite"),
+          headers: hdr,
+          subtitles: subtitles,
+        });
+      }
+    }
+
+    return streams;
+  }
+
+  // Dio (hard sub, multi-quality HLS) and Kiss (soft sub, multi-language HLS).
+  // Both servers use MongoDB episode ID format and return HLS master m3u8 like Kite.
+  // Dio  = baked-in hardsub  → audio label shown without "soft" prefix.
+  // Kiss = separate subtitle tracks → audio label shown with "soft" prefix.
+  async getDioKissStreams(epData, audioType, serverName) {
+    var hdr = this.getHeaders();
+    var streams = [];
+
+    var subtitles = [];
+    if (epData.hasOwnProperty("subs")) {
+      epData.subs.forEach((item) => {
+        subtitles.push({ file: item.url, label: item.lang, headers: hdr });
+      });
+    }
+
+    var isSoftSub = serverName === "kiss";
+
+    for (var item of epData.sources) {
+      var masterUrl = this.getProxyMediaUrl(item.url);
+      var baseDir = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+      var parsed = false;
+
+      try {
+        var res = await this.client.get(masterUrl, hdr);
+        if (res.statusCode == 200) {
+          var lines = res.body.split("\n");
+          for (var i = 0; i < lines.length; i++) {
+            if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
+              var resMatch = lines[i].match(/RESOLUTION=(\d+x\d+)/);
+              var resolution = resMatch ? resMatch[1] : "Auto";
+              var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
+              if (!nextLine) continue;
+              var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
+              var audioLabel = isSoftSub ? "soft" + audioType : audioType;
+              var stream = {
+                url: variantUrl,
+                originalUrl: variantUrl + ".m3u8",
+                quality: this.streamNamer(resolution + " [DL]", audioLabel, serverName),
+                headers: hdr,
+              };
+              if (!parsed) {
+                stream.subtitles = subtitles;
+                parsed = true;
+              }
+              streams.push(stream);
+            }
+          }
+        }
+      } catch (e) {}
+
+      if (!parsed) {
+        var audioLabel = isSoftSub ? "soft" + audioType : audioType;
+        streams.push({
+          url: masterUrl,
+          originalUrl: masterUrl + ".m3u8",
+          quality: this.streamNamer("Auto [DL]", audioLabel, serverName),
           headers: hdr,
           subtitles: subtitles,
         });
@@ -521,10 +601,10 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_stream_server",
         multiSelectListPreference: {
           title: "Preferred server",
-          summary: "Choose the server/s you want to extract streams from",
+          summary: "Choose the server/s you want to extract streams from. Dio and Kiss require a fresh episode load (MongoDB ID embedded since v1.2.6).",
           values: ["pahe", "kite", "meg"],
-          entries: ["Pahe", "Kite", "Meg"],
-          entryValues: ["pahe", "kite", "meg"],
+          entries: ["Pahe (hard sub, multi quality)", "Kite (soft sub, multi quality)", "Meg (hard sub, multi quality)", "Dio (hard sub, multi quality)", "Kiss (soft sub, multi language)"],
+          entryValues: ["pahe", "kite", "meg", "dio", "kiss"],
         },
       },
       {
