@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.1.8",
+    "version": "1.1.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -245,16 +245,29 @@ class DefaultExtension extends MProvider {
     epData.forEach((item) => {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
-      var isMp4 = item.type === "video/mp4" || item.old_hls === false;
-      var label = isMp4
-        ? this.streamNamer(quality + " [DL]", audioType, serverName)
-        : this.streamNamer(quality, audioType, serverName);
-      streams.push({
-        url: link,
-        originalUrl: link,
-        quality: label,
-        headers: hdr,
-      });
+
+      if (serverName === "meg") {
+        // Meg serves direct MP4 via the swiftstream proxy.
+        // originalUrl ending in .mp4 tells Mangayomi's download manager to treat
+        // this as a direct file download. url stays as the plain token (no .mp4
+        // suffix) because swiftstream returns 500 for TOKEN.mp4 but serves the
+        // MP4 correctly for the plain token path.
+        // Range: bytes=0- signals resumable download support to Mangayomi.
+        streams.push({
+          url: link,
+          originalUrl: link + ".mp4",
+          quality: this.streamNamer(quality + " [DL]", audioType, serverName),
+          headers: Object.assign({}, hdr, { "Range": "bytes=0-" }),
+        });
+      } else {
+        // pahe = AES-128 encrypted HLS — stream only, no download label
+        streams.push({
+          url: link,
+          originalUrl: link,
+          quality: this.streamNamer(quality, audioType, serverName),
+          headers: hdr,
+        });
+      }
     });
 
     return streams;
@@ -289,8 +302,8 @@ class DefaultExtension extends MProvider {
               var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
               var stream = {
                 url: variantUrl,
-                originalUrl: variantUrl,
-                quality: this.streamNamer(resolution, "soft" + audioType, "kite"),
+                originalUrl: variantUrl + ".m3u8",
+                quality: this.streamNamer(resolution + " [DL]", "soft" + audioType, "kite"),
                 headers: hdr,
               };
               if (!parsed) {
@@ -306,8 +319,8 @@ class DefaultExtension extends MProvider {
       if (!parsed) {
         streams.push({
           url: masterUrl,
-          originalUrl: masterUrl,
-          quality: this.streamNamer("Auto", "soft" + audioType, "kite"),
+          originalUrl: masterUrl + ".m3u8",
+          quality: this.streamNamer("Auto [DL]", "soft" + audioType, "kite"),
           headers: hdr,
           subtitles: subtitles,
         });
