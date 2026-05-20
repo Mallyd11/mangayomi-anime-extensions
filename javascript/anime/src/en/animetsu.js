@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -164,7 +164,9 @@ class DefaultExtension extends MProvider {
       var isFiller = item.is_filler;
       var token = `${id}/${ep_num}`;
 
-      var thumbnailUrl = item.img ? this.getProxyMediaUrl(item.img) : null;
+      // Use direct Animetsu URL for thumbnails — swiftstream proxy causes
+      // repeated image-load failures which hammer the proxy and degrade video.
+      var thumbnailUrl = item.img ? (baseUrl + item.img) : null;
       var epDescription = (epDescPref !== false) ? item.desc : null;
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
