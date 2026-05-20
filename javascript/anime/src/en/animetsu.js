@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.6",
+    "version": "1.2.7",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -163,7 +163,7 @@ class DefaultExtension extends MProvider {
       var ep_title = item.name;
       var epName = format == "MOVIE" ? ep_title : `E${ep_num} : ${ep_title}`;
       var isFiller = item.is_filler;
-      var token = `${id}/${ep_num}/${item.id}`;
+      var token = `${id}/${ep_num}`;
 
       var thumbnailUrl = epThumbPref ? this.getProxyMediaUrl(item.img) : null;
       var epDescription = epDescPref ? item.desc : null;
@@ -192,11 +192,10 @@ class DefaultExtension extends MProvider {
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
     if (audioPref.length < 1) audioPref.push("sub");
 
-    // URL format: "{anilistId}/{ep_num}/{mongoEpId}"
-    // Legacy episodes saved before v1.2.6 have only "{anilistId}/{ep_num}" (2 parts).
+    // URL format: "{animeMongoId}/{ep_num}" — the anime's MongoDB ID is the id
+    // returned by the search/info API (not a numeric AniList ID).
     var urlParts = url.split("/");
-    var anilistUrl = urlParts[0] + "/" + urlParts[1]; // used by pahe / kite / meg
-    var mongoEpId = urlParts.length >= 3 ? urlParts[2] : null; // used by dio / kiss
+    var anilistUrl = urlParts[0] + "/" + urlParts[1];
 
     var combinations = [];
     for (var serverName of serverPref) {
@@ -221,10 +220,8 @@ class DefaultExtension extends MProvider {
             if (!epData.hasOwnProperty("sources")) return [];
             return await this.getKiteStreams(epData, audioType);
           } else if (serverName == "dio" || serverName == "kiss") {
-            // Dio and Kiss only respond to MongoDB episode ID format.
-            // Skip gracefully for legacy episodes that lack a mongo ID in the URL.
-            if (!mongoEpId) return [];
-            var epSlug = `/oppai/${mongoEpId}/1?server=${serverName}&source_type=${audioType}`;
+            // Dio and Kiss use the same URL format as pahe/kite/meg.
+            var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
             if (!epData.hasOwnProperty("sources")) return [];
             return await this.getDioKissStreams(epData, audioType, serverName);
