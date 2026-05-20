@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.15",
+    "version": "1.5.16",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -131,15 +131,25 @@ class DefaultExtension extends MProvider {
   // ── AniList GraphQL ────────────────────────────────────────────────────────
 
   async gql(query, variables) {
-    var res = await this.client.post(
-      "https://graphql.anilist.co",
-      { "Content-Type": "application/json", "Accept": "application/json" },
-      { query: query, variables: variables }
-    );
-    if (res.statusCode !== 200) throw new Error("AniList HTTP " + res.statusCode);
-    var json = JSON.parse(res.body);
-    if (json.errors && json.errors.length) throw new Error(json.errors[0].message);
-    return json.data;
+    // Retry up to 3 times on 5xx — AniList occasionally returns transient 500s
+    // that resolve immediately on the next request.
+    var lastErr;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      var res = await this.client.post(
+        "https://graphql.anilist.co",
+        { "Content-Type": "application/json", "Accept": "application/json" },
+        { query: query, variables: variables }
+      );
+      if (res.statusCode === 200) {
+        var json = JSON.parse(res.body);
+        if (json.errors && json.errors.length) throw new Error(json.errors[0].message);
+        return json.data;
+      }
+      lastErr = new Error("AniList HTTP " + res.statusCode);
+      // Don't retry client errors (4xx) — they won't change on retry.
+      if (res.statusCode < 500) throw lastErr;
+    }
+    throw lastErr;
   }
 
   titleByPref(title) {
