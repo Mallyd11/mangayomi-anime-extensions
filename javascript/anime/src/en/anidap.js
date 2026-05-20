@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.10",
+    "version": "1.5.11",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -158,7 +158,7 @@ class DefaultExtension extends MProvider {
       if (!name) return;
       list.push({
         name: name,
-        link: String(m.id),
+        link: "/info/" + String(m.id),
         imageUrl: (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "",
       });
     });
@@ -193,7 +193,7 @@ class DefaultExtension extends MProvider {
       if (!name) return;
       list.push({
         name: name,
-        link: String(m.id),
+        link: "/info/" + String(m.id),
         imageUrl: (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "",
       });
     });
