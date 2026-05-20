@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.1",
+    "version": "1.3.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -226,13 +226,13 @@ class DefaultExtension extends MProvider {
       })
     );
 
-    // Sort: Pahe first (reliable, works for streaming + download), then Kite,
+    // Sort: Pahe first (instant playback, no cold-start), then Kite (download use),
     // then kwik direct MP4, then Meg. Within each server, higher resolution first.
     function dlFirst(a, b) {
       function serverScore(s) {
         const q = (s.quality || "").toUpperCase();
-        if (q.includes(": KITE")) return 40;  // Kite — only server with working downloads
-        if (q.includes(": PAHE")) return 30;  // Pahe — reliable streaming
+        if (q.includes(": PAHE")) return 40;  // Pahe — instant playback, no cold-start
+        if (q.includes(": KITE")) return 30;  // Kite — use for downloads; cold-start on first load
         if (s._kwikDl)           return 20;  // kwik direct MP4
         if (s._megDl)            return 10;  // Meg — loads slowly
         return 0;
