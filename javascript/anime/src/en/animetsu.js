@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.3",
+    "version": "1.3.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -201,9 +201,7 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    var dlPref = this.getPreference("animetsu_pref_dl_links");
-
-    var streamPromise = Promise.all(
+    var results = await Promise.all(
       combinations.map(async ({ serverName, audioType }) => {
         try {
           if (serverName == "pahe" || serverName == "meg") {
@@ -217,7 +215,6 @@ class DefaultExtension extends MProvider {
             if (!epData.hasOwnProperty("sources")) return [];
             return await this.getKiteStreams(epData, audioType);
           } else if (serverName == "dio" || serverName == "kiss") {
-            // Dio and Kiss use the same URL format as pahe/kite/meg.
             var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
             if (!epData.hasOwnProperty("sources")) return [];
@@ -230,17 +227,7 @@ class DefaultExtension extends MProvider {
       })
     );
 
-    if (!dlPref) {
-      var results = await streamPromise;
-      return results.flat();
-    }
-
-    var [streamResults, dlStreams] = await Promise.all([
-      streamPromise,
-      this.getDownloadStreams(anilistUrl),
-    ]);
-
-    return [...streamResults.flat(), ...dlStreams];
+    return results.flat();
   }
 
   streamNamer(res, dubType, serverName) {
@@ -409,112 +396,6 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  // Resolve a pahe.win shortlink → direct CDN URL via the kwik.cx download form.
-  // kwik removed packer.js obfuscation — CDN URL is only obtainable via POST → 302.
-  // CDN URLs are at vault-NN.owocdn.top/mp4/.../HASH?file=NAME.mp4
-  async resolveKwikDownload(paheWinUrl) {
-    try {
-      var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
-      // Step 1: GET pahe.win → redirects to kwik.cx/f/HASH
-      var paheRes = await this.client.get(paheWinUrl, {
-        "User-Agent": ua,
-        "Referer": "https://animetsu.bz/",
-      });
-      var paheBody = paheRes.body || "";
-
-      // If Mangayomi's client followed the redirect, paheRes.url is the kwik URL
-      var kwikFileUrl = null;
-      if (paheRes.url && paheRes.url.includes("kwik.")) {
-        kwikFileUrl = paheRes.url.replace("/e/", "/f/");
-      }
-      // Otherwise parse the kwik URL from the pahe.win HTML
-      if (!kwikFileUrl) {
-        var kwikMatch = paheBody.match(/["'](https?:\/\/kwik\.[a-z]{2,3}\/[ef]\/[A-Za-z0-9]+)["']/);
-        if (!kwikMatch) return null;
-        kwikFileUrl = kwikMatch[1].replace("/e/", "/f/");
-      }
-
-      // Step 2: GET kwik.cx/f/HASH → extract CSRF token and form action
-      var kwikRes = await this.client.get(kwikFileUrl, {
-        "User-Agent": ua,
-        "Referer": paheWinUrl,
-      });
-      var kwikBody = kwikRes.body || "";
-      if (kwikBody.length < 100) return null;
-
-      var tokenMatch = kwikBody.match(/name=["']_token["'][^>]*value=["']([^"']+)["']/)
-                    || kwikBody.match(/value=["']([^"']{20,})["'][^>]*name=["']_token["']/);
-      if (!tokenMatch) return null;
-
-      var actionMatch = kwikBody.match(/action=["'](https?:\/\/kwik\.[^"']+\/d\/[^"']+)["']/);
-      if (!actionMatch) return null;
-      var dlAction = actionMatch[1];
-
-      // Step 3: POST → server 302s to CDN URL (vault-NN.owocdn.top)
-      var postRes = await this.client.post(
-        dlAction,
-        { "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": ua,
-          "Referer": kwikFileUrl,
-          "Origin": "https://kwik.cx" },
-        "_token=" + encodeURIComponent(tokenMatch[1])
-      );
-
-      // Case 1: redirect NOT followed — Location header holds the CDN URL
-      if (postRes.headers) {
-        var loc = postRes.headers["location"] || postRes.headers["Location"];
-        if (loc && loc.startsWith("http")) return loc;
-      }
-      // Case 2: redirect WAS followed — postRes.url is the CDN URL (not a kwik domain)
-      if (postRes.url && !postRes.url.includes("kwik.") && postRes.url.startsWith("http")) {
-        return postRes.url;
-      }
-      // Case 3: CDN URL may appear as text in the response body
-      if (postRes.body && typeof postRes.body === "string") {
-        var cdnMatch = postRes.body.match(/https?:\/\/[a-z0-9.-]*(?:owocdn|cdn)[^\s"'<>]*/i)
-                    || postRes.body.match(/https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*/i);
-        if (cdnMatch) return cdnMatch[0];
-      }
-
-      return null;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // Fetch the /dl endpoint and resolve all kwik shortlinks to direct MP4 URLs
-  async getDownloadStreams(url) {
-    try {
-      var dlData = await this.request("/dl/" + url);
-      if (!Array.isArray(dlData) || dlData.length === 0) return [];
-
-      var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
-      var streams = await Promise.all(
-        dlData.map(async (item) => {
-          try {
-            if (!item.link) return null;
-            var directUrl = await this.resolveKwikDownload(item.link);
-            if (!directUrl) return null;
-            return {
-              url: directUrl,
-              originalUrl: directUrl,
-              quality: (item.name || "Download") + " [DIRECT DL]",
-              headers: { "User-Agent": ua },
-            };
-          } catch (e) {
-            return null;
-          }
-        })
-      );
-
-      return streams.filter(Boolean);
-    } catch (e) {
-      return [];
-    }
-  }
-
   getFilterList() {
     throw new Error("getFilterList not implemented");
   }
@@ -547,14 +428,6 @@ class DefaultExtension extends MProvider {
           title: "Episode description",
           summary: "",
           value: true,
-        },
-      },
-      {
-        key: "animetsu_pref_dl_links",
-        switchPreferenceCompat: {
-          title: "Fetch direct download links",
-          summary: "Resolve kwik.cx URLs for direct MP4 downloads. WARNING: may delay episode loading by 30–60s if kwik.cx is slow.",
-          value: false,
         },
       },
       {
