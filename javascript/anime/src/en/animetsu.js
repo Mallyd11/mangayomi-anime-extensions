@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -514,8 +514,8 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_dl_links",
         switchPreferenceCompat: {
           title: "Fetch direct download links",
-          summary: "Resolve kwik.cx URLs for direct MP4 downloads (adds extra requests on episode load)",
-          value: true,
+          summary: "Resolve kwik.cx URLs for direct MP4 downloads. WARNING: may delay episode loading by 30–60s if kwik.cx is slow.",
+          value: false,
         },
       },
       {
