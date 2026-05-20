@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.11",
+    "version": "1.5.12",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -158,7 +158,16 @@ class DefaultExtension extends MProvider {
       if (!name) return;
       list.push({
         name: name,
-        link: "/info/" + String(m.id),
+        // "/?id=20954" resolves to the homepage (anidap.se ignores the
+        // query param).  Mangayomi constructs the CF WebView URL as
+        // source.baseUrl + link.  Using "/?id=…" opens the homepage rather
+        // than the anime detail page — the detail page has click-jacking
+        // overlay ads that redirect every tap to an ad site, making it
+        // impossible for the user to close the WebView after the Managed
+        // Challenge auto-resolves.  The homepage is a plain browse page
+        // without those overlays.  CF clearance is domain-wide, so solving
+        // it on the homepage also covers /info/{id}.data requests.
+        link: "/?id=" + String(m.id),
         imageUrl: (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "",
       });
     });
@@ -193,7 +202,16 @@ class DefaultExtension extends MProvider {
       if (!name) return;
       list.push({
         name: name,
-        link: "/info/" + String(m.id),
+        // "/?id=20954" resolves to the homepage (anidap.se ignores the
+        // query param).  Mangayomi constructs the CF WebView URL as
+        // source.baseUrl + link.  Using "/?id=…" opens the homepage rather
+        // than the anime detail page — the detail page has click-jacking
+        // overlay ads that redirect every tap to an ad site, making it
+        // impossible for the user to close the WebView after the Managed
+        // Challenge auto-resolves.  The homepage is a plain browse page
+        // without those overlays.  CF clearance is domain-wide, so solving
+        // it on the homepage also covers /info/{id}.data requests.
+        link: "/?id=" + String(m.id),
         imageUrl: (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || "",
       });
     });
