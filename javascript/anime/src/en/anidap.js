@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.19",
+    "version": "1.5.20",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -473,18 +473,22 @@ class DefaultExtension extends MProvider {
   // ── Video list ─────────────────────────────────────────────────────────────
 
   async getVideoList(url) {
-    // Return cached result if still fresh — avoids the double rate-limit hit
-    // that occurs when Mangayomi calls getVideoList for both playback and download.
-    var _now = Date.now();
-    if (_vlCache[url] && _now - (_vlCacheTs[url] || 0) < VL_CACHE_TTL_MS) {
-      return _vlCache[url];
-    }
-
     // Chapter URL format: "{anilistId}|{epNum}"
     // (older versions embedded the slug as a third segment — still handled below)
     var parts     = url.split("|");
     var anilistId = parts[0] || "";
     var epNum     = parts[1] || "";
+
+    var audioPref = this.getPreference("anidap_audio_pref");
+    var dlMode    = this.getPreference("anidap_download_mode") || "off";
+
+    // Cache key includes dlMode — changing the preference must produce a fresh
+    // stream list (download links vs HLS-only) rather than a stale cached result.
+    var cacheKey = url + "|" + dlMode;
+    var _now = Date.now();
+    if (_vlCache[cacheKey] && _now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
+      return _vlCache[cacheKey];
+    }
 
     if (!anilistId || !epNum) return [];
 
@@ -497,9 +501,6 @@ class DefaultExtension extends MProvider {
     var servers      = await this.chadServers(slug, epNum);
     var subProviders = servers.subProviders || [];
     var dubProviders = servers.dubProviders || [];
-
-    var audioPref = this.getPreference("anidap_audio_pref");
-    var dlMode    = this.getPreference("anidap_download_mode") || "off";
 
     // ── Stream helpers ─────────────────────────────────────────────────────
 
@@ -636,8 +637,8 @@ class DefaultExtension extends MProvider {
     }
 
     // Store in cache before returning so a follow-up download call is free.
-    _vlCache[url]   = streams;
-    _vlCacheTs[url] = Date.now();
+    _vlCache[cacheKey]   = streams;
+    _vlCacheTs[cacheKey] = Date.now();
     return streams;
   }
 
