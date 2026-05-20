@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.18",
+    "version": "1.5.19",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -322,6 +322,21 @@ class DefaultExtension extends MProvider {
     return data;
   }
 
+  // Fetch direct download links from the site's own download button endpoint.
+  // Uses AniList ID directly — no slug, no Cloudflare.
+  // Response shape: { sub: { download: { "Kiwi-Stream-1080p": "https://…", … } }, dub: … | null }
+  async chadDownload(anilistId, epNum) {
+    try {
+      var res = await this.client.get(
+        CHAD + "/download?id=" + anilistId + "&epNum=" + epNum,
+        this.chadHeaders
+      );
+      if (res.statusCode !== 200 || !res.body) return null;
+      var data = JSON.parse(res.body);
+      return (data && !data.error) ? data : null;
+    } catch (e) { return null; }
+  }
+
   // ── URL transformation ─────────────────────────────────────────────────────
   //
   // Derived from anidap.se/assets/api-BgbRfQAC.js transform map:
@@ -484,23 +499,9 @@ class DefaultExtension extends MProvider {
     var dubProviders = servers.dubProviders || [];
 
     var audioPref = this.getPreference("anidap_audio_pref");
+    var dlMode    = this.getPreference("anidap_download_mode") || "off";
 
-    // ── Stream order ───────────────────────────────────────────────────────
-    //
-    // Mangayomi auto-selects the FIRST stream for downloads (no picker shown).
-    // HLS (UWU/MIMI) plays fine but its segments cannot be downloaded by
-    // Mangayomi's download manager.  Mochi is a direct MP4 — one file, no
-    // segments — that the downloader can save, but the player rejects it.
-    //
-    // Download mode:
-    //   OFF → HLS first (normal playback).
-    //   ON  → Mochi first so the downloader auto-selects it.
-    //         Mochi is force-tried even when the servers endpoint doesn't
-    //         list it — the CDN sometimes omits it from the index but still
-    //         serves it via the sources endpoint.  If unavailable the sources
-    //         call returns null and the entry is silently skipped.
-    //         All other providers are also included so the quality picker
-    //         shows every option the user can try manually.
+    // ── Stream helpers ─────────────────────────────────────────────────────
 
     // Return the best non-mochi HLS provider from a list.
     function hlsProvider(list) {
@@ -513,34 +514,9 @@ class DefaultExtension extends MProvider {
       return fallback;
     }
 
-    var dlMode = this.getPreference("anidap_download_mode") || "off";
-
-    // Build stream category list for one audio type.
+    // Build stream category — always picks the best HLS provider.
+    // Downloads are handled separately via the dedicated download endpoint.
     function audioGroup(type, providers) {
-      if (dlMode === "on") {
-        var group = [];
-        // 1. Mochi first — forced attempt even if not in providers list.
-        //    If unavailable the sources API call returns null and it's skipped.
-        var hasMochi = false;
-        for (var _i = 0; _i < providers.length; _i++) {
-          if (providers[_i].id === "mochi") { hasMochi = true; break; }
-        }
-        if (!hasMochi)
-          group.push({ type: type, provider: { id: "mochi", default: false } });
-        for (var _j = 0; _j < providers.length; _j++) {
-          if (providers[_j].id === "mochi")
-            group.push({ type: type, provider: providers[_j] });
-        }
-        // 2. All other providers so the quality picker shows every option.
-        for (var _k = 0; _k < providers.length; _k++) {
-          if (providers[_k].id !== "mochi")
-            group.push({ type: type, provider: providers[_k] });
-        }
-        if (group.length === 0 && providers.length > 0)
-          group.push({ type: type, provider: providers[0] });
-        return group;
-      }
-      // Playback mode: best HLS provider only.
       var g = [];
       var hlsProv = hlsProvider(providers);
       if (hlsProv) g.push({ type: type, provider: hlsProv });
@@ -559,6 +535,47 @@ class DefaultExtension extends MProvider {
 
     var streams = [];
     var seen    = {};
+
+    // ── Download mode: prepend direct download links ────────────────────────
+    //
+    // The site exposes a dedicated download endpoint that returns full video
+    // files (not HLS segments) — the same links used by the site's own
+    // download button.  These are auto-selected by Mangayomi's downloader
+    // because they are first in the list.  HLS streams still follow so the
+    // quality picker shows every available option.
+    if (dlMode === "on") {
+      try {
+        var dlData = await this.chadDownload(anilistId, epNum);
+        if (dlData) {
+          // Respect audio preference — preferred type first.
+          var dlTypes = (audioPref === "dub") ? ["dub", "sub"] : ["sub", "dub"];
+          for (var dti = 0; dti < dlTypes.length; dti++) {
+            var dlAudio     = dlTypes[dti];
+            var dlAudioData = dlData[dlAudio];
+            if (!dlAudioData || !dlAudioData.download) continue;
+            var dlLinks = dlAudioData.download;
+            var dlKeys  = Object.keys(dlLinks);
+            for (var dki = 0; dki < dlKeys.length; dki++) {
+              var dlLabel = dlKeys[dki];      // e.g. "Kiwi-Stream-1080p"
+              var dlUrl   = dlLinks[dlLabel];
+              if (!dlUrl) continue;
+              var dlKey = dlUrl + "|" + dlAudio;
+              if (seen[dlKey]) continue;
+              seen[dlKey] = true;
+              streams.push({
+                url: dlUrl,
+                originalUrl: dlUrl,
+                quality: dlLabel + " [" + dlAudio.toUpperCase() + "] DOWNLOAD",
+                headers: { "User-Agent": this.ua, "Referer": this.getBaseUrl() + "/" },
+                subtitles: [],
+              });
+            }
+          }
+        }
+      } catch (e) { /* download endpoint unavailable — fall through to HLS */ }
+    }
+
+    // ── HLS streams (playback + fallback) ──────────────────────────────────
 
     for (var ci = 0; ci < categories.length; ci++) {
       var cat = categories[ci];
@@ -600,13 +617,7 @@ class DefaultExtension extends MProvider {
 
           srcUrl = this.transformUrl(srcUrl, cat.provider.id);
 
-          // Mochi reports quality "auto"/"default" — label it "MP4" so
-          // the user can identify it as a downloadable file in the picker.
-          var rawQ   = (src.quality || "").toLowerCase();
-          var isMochi = cat.provider.id === "mochi";
-          var qLabel  = (isMochi && (rawQ === "auto" || rawQ === "default" || rawQ === ""))
-            ? "MP4" : (src.quality || "Auto");
-          var quality = qLabel +
+          var quality = (src.quality || "Auto") +
             " [" + cat.type.toUpperCase() + "] " +
             cat.provider.id.toUpperCase();
           var key = srcUrl + "|" + cat.type;
@@ -670,9 +681,9 @@ class DefaultExtension extends MProvider {
         key: "anidap_download_mode",
         listPreference: {
           title: "Download mode",
-          summary: "OFF: HLS first — tap an episode to play normally. ON: MP4 (Mochi) first — tap download to save the file. Switch back to OFF after downloading.",
+          summary: "OFF: normal playback (HLS). ON: direct download links appear first — Mangayomi auto-selects one when you tap the download button. Switch back to OFF to resume normal playback.",
           valueIndex: 0,
-          entries: ["OFF — Playback (HLS first)", "ON — Download (MP4 first)"],
+          entries: ["OFF — Playback", "ON — Download"],
           entryValues: ["off", "on"],
         },
       },
