@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "javascript/**"
+      - "anime_index.json"
+      - "scripts/anime_metadata.json"
   workflow_dispatch: # Allows manual triggering
 
 jobs:
