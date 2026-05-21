@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -52,7 +52,7 @@ class DefaultExtension extends MProvider {
       var card = cards[i];
       var href = card.attr("href") || "";
       if (!href) continue;
-      var link = href.startsWith("http") ? href : this.source.baseUrl + href;
+      var link = href.indexOf("http") === 0 ? href : this.source.baseUrl + href;
 
       var titleEl = card.selectFirst(".anime-card-title");
       var name = titleEl ? (titleEl.text || "").trim() : "";
@@ -165,7 +165,7 @@ class DefaultExtension extends MProvider {
         name: label,
         url: animeId + "||" + epNum,
         imageUrl: "",
-        scanlator: ep.hasClass("is-filler") ? "Filler" : "",
+        scanlator: (ep.attr("class") || "").indexOf("is-filler") >= 0 ? "Filler" : "",
       });
     }
 
