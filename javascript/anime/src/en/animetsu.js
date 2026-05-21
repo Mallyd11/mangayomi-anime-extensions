@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.4",
+    "version": "1.3.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -157,6 +157,10 @@ class DefaultExtension extends MProvider {
     var epData = await this.request(epSlug);
 
     var epDescPref = this.getPreference("animetsu_pref_ep_description");
+    // Episode thumbnails are served via the swiftstream proxy.
+    // The /eps/ API returns a relative img path; prepending the proxy base
+    // and sending the Referer header is required for the proxy to serve it.
+    var imgProxy = "https://swiftstream.top/proxy";
     epData.forEach((item) => {
       var ep_num = item.ep_num;
       var ep_title = item.name;
@@ -168,6 +172,7 @@ class DefaultExtension extends MProvider {
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
         : null;
+      var thumbnailUrl = item.img ? imgProxy + item.img : null;
 
       chapters.push({
         name: epName,
@@ -175,6 +180,7 @@ class DefaultExtension extends MProvider {
         isFiller,
         description: epDescription,
         dateUpload: dateUpload,
+        thumbnailUrl: thumbnailUrl,
       });
     });
 
