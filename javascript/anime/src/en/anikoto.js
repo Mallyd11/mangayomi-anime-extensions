@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -254,12 +254,28 @@ class DefaultExtension extends MProvider {
               );
               var alJson = JSON.parse(alRes.body);
               var streamEps = (alJson.data && alJson.data.Media && alJson.data.Media.streamingEpisodes) || [];
+              // Collect {num, thumb} pairs first so we can compute the episode offset.
+              // AniList uses absolute numbering across seasons (S2 ep 1 = "Episode 13"),
+              // while the site uses season-relative numbering (ep 1). We subtract
+              // (minNum - 1) so the lowest AniList episode maps to site episode 1.
+              var parsedEps = [];
               for (var se = 0; se < streamEps.length; se++) {
                 var seThumb = streamEps[se].thumbnail || "";
                 if (!seThumb) continue;
                 // Title is usually "Episode 5 - Name" or "Episode 5"
                 var seNum = (streamEps[se].title || "").match(/Episode\s+([\d.]+)/i);
-                if (seNum) thumbMap[seNum[1]] = seThumb;
+                if (seNum) parsedEps.push({ num: parseFloat(seNum[1]), thumb: seThumb });
+              }
+              if (parsedEps.length > 0) {
+                var minNum = parsedEps[0].num;
+                for (var pe = 1; pe < parsedEps.length; pe++) {
+                  if (parsedEps[pe].num < minNum) minNum = parsedEps[pe].num;
+                }
+                var epOffset = minNum - 1; // 0 for S1, 12 for S2 starting at ep 13, etc.
+                for (var pe = 0; pe < parsedEps.length; pe++) {
+                  var siteNum = parsedEps[pe].num - epOffset;
+                  thumbMap[String(Math.floor(siteNum))] = parsedEps[pe].thumb;
+                }
               }
             } catch (e) {}
           }
