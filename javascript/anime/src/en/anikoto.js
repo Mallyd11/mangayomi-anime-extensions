@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -438,8 +438,8 @@ class DefaultExtension extends MProvider {
       { key: "Kiwi-Stream-360p",  label: "360p"  },
     ];
 
-    var pref = "sub";
-    try { pref = new SharedPreferences().get("anikoto_pref_audio") || "sub"; } catch (e) {}
+    var pref = "sub_dub";
+    try { pref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
 
     var subStreams = [];
     var dubStreams = [];
@@ -464,7 +464,13 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    return pref === "dub" ? dubStreams.concat(subStreams) : subStreams.concat(dubStreams);
+    // Return streams in preferred order.
+    // When both are included (sub_dub / dub_sub) the first group plays and
+    // the second acts as an automatic fallback if the player can't load the first.
+    if (pref === "dub_sub") return dubStreams.concat(subStreams);
+    if (pref === "sub")     return subStreams;
+    if (pref === "dub")     return dubStreams;
+    return subStreams.concat(dubStreams); // default: sub_dub
   }
 
   getFilterList() {
@@ -477,10 +483,15 @@ class DefaultExtension extends MProvider {
         key: "anikoto_pref_audio",
         listPreference: {
           title: "Preferred audio",
-          summary: "Which audio track appears first for streaming and downloads",
+          summary: "Choose playback order. When both tracks are selected the first plays automatically; the second is available as a fallback.",
           valueIndex: 0,
-          entries: ["Sub", "Dub"],
-          entryValues: ["sub", "dub"],
+          entries: [
+            "Sub then Dub (Sub plays, Dub as backup)",
+            "Dub then Sub (Dub plays, Sub as backup)",
+            "Sub only",
+            "Dub only",
+          ],
+          entryValues: ["sub_dub", "dub_sub", "sub", "dub"],
         },
       },
     ];
