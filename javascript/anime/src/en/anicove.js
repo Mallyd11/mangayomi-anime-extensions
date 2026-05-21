@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -22,13 +22,6 @@ const mangayomiSources = [
     "notes": "",
   },
 ];
-
-// AniCove is a Flask-based anime streaming frontend that uses AniList IDs as its
-// primary anime identifiers. Listings and search are served directly from the AniList
-// GraphQL API (the same backend the site uses). Episode lists are server-side rendered
-// into the watch page sidebar. Video URLs come from the Miruro API (private) but are
-// embedded in the page HTML inside window.WATCH_CONFIG after the server fetches them,
-// so no private API key is needed by this extension.
 
 class DefaultExtension extends MProvider {
   constructor() {
@@ -47,29 +40,30 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Post a query to the AniList GraphQL endpoint.
-  async anilistQuery(query, variables) {
-    var res = await this.client.post(
-      "https://graphql.anilist.co",
-      {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": this.ua,
-      },
-      JSON.stringify({ query: query, variables: variables })
-    );
-    return JSON.parse(res.body);
-  }
+  // Parse anime cards from any page that uses the site's standard grid layout:
+  //   <a class="anime-card" href="/anime/{id}">
+  //     <div class="anime-card-poster"><img src="..."></div>
+  //     <div class="anime-card-info"><h3 class="anime-card-title">...</h3></div>
+  //   </a>
+  parseCards(doc) {
+    var cards = doc.select("a.anime-card");
+    var list = [];
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var href = card.attr("href") || "";
+      if (!href) continue;
+      var link = href.startsWith("http") ? href : this.source.baseUrl + href;
 
-  // Convert an AniList Media object to the Mangayomi list-item shape.
-  mapMedia(m) {
-    var title = (m.title && (m.title.english || m.title.romaji)) || "";
-    var image = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
-    return {
-      name: title,
-      imageUrl: image,
-      link: this.source.baseUrl + "/anime/" + m.id,
-    };
+      var titleEl = card.selectFirst(".anime-card-title");
+      var name = titleEl ? (titleEl.text || "").trim() : "";
+      if (!name) continue;
+
+      var img = card.selectFirst("img");
+      var imageUrl = img ? (img.attr("src") || img.attr("data-src") || "") : "";
+
+      list.push({ name: name, imageUrl: imageUrl, link: link });
+    }
+    return list;
   }
 
   get supportsLatest() {
@@ -77,57 +71,24 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var data = await this.anilistQuery(
-      `query ($page: Int, $perPage: Int) {
-        Page(page: $page, perPage: $perPage) {
-          pageInfo { hasNextPage }
-          media(type: ANIME, sort: TRENDING_DESC, isAdult: false) {
-            id
-            title { romaji english }
-            coverImage { extraLarge large }
-          }
-        }
-      }`,
-      { page: page, perPage: 24 }
-    );
-    var p = data.data.Page;
-    return { list: p.media.map(m => this.mapMedia(m)), hasNextPage: p.pageInfo.hasNextPage };
+    var res = await this.client.get(this.source.baseUrl + "/category/trending", this.headers);
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   async getLatestUpdates(page) {
-    var data = await this.anilistQuery(
-      `query ($page: Int, $perPage: Int) {
-        Page(page: $page, perPage: $perPage) {
-          pageInfo { hasNextPage }
-          media(type: ANIME, sort: UPDATED_AT_DESC, status: RELEASING, isAdult: false) {
-            id
-            title { romaji english }
-            coverImage { extraLarge large }
-          }
-        }
-      }`,
-      { page: page, perPage: 24 }
-    );
-    var p = data.data.Page;
-    return { list: p.media.map(m => this.mapMedia(m)), hasNextPage: p.pageInfo.hasNextPage };
+    var res = await this.client.get(this.source.baseUrl + "/category/recently-updated", this.headers);
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   async search(query, page, filters) {
-    var data = await this.anilistQuery(
-      `query ($search: String, $page: Int, $perPage: Int) {
-        Page(page: $page, perPage: $perPage) {
-          pageInfo { hasNextPage }
-          media(type: ANIME, search: $search, sort: SEARCH_MATCH, isAdult: false) {
-            id
-            title { romaji english }
-            coverImage { extraLarge large }
-          }
-        }
-      }`,
-      { search: query, page: page, perPage: 24 }
+    var res = await this.client.get(
+      this.source.baseUrl + "/search?q=" + encodeURIComponent(query),
+      this.headers
     );
-    var p = data.data.Page;
-    return { list: p.media.map(m => this.mapMedia(m)), hasNextPage: p.pageInfo.hasNextPage };
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   statusCode(s) {
@@ -151,30 +112,37 @@ class DefaultExtension extends MProvider {
     var animeId = this.extractAnimeId(url);
     if (!animeId) throw new Error("Cannot parse anime ID from: " + url);
 
-    // Fetch anime metadata from AniList GraphQL.
-    var infoJson = await this.anilistQuery(
-      `query ($id: Int) {
-        Media(id: $id, type: ANIME) {
-          id
-          title { romaji english native }
-          coverImage { extraLarge large }
-          description(asHtml: false)
-          genres
-          status
-          episodes
-          nextAiringEpisode { episode }
-        }
-      }`,
-      { id: parseInt(animeId) }
-    );
+    // Fetch anime metadata from AniList using a plain concatenated string (no template literals).
+    var alQuery = "query ($id: Int) { Media(id: $id, type: ANIME) {"
+      + " id title { romaji english native }"
+      + " coverImage { extraLarge large }"
+      + " description(asHtml: false)"
+      + " genres status episodes"
+      + " nextAiringEpisode { episode }"
+      + " } }";
 
-    // Fetch the watch page — the episode list is server-side rendered in the sidebar.
+    var media = null;
+    try {
+      var alRes = await this.client.post(
+        "https://graphql.anilist.co",
+        {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "User-Agent": this.ua,
+        },
+        JSON.stringify({ query: alQuery, variables: { id: parseInt(animeId) } })
+      );
+      var alJson = JSON.parse(alRes.body);
+      if (alJson && alJson.data && alJson.data.Media) {
+        media = alJson.data.Media;
+      }
+    } catch (e) {}
+
+    // Fetch the watch page — episode list is server-side rendered in the sidebar.
     var watchRes = await this.client.get(
       this.source.baseUrl + "/watch/" + animeId + "/ep-1",
       this.headers
     );
-
-    var media = infoJson.data && infoJson.data.Media;
     var html = (watchRes && watchRes.body) || "";
     var doc = new Document(html);
 
@@ -188,7 +156,6 @@ class DefaultExtension extends MProvider {
 
       var titleEl = ep.selectFirst(".episode-title");
       var rawTitle = titleEl ? (titleEl.text || "").trim() : "";
-      // Remove the "Filler" badge text that may be concatenated into the title
       var epTitle = rawTitle.replace(/\s*Filler\s*$/i, "").trim();
 
       var label = "Episode " + epNum;
@@ -202,7 +169,7 @@ class DefaultExtension extends MProvider {
       });
     }
 
-    // Fallback: if the sidebar is empty, synthesise episodes from the AniList total.
+    // Fallback: synthesise episode list from the AniList total if sidebar was empty.
     if (chapters.length === 0 && media) {
       var total = media.episodes || 0;
       if (media.nextAiringEpisode && media.nextAiringEpisode.episode) {
@@ -221,6 +188,16 @@ class DefaultExtension extends MProvider {
     var description = media ? (media.description || "") : "";
     var genre = media ? (media.genres || []) : [];
     var status = media ? this.statusCode(media.status) : 5;
+
+    // If AniList failed, try to extract name/image from the watch page HTML.
+    if (!name) {
+      var og = doc.selectFirst("meta[property='og:title']");
+      if (og) name = (og.attr("content") || "").trim();
+    }
+    if (!imageUrl) {
+      var ogImg = doc.selectFirst("meta[property='og:image']");
+      if (ogImg) imageUrl = ogImg.attr("content") || "";
+    }
 
     return {
       name: name,
@@ -244,7 +221,7 @@ class DefaultExtension extends MProvider {
     try { lang = new SharedPreferences().get("anicove_lang") || "sub"; } catch (e) {}
 
     // Fetch the watch page. The server fetches video sources from its private Miruro
-    // API and embeds the resulting URL in window.WATCH_CONFIG — no API key needed here.
+    // API and embeds the resulting URL in window.WATCH_CONFIG.
     var watchHeaders = {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
@@ -257,9 +234,9 @@ class DefaultExtension extends MProvider {
     var html = (res && res.body) || "";
 
     // Extract fields from window.WATCH_CONFIG in the inline <script> block.
-    // videoLink is a single-quoted JS string: videoLink: 'https://...',
-    // sourceType is also single-quoted:         sourceType: 'hls',
-    // downloadUrl uses tojson so it is double-quoted: downloadUrl: "https://...",
+    // videoLink:   videoLink: 'https://...',   (single-quoted Jinja string)
+    // sourceType:  sourceType: 'hls',           (single-quoted Jinja string)
+    // downloadUrl: downloadUrl: "https://...",  (tojson double-quoted)
     var videoLinkM = html.match(/videoLink:\s*'([^']*)'/);
     var sourceTypeM = html.match(/sourceType:\s*'([^']*)'/);
     var downloadUrlM = html.match(/downloadUrl:\s*"((?:[^"\\]|\\.)*)"/);
@@ -282,7 +259,6 @@ class DefaultExtension extends MProvider {
         subtitles: [],
       });
     } else {
-      // Embed sources (e.g. Megaplay) — pass as-is for the in-app webview player.
       streams.push({
         url: videoLink,
         originalUrl: videoLink,
@@ -292,7 +268,6 @@ class DefaultExtension extends MProvider {
       });
     }
 
-    // Include the download link as an additional quality option when present.
     if (downloadUrl && downloadUrl !== videoLink) {
       streams.push({
         url: downloadUrl,
