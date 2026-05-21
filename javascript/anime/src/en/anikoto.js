@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -227,6 +227,41 @@ class DefaultExtension extends MProvider {
         if (epData && epData.status === 200 && epData.result) {
           var epDoc = new Document(epData.result);
           var epEls = epDoc.select("a[data-num][data-mal][data-timestamp]");
+
+          // Grab the MAL ID from the first episode (same for all episodes of an anime).
+          var animeMALId = epEls.length > 0 ? (epEls[0].attr("data-mal") || "") : "";
+
+          // Fetch episode thumbnails from AniList streamingEpisodes (one GraphQL call).
+          // Thumbnails come from Crunchyroll/streaming platforms — not always complete,
+          // but usually covers all episodes for currently-airing / recent anime.
+          var thumbMap = {}; // epNum (string) → thumbnail URL
+          if (animeMALId) {
+            try {
+              var alRes = await this.client.post(
+                "https://graphql.anilist.co",
+                {
+                  "Content-Type": "application/json",
+                  "Accept": "application/json",
+                  "User-Agent": this.ua,
+                },
+                JSON.stringify({
+                  query: "query($id:Int){Media(idMal:$id,type:ANIME){streamingEpisodes{title thumbnail}}}",
+                  variables: { id: parseInt(animeMALId) },
+                })
+              );
+              var alJson = JSON.parse(alRes.body);
+              var streamEps = (alJson.data && alJson.data.Media && alJson.data.Media.streamingEpisodes) || [];
+              for (var se = 0; se < streamEps.length; se++) {
+                var seThumb = streamEps[se].thumbnail || "";
+                if (!seThumb) continue;
+                // Title is usually "Episode 5 - Name" or "Episode 5"
+                var seNum = (streamEps[se].title || "").match(/Episode\s+([\d.]+)/i);
+                if (seNum) thumbMap[seNum[1]] = seThumb;
+              }
+            } catch (e) {}
+          }
+
+          // Build chapter list with thumbnails, dates, and sub/dub badge.
           for (var j = 0; j < epEls.length; j++) {
             var ep = epEls[j];
             var epNum = ep.attr("data-num") || "";
@@ -234,19 +269,26 @@ class DefaultExtension extends MProvider {
             var timestamp = ep.attr("data-timestamp") || "";
             if (!epNum || !malId || !timestamp) continue;
 
-            // Episode label: number + title text
+            // Episode label: number + English title from the site
             var rawText = (ep.text || "").trim().replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ");
             var titlePart = rawText.replace(new RegExp("^" + epNum + "\\s*"), "").trim();
             var label = "Episode " + epNum;
             if (titlePart) label += ": " + titlePart;
 
-            // Chapter URL encodes all info needed for getVideoList
+            // Sub/Dub availability badge shown as scanlator
+            var hasSub = ep.attr("data-sub") === "1";
+            var hasDub = ep.attr("data-dub") === "1";
+            var badge = hasSub && hasDub ? "Sub · Dub" : hasSub ? "Sub" : hasDub ? "Dub" : "";
+
             chapters.push({
               name: label,
               url: slug + "||" + epNum + "||" + malId + "||" + timestamp,
+              imageUrl: thumbMap[epNum] || "",
+              dateUpload: parseInt(timestamp) * 1000,
+              scanlator: badge,
             });
           }
-          // Reverse so newest episode is at the top
+          // Reverse so newest episode is at the top (Mangayomi convention)
           chapters.reverse();
         }
       }
