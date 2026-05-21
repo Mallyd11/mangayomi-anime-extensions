@@ -154,13 +154,33 @@ class DefaultExtension extends MProvider {
 
     var chapters = [];
     var epSlug = "/eps/" + id;
-    var epData = await this.request(epSlug);
+
+    // Episode thumbnails via ani.zip (sourced from Crunchyroll / TVDB).
+    // Animetsu's info response mirrors the AniList GraphQL schema — body.id is
+    // the numeric AniList ID when it comes back as a number rather than a
+    // MongoDB ObjectID string.
+    var anilistId = body.anilist_id || (typeof body.id === "number" ? body.id : null);
+    var [epData, thumbMap] = await Promise.all([
+      this.request(epSlug),
+      anilistId
+        ? this.client
+            .get("https://api.ani.zip/mappings?anilist_id=" + anilistId, {})
+            .then((r) => {
+              if (r.statusCode != 200) return {};
+              var z = JSON.parse(r.body);
+              var m = {};
+              if (z.episodes) {
+                Object.keys(z.episodes).forEach((k) => {
+                  if (z.episodes[k].image) m[k] = z.episodes[k].image;
+                });
+              }
+              return m;
+            })
+            .catch(() => ({}))
+        : Promise.resolve({}),
+    ]);
 
     var epDescPref = this.getPreference("animetsu_pref_ep_description");
-    // Episode thumbnails are served via the swiftstream proxy.
-    // The /eps/ API returns a relative img path; prepending the proxy base
-    // and sending the Referer header is required for the proxy to serve it.
-    var imgProxy = "https://swiftstream.top/proxy";
     epData.forEach((item) => {
       var ep_num = item.ep_num;
       var ep_title = item.name;
@@ -172,7 +192,8 @@ class DefaultExtension extends MProvider {
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
         : null;
-      var thumbnailUrl = item.img ? imgProxy + item.img : null;
+      // ani.zip (Crunchyroll/TVDB) thumbnails as primary; Animetsu's own img as fallback.
+      var imageUrl = thumbMap[ep_num.toString()] || (item.img ? "https://swiftstream.top/proxy" + item.img : null);
 
       chapters.push({
         name: epName,
@@ -180,7 +201,7 @@ class DefaultExtension extends MProvider {
         isFiller,
         description: epDescription,
         dateUpload: dateUpload,
-        thumbnailUrl: thumbnailUrl,
+        imageUrl,
       });
     });
 
