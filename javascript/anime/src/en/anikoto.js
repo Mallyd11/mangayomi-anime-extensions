@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -121,8 +121,9 @@ class DefaultExtension extends MProvider {
     var slug = this.extractSlug(url);
     if (!slug) throw new Error("Could not parse slug from: " + url);
 
-    // The watch/ep-1 page contains the full episode list with per-episode data attributes.
-    var watchUrl = this.source.baseUrl + "/watch/" + slug + "/ep-1";
+    // Fetch the watch page for metadata (title, image, description, genres, status).
+    // The episode list is NOT in the initial HTML — it's loaded via a separate AJAX call.
+    var watchUrl = this.source.baseUrl + "/watch/" + slug;
     var res = await this.client.get(watchUrl, this.headers);
     var html = res.body || "";
     var doc = new Document(html);
@@ -174,48 +175,82 @@ class DefaultExtension extends MProvider {
     for (var i = 0; i < metaSpans.length; i++) {
       var t = (metaSpans[i].text || "").trim();
       if (!t) continue;
-      // Status detection
       if (status === 5) {
         var code = this.statusCode(t);
         if (code !== 5) status = code;
       }
-      // Genre detection: span contains commas (e.g. "Action  ,  Adventure  ,  Fantasy")
+      // Genre span has commas: "Action  ,  Adventure  ,  Fantasy"
       if (t.indexOf(",") >= 0 && genre.length === 0) {
-        var parts = t.split(",");
+        var gParts = t.split(",");
         var cleaned = [];
-        for (var p = 0; p < parts.length; p++) {
-          var g = parts[p].trim();
+        for (var p = 0; p < gParts.length; p++) {
+          var g = gParts[p].trim();
           if (g && g.length > 1 && g.length < 40) cleaned.push(g);
         }
         if (cleaned.length > 1) genre = cleaned;
       }
     }
 
-    // Episodes: <a data-num="1" data-mal="58567" data-timestamp="1756930266" data-sub="1" data-dub="1">
-    // Located inside #w-episodes. Chapter URL format: {slug}||{epNum}||{malId}||{timestamp}
-    var chapters = [];
-    var epEls = doc.select("a[data-num][data-mal][data-timestamp]");
-    for (var j = 0; j < epEls.length; j++) {
-      var ep = epEls[j];
-      var epNum = ep.attr("data-num") || "";
-      var malId = ep.attr("data-mal") || "";
-      var timestamp = ep.attr("data-timestamp") || "";
-      if (!epNum || !malId || !timestamp) continue;
-
-      // Episode label: combine number with title text from the link
-      var rawText = (ep.text || "").trim().replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ");
-      // Remove leading episode number from text if present
-      var titlePart = rawText.replace(new RegExp("^" + epNum + "\\s*"), "").trim();
-      var label = "Episode " + epNum;
-      if (titlePart) label += ": " + titlePart;
-
-      chapters.push({
-        name: label,
-        url: slug + "||" + epNum + "||" + malId + "||" + timestamp,
-      });
+    // Extract the internal anime ID from #watch-main data-id="7457"
+    // This is present in the static HTML and is needed for the AJAX episode list call.
+    var animeId = "";
+    var watchMain = doc.selectFirst("#watch-main");
+    if (watchMain) animeId = watchMain.attr("data-id") || "";
+    if (!animeId) {
+      // Regex fallback
+      var idMatch = html.match(/id="watch-main"[^>]*data-id="(\d+)"/);
+      if (!idMatch) idMatch = html.match(/data-id="(\d+)"[^>]*id="watch-main"/);
+      if (idMatch) animeId = idMatch[1];
     }
-    // Reverse so the newest episode is at the top (Mangayomi convention)
-    chapters.reverse();
+
+    // Fetch the episode list from the AJAX endpoint.
+    // Returns JSON: { status: 200, result: "<a data-num data-mal data-timestamp ...>...</a>..." }
+    var chapters = [];
+    if (animeId) {
+      var epRes;
+      try {
+        epRes = await this.client.get(
+          this.source.baseUrl + "/ajax/episode/list/" + animeId + "?vrf=",
+          {
+            "User-Agent": this.ua,
+            "Referer": watchUrl + "/",
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+          }
+        );
+      } catch (e) {}
+
+      if (epRes && epRes.body) {
+        var epData;
+        try { epData = JSON.parse(epRes.body); } catch (e) {}
+
+        if (epData && epData.status === 200 && epData.result) {
+          var epDoc = new Document(epData.result);
+          var epEls = epDoc.select("a[data-num][data-mal][data-timestamp]");
+          for (var j = 0; j < epEls.length; j++) {
+            var ep = epEls[j];
+            var epNum = ep.attr("data-num") || "";
+            var malId = ep.attr("data-mal") || "";
+            var timestamp = ep.attr("data-timestamp") || "";
+            if (!epNum || !malId || !timestamp) continue;
+
+            // Episode label: number + title text
+            var rawText = (ep.text || "").trim().replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ");
+            var titlePart = rawText.replace(new RegExp("^" + epNum + "\\s*"), "").trim();
+            var label = "Episode " + epNum;
+            if (titlePart) label += ": " + titlePart;
+
+            // Chapter URL encodes all info needed for getVideoList
+            chapters.push({
+              name: label,
+              url: slug + "||" + epNum + "||" + malId + "||" + timestamp,
+            });
+          }
+          // Reverse so newest episode is at the top
+          chapters.reverse();
+        }
+      }
+    }
 
     return {
       name: name,
