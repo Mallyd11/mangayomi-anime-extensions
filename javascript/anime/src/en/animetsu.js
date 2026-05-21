@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.6",
+    "version": "1.3.7",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -193,7 +193,7 @@ class DefaultExtension extends MProvider {
         ? new Date(item.aired_at).valueOf().toString()
         : null;
       // ani.zip (Crunchyroll/TVDB) thumbnails as primary; Animetsu's own img as fallback.
-      var imageUrl = thumbMap[ep_num.toString()] || (item.img ? "https://swiftstream.top/proxy" + item.img : null);
+      var thumbnailUrl = thumbMap[ep_num.toString()] || (item.img ? "https://swiftstream.top/proxy" + item.img : null);
 
       chapters.push({
         name: epName,
@@ -201,7 +201,7 @@ class DefaultExtension extends MProvider {
         isFiller,
         description: epDescription,
         dateUpload: dateUpload,
-        imageUrl,
+        thumbnailUrl,
       });
     });
 
