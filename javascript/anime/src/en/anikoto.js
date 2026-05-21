@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -46,9 +46,9 @@ class DefaultExtension extends MProvider {
     return new Document(res.body || "");
   }
 
-  // Parse anime card grids from /filter pages.
-  // Cards: <div class="item"><div class="inner"><div class="ani poster"><a href="..."><img src="..."></a></div>
-  //        <div class="info"><a class="name d-title" href="..." data-jp="...">Title</a></div></div></div>
+  // Parse anime card grids from /filter and /most-viewed pages.
+  // /filter:      <div class="item"> … <a class="name d-title" href="…" data-jp="…">
+  // /most-viewed: <a class="item" href="…"> … <div class="name d-title" data-jp="…">
   parseList(doc) {
     var list = [];
     var items = doc.select("#list-items .item");
@@ -57,11 +57,14 @@ class DefaultExtension extends MProvider {
       var item = items[i];
       var nameEl = item.selectFirst(".name");
       if (!nameEl) continue;
+      // href may be on the .name anchor (filter pages), an inner poster anchor,
+      // or on the .item element itself (most-viewed page where .item IS the <a>).
       var href = nameEl.attr("href") || "";
       if (!href) {
         var pa = item.selectFirst(".ani a, .poster a");
         if (pa) href = pa.attr("href") || "";
       }
+      if (!href) href = item.attr("href") || ""; // most-viewed: item is the <a>
       if (!href) continue;
       var link = href.startsWith("http") ? href : this.source.baseUrl + href;
       var name = (nameEl.attr("data-jp") || nameEl.text || "").trim();
@@ -86,7 +89,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var doc = await this.fetchDoc("/filter?sort=score&page=" + page);
+    var doc = await this.fetchDoc("/most-viewed?page=" + page);
     return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
   }
 
@@ -284,7 +287,6 @@ class DefaultExtension extends MProvider {
               name: label,
               url: slug + "||" + epNum + "||" + malId + "||" + timestamp,
               imageUrl: thumbMap[epNum] || "",
-              dateUpload: parseInt(timestamp) * 1000,
               scanlator: badge,
             });
           }
