@@ -73,28 +73,47 @@ def generateExtensionList():
     )
 
     data = readJsonFile(scripts_dir / "versions.json")
+    metadata_path = scripts_dir / "anime_metadata.json"
+    anime_metadata = readJsonFile(metadata_path) if metadata_path.exists() else {}
+
+    today = datetime.now(tz).strftime("%Y/%m/%d")
+
     for category, items in data.items():
         catData = data[category]
         if len(catData) < 1:
             continue
         lines.append(f"## {category.title()}\n")
-        lines.append("| Name | Version | Language | Last Updated |")
-        lines.append("|------|---------|----------|---------------|")
-        for item in items:
-            item = catData[item]
-            lastUpd = datetime.fromtimestamp(item["lastUpd"], tz).strftime(
-                "%Y/%m/%d %H:%M IST"
-            )
-            lines.append(
-                f"| {item['name']} | {item['version']} | {item['langs']} | {lastUpd} |"
-            )
-        lines.append("")  # Add blank line between sections
+
+        if category == "anime":
+            lines.append("| Name | Version | Downloads | Sub/Dub | Last Updated |")
+            lines.append("|------|---------|-----------|---------|--------------|")
+            for item_name in sorted(items):
+                item = catData[item_name]
+                lastUpd = datetime.fromtimestamp(item["lastUpd"], tz).strftime("%Y/%m/%d")
+                meta = anime_metadata.get(item_name, {})
+                downloads = meta.get("downloads", "?")
+                subdub = meta.get("subDub", "?")
+                lines.append(
+                    f"| {item['name']} | {item['version']} | {downloads} | {subdub} | {lastUpd} |"
+                )
+        else:
+            lines.append("| Name | Version | Language | Last Updated |")
+            lines.append("|------|---------|----------|---------------|")
+            for item_name in items:
+                item = catData[item_name]
+                lastUpd = datetime.fromtimestamp(item["lastUpd"], tz).strftime("%Y/%m/%d")
+                lines.append(
+                    f"| {item['name']} | {item['version']} | {item['langs']} | {lastUpd} |"
+                )
+
+        lines.append("")
 
     lines.append("</details>")
     print("DONE: Table")
     return "\n".join(lines)
 
-shutil.copy(scripts_dir / "versions.json",scripts_dir / "prev_versions.json")
+
+shutil.copy(scripts_dir / "versions.json", scripts_dir / "prev_versions.json")
 generateVersionData()
 extTable = generateExtensionList()
 temp = readFile(scripts_dir / "README-temp.md")
