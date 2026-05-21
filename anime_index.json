@@ -159,7 +159,7 @@
         "baseUrl": "https://myronix.strangled.net",
         "lang": "en",
         "typeSource": "single",
-        "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
+        "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
         "dateFormat": "",
         "dateFormatLocale": "",
         "isNsfw": false,

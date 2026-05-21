@@ -8,11 +8,16 @@ This repository contains the available javascript extension catalogues for the M
 
 ## Anime
 
-| Name | Version | Language | Last Updated |
-|------|---------|----------|---------------|
-| Animetsu | 1.0.2 | all | 2026/04/22 |
-| AnimeParadise | 0.2.0 | en | 2026/04/23 |
-| AnimeKai | 1.0.0 | en | 2026/04/24 |
+| Name | Version | Last Updated |
+|------|---------|--------------|
+| Anidap | 1.5.21 | 2026/05/21 |
+| AnimeHeaven | 0.0.6 | 2026/05/21 |
+| AnimeParadise | 0.3.0 | 2026/05/21 |
+| AnimeTsu | 1.3.4 | 2026/05/21 |
+| Hianime | 0.1.3 | 2026/05/21 |
+| JustAnime | 0.0.9 | 2026/05/21 |
+| Myron | 0.1.2 | 2026/05/21 |
+| Anikototv | 0.1.5 | 2026/05/21 |
 
 </details>
 
