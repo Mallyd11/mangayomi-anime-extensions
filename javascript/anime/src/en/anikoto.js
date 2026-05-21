@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -288,27 +288,32 @@ class DefaultExtension extends MProvider {
   }
 
   // Extract the m3u8/mp4 stream URL from a kwik.cx embed page HTML.
+  // The page contains multiple eval packers (e.g. a cookie helper first, then the
+  // video player). We iterate through ALL of them and return the first URL found.
   _extractKwikStreamUrl(html) {
-    // Find and decode the eval packer
-    var packerIdx = html.indexOf("eval(function(p,a,c,k,e,");
-    if (packerIdx < 0) return null;
-    var packerSection = html.substring(packerIdx, packerIdx + 30000);
+    var searchFrom = 0;
+    var marker = "eval(function(p,a,c,k,e,";
+    while (true) {
+      var packerIdx = html.indexOf(marker, searchFrom);
+      if (packerIdx < 0) break;
+      searchFrom = packerIdx + 1; // advance so the next loop iteration skips this one
 
-    var decoded = this._unpackPacker(packerSection);
-    if (!decoded) return null;
+      var packerSection = html.substring(packerIdx, packerIdx + 30000);
+      var decoded = this._unpackPacker(packerSection);
+      if (!decoded) continue;
 
-    // Look for m3u8 URL
-    var urlM = decoded.match(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/);
-    if (urlM) return urlM[0];
+      // Look for m3u8 URL (vault-*.owocdn.top/…/uwu.m3u8)
+      var urlM = decoded.match(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/);
+      if (urlM) return urlM[0];
 
-    // Look for mp4 URL
-    urlM = decoded.match(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/);
-    if (urlM) return urlM[0];
+      // Look for mp4 URL
+      urlM = decoded.match(/https?:\/\/[^\s"'\\]+\.mp4[^\s"'\\]*/);
+      if (urlM) return urlM[0];
 
-    // Generic source= or file: pattern
-    var srcM = decoded.match(/(?:source|file)\s*[:=]\s*["']([^"']+)["']/);
-    if (srcM) return srcM[1];
-
+      // Generic source/file pattern
+      var srcM = decoded.match(/(?:source|file)\s*[:=]\s*["']([^"']+)["']/);
+      if (srcM) return srcM[1];
+    }
     return null;
   }
 
