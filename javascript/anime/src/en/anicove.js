@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -33,62 +33,90 @@ class DefaultExtension extends MProvider {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
   }
 
-  get headers() {
-    return {
-      "User-Agent": this.ua,
-      "Referer": this.source.baseUrl + "/",
-    };
-  }
-
-  // Parse anime cards from any page that uses the site's standard grid layout:
-  //   <a class="anime-card" href="/anime/{id}">
-  //     <div class="anime-card-poster"><img src="..."></div>
-  //     <div class="anime-card-info"><h3 class="anime-card-title">...</h3></div>
-  //   </a>
-  parseCards(doc) {
-    var cards = doc.select("a.anime-card");
-    var list = [];
-    for (var i = 0; i < cards.length; i++) {
-      var card = cards[i];
-      var href = card.attr("href") || "";
-      if (!href) continue;
-      var link = href.indexOf("http") === 0 ? href : this.source.baseUrl + href;
-
-      var titleEl = card.selectFirst(".anime-card-title");
-      var name = titleEl ? (titleEl.text || "").trim() : "";
-      if (!name) continue;
-
-      var img = card.selectFirst("img");
-      var imageUrl = img ? (img.attr("src") || img.attr("data-src") || "") : "";
-
-      list.push({ name: name, imageUrl: imageUrl, link: link });
-    }
-    return list;
-  }
-
   get supportsLatest() {
     return true;
   }
 
+  // Fetch a page of media from AniList and convert to Mangayomi list items.
+  // sortKey: e.g. "TRENDING_DESC" or "START_DATE_DESC"
+  async fetchAniListPage(page, sortKey) {
+    var q = "query ($page: Int, $perPage: Int) { Page(page: $page, perPage: $perPage) {"
+      + " pageInfo { hasNextPage }"
+      + " media(type: ANIME, sort: " + sortKey + ", isAdult: false) {"
+      + " id title { romaji english } coverImage { extraLarge large } } } }";
+
+    var res = await this.client.post(
+      "https://graphql.anilist.co",
+      {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": this.ua,
+      },
+      JSON.stringify({ query: q, variables: { page: page, perPage: 30 } })
+    );
+
+    var json = JSON.parse(res.body || "{}");
+    var pageData = (json && json.data && json.data.Page) ? json.data.Page : null;
+    if (!pageData) return { list: [], hasNextPage: false };
+
+    var mediaList = pageData.media || [];
+    var list = [];
+    for (var i = 0; i < mediaList.length; i++) {
+      var m = mediaList[i];
+      var title = (m.title && (m.title.english || m.title.romaji)) || "";
+      var cover = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
+      list.push({
+        name: title,
+        imageUrl: cover,
+        link: this.source.baseUrl + "/anime/" + m.id,
+      });
+    }
+
+    return { list: list, hasNextPage: !!(pageData.pageInfo && pageData.pageInfo.hasNextPage) };
+  }
+
   async getPopular(page) {
-    var res = await this.client.get(this.source.baseUrl + "/category/trending", this.headers);
-    var doc = new Document(res.body || "");
-    return { list: this.parseCards(doc), hasNextPage: false };
+    return this.fetchAniListPage(page, "TRENDING_DESC");
   }
 
   async getLatestUpdates(page) {
-    var res = await this.client.get(this.source.baseUrl + "/category/recently-updated", this.headers);
-    var doc = new Document(res.body || "");
-    return { list: this.parseCards(doc), hasNextPage: false };
+    return this.fetchAniListPage(page, "START_DATE_DESC");
   }
 
   async search(query, page, filters) {
-    var res = await this.client.get(
-      this.source.baseUrl + "/search?q=" + encodeURIComponent(query),
-      this.headers
+    var q = "query ($search: String, $page: Int, $perPage: Int) { Page(page: $page, perPage: $perPage) {"
+      + " pageInfo { hasNextPage }"
+      + " media(type: ANIME, search: $search, isAdult: false) {"
+      + " id title { romaji english } coverImage { extraLarge large } } } }";
+
+    var res = await this.client.post(
+      "https://graphql.anilist.co",
+      {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": this.ua,
+      },
+      JSON.stringify({ query: q, variables: { search: query, page: page, perPage: 30 } })
     );
-    var doc = new Document(res.body || "");
-    return { list: this.parseCards(doc), hasNextPage: false };
+
+    var json = JSON.parse(res.body || "{}");
+    var pageData = (json && json.data && json.data.Page) ? json.data.Page : null;
+    if (!pageData) return { list: [], hasNextPage: false };
+
+    var mediaList = pageData.media || [];
+    var list = [];
+    for (var i = 0; i < mediaList.length; i++) {
+      var m = mediaList[i];
+      var title = (m.title && (m.title.english || m.title.romaji)) || "";
+      var cover = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
+      list.push({
+        name: title,
+        imageUrl: cover,
+        link: this.source.baseUrl + "/anime/" + m.id,
+      });
+    }
+
+    return { list: list, hasNextPage: !!(pageData.pageInfo && pageData.pageInfo.hasNextPage) };
   }
 
   statusCode(s) {
@@ -112,7 +140,6 @@ class DefaultExtension extends MProvider {
     var animeId = this.extractAnimeId(url);
     if (!animeId) throw new Error("Cannot parse anime ID from: " + url);
 
-    // Fetch anime metadata from AniList using a plain concatenated string (no template literals).
     var alQuery = "query ($id: Int) { Media(id: $id, type: ANIME) {"
       + " id title { romaji english native }"
       + " coverImage { extraLarge large }"
@@ -141,7 +168,10 @@ class DefaultExtension extends MProvider {
     // Fetch the watch page — episode list is server-side rendered in the sidebar.
     var watchRes = await this.client.get(
       this.source.baseUrl + "/watch/" + animeId + "/ep-1",
-      this.headers
+      {
+        "User-Agent": this.ua,
+        "Referer": this.source.baseUrl + "/",
+      }
     );
     var html = (watchRes && watchRes.body) || "";
     var doc = new Document(html);
