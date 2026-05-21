@@ -4,7 +4,7 @@ const mangayomiSources = [
     "id": 347219856,
     "lang": "en",
     "baseUrl": "https://myronix.strangled.net",
-    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://myronix.strangled.net",
+    "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
     "version": "0.1.2",
