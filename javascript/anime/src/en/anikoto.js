@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -312,48 +312,44 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // Given a pahe.mewcdn.online short URL, resolve the kwik.cx embed ID and
-  // extract the direct stream URL.
-  // Returns a stream object or null on failure.
-  async _resolveKiwiStream(paheUrl, qualityLabel, audioType) {
+  // Step 1: Call /ajax/server?get={linkId} on anikototv.to to get the kwik embed URL.
+  // Step 2: Fetch the kwik embed page and unpack the JS packer to extract the m3u8.
+  // Returns a stream object, or null on failure.
+  async _resolveViaServer(linkId, qualityLabel, audioType) {
     try {
-      // Step 1: Fetch the pahe.mewcdn.online intermediate page.
-      // It shows a "Continue" link pointing to kwik.cx/f/{id}.
-      var res1 = await this.client.get(paheUrl, {
+      // Step 1: Resolve the encrypted linkId to a kwik.cx embed URL via the site API.
+      var serverRes = await this.client.get(
+        this.source.baseUrl + "/ajax/server?get=" + encodeURIComponent(linkId),
+        {
+          "User-Agent": this.ua,
+          "Referer": this.source.baseUrl + "/",
+          "X-Requested-With": "XMLHttpRequest",
+          "Accept": "application/json, text/javascript, */*; q=0.01",
+        }
+      );
+      var serverData;
+      try { serverData = JSON.parse(serverRes.body); } catch (e) { return null; }
+      if (!serverData || serverData.status !== 200 || !serverData.result || !serverData.result.url) return null;
+
+      var embedUrl = serverData.result.url; // "https://kwik.cx/e/{id}"
+
+      // Step 2: Fetch the kwik embed page (has an obfuscated JS packer with the m3u8 URL).
+      var kwikRes = await this.client.get(embedUrl, {
         "User-Agent": this.ua,
-        "Referer": "https://anikototv.to/",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": this.source.baseUrl + "/",
+        "Accept": "text/html,application/xhtml+xml,*/*",
       });
-      var html1 = res1.body || "";
+      var kwikHtml = kwikRes.body || "";
 
-      // Extract the kwik.cx ID from href="https://kwik.cx/f/{id}"
-      var kwikMatch = html1.match(/kwik\.cx\/f\/([A-Za-z0-9]+)/);
-      if (!kwikMatch) return null;
-      var kwikId = kwikMatch[1];
-
-      // Step 2: Fetch the kwik.cx embed page (/e/{id}) which contains the player.
-      var embedUrl = "https://kwik.cx/e/" + kwikId;
-      var res2 = await this.client.get(embedUrl, {
-        "User-Agent": this.ua,
-        "Referer": "https://anikototv.to/",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      });
-      var html2 = res2.body || "";
-
-      // Step 3: Unpack the obfuscated JavaScript and extract the stream URL.
-      var streamUrl = this._extractKwikStreamUrl(html2);
+      // Step 3: Unpack the obfuscated JavaScript and extract the m3u8 stream URL.
+      var streamUrl = this._extractKwikStreamUrl(kwikHtml);
       if (!streamUrl) return null;
-
-      var streamHeaders = {
-        "User-Agent": this.ua,
-        "Referer": "https://kwik.cx/",
-      };
 
       return {
         url: streamUrl,
         originalUrl: streamUrl,
         quality: qualityLabel + " [" + audioType + "]",
-        headers: streamHeaders,
+        headers: { "User-Agent": this.ua, "Referer": "https://kwik.cx/" },
         subtitles: [],
       };
     } catch (e) {
@@ -370,15 +366,18 @@ class DefaultExtension extends MProvider {
 
     if (!malId || !timestamp) return [];
 
-    // Fetch the mapper API which returns Kiwi-Stream data indexed by quality.
-    var mapperUrl = "https://mapper.mewcdn.online/api/mal/" + malId + "/" + epNum + "/" + timestamp;
+    // Call the mapper API: returns per-quality linkIds (encrypted keys).
+    // Response shape: { "Kiwi-Stream-1080p": { sub: { url: "<b64>" }, dub: { url: "<b64>" } }, ... }
     var mapRes;
     try {
-      mapRes = await this.client.get(mapperUrl, {
-        "User-Agent": this.ua,
-        "Referer": "https://anikototv.to/",
-        "Accept": "application/json",
-      });
+      mapRes = await this.client.get(
+        "https://mapper.mewcdn.online/api/mal/" + malId + "/" + epNum + "/" + timestamp,
+        {
+          "User-Agent": this.ua,
+          "Referer": this.source.baseUrl + "/",
+          "Accept": "application/json",
+        }
+      );
     } catch (e) {
       return [];
     }
@@ -386,9 +385,6 @@ class DefaultExtension extends MProvider {
     var data;
     try { data = JSON.parse(mapRes.body); } catch (e) { return []; }
 
-    // Download URLs come from data["Kiwi-Stream"].{sub|dub}.download.{quality}
-    // Stream URLs: each pahe.mewcdn.online short URL → kwik.cx/e/{id} → m3u8
-    var kiwiDownloads = data["Kiwi-Stream"] || {};
     var qualities = [
       { key: "Kiwi-Stream-1080p", label: "1080p" },
       { key: "Kiwi-Stream-720p",  label: "720p"  },
@@ -404,40 +400,20 @@ class DefaultExtension extends MProvider {
     for (var q = 0; q < qualities.length; q++) {
       var qKey = qualities[q].key;
       var qLabel = qualities[q].label;
+      var qData = data[qKey] || {};
 
-      // Sub
-      var subUrl = kiwiDownloads.sub && kiwiDownloads.sub.download && kiwiDownloads.sub.download[qKey];
-      if (subUrl) {
-        var subStream = await this._resolveKiwiStream(subUrl, qLabel, "Sub");
-        if (subStream) {
-          subStreams.push(subStream);
-        } else {
-          // Fallback: return the pahe short URL so the user can open it manually
-          subStreams.push({
-            url: subUrl,
-            originalUrl: subUrl,
-            quality: qLabel + " [Sub - Direct]",
-            headers: { "User-Agent": this.ua },
-            subtitles: [],
-          });
-        }
+      // Sub: data["Kiwi-Stream-1080p"].sub.url  →  /ajax/server?get=…  →  kwik embed  →  m3u8
+      var subLinkId = qData.sub && qData.sub.url;
+      if (subLinkId) {
+        var subStream = await this._resolveViaServer(subLinkId, qLabel, "Sub");
+        if (subStream) subStreams.push(subStream);
       }
 
-      // Dub
-      var dubUrl = kiwiDownloads.dub && kiwiDownloads.dub.download && kiwiDownloads.dub.download[qKey];
-      if (dubUrl) {
-        var dubStream = await this._resolveKiwiStream(dubUrl, qLabel, "Dub");
-        if (dubStream) {
-          dubStreams.push(dubStream);
-        } else {
-          dubStreams.push({
-            url: dubUrl,
-            originalUrl: dubUrl,
-            quality: qLabel + " [Dub - Direct]",
-            headers: { "User-Agent": this.ua },
-            subtitles: [],
-          });
-        }
+      // Dub: same path
+      var dubLinkId = qData.dub && qData.dub.url;
+      if (dubLinkId) {
+        var dubStream = await this._resolveViaServer(dubLinkId, qLabel, "Dub");
+        if (dubStream) dubStreams.push(dubStream);
       }
     }
 
