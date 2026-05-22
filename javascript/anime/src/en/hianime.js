@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.9",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -63,7 +63,9 @@ class DefaultExtension extends MProvider {
       if (!nameEl) nameEl = item.selectFirst(".film-name a");
       var name = "";
       if (nameEl) {
-        name = (nameEl.attr("data-ename") || nameEl.text || "").trim();
+        // data-ename = English name, title attr = English name (fallback),
+        // nameEl.text = whatever is rendered (often romaji/Japanese)
+        name = (nameEl.attr("data-ename") || nameEl.attr("title") || nameEl.text || "").trim();
       }
 
       var img = item.selectFirst(".film-poster-img");
