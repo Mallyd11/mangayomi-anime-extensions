@@ -7,11 +7,11 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
-    "hasCloudflare": true,
+    "hasCloudflare": false,
     "isFullData": false,
     "appMinVerReq": "0.5.0",
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/myronix.js",
@@ -139,7 +139,16 @@ class DefaultExtension extends MProvider {
     var anilistId = parseInt(url.replace(/[^0-9]/g, ""), 10);
     if (!anilistId) throw new Error("Cannot parse AniList ID from: " + url);
 
-    var data = await this.gql(MEDIA_DETAIL_QUERY, { id: anilistId });
+    // Fire AniList metadata + AllAnime episode list simultaneously
+    var epUrl = this.source.baseUrl + "/api/v2/allanime/episodes/" +
+      anilistId + "?provider=anilist&mode=sub";
+    var parallel = await Promise.all([
+      this.gql(MEDIA_DETAIL_QUERY, { id: anilistId }),
+      this.client.get(epUrl, this.getHeaders).catch(function() { return null; }),
+    ]);
+
+    var data = parallel[0];
+    var epRes = parallel[1];
     var m = (data && data.Media) || {};
 
     var name      = (m.title && (m.title.english || m.title.romaji)) || "";
@@ -153,10 +162,7 @@ class DefaultExtension extends MProvider {
     // Chapter URL = "{showId}|{epNum}" — pipe-separated, no URL-scheme prefix.
     var chapters = [];
     try {
-      var epUrl = this.source.baseUrl + "/api/v2/allanime/episodes/" +
-        anilistId + "?provider=anilist&mode=sub";
-      var epRes = await this.client.get(epUrl, this.getHeaders);
-      if (epRes.statusCode === 200) {
+      if (epRes && epRes.statusCode === 200) {
         var epJson = JSON.parse(epRes.body);
         var episodes = (epJson.data && epJson.data.episodes) || [];
         var seenIds = {};
