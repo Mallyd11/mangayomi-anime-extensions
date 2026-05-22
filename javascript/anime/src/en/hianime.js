@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -59,14 +59,14 @@ class DefaultExtension extends MProvider {
       var href = anchor ? anchor.attr("href") : "";
       var link = href.startsWith("http") ? href : this.source.baseUrl + href;
 
-      // Prefer .film-name a for title since it reliably carries the title attr.
-      // Priority: title attr (English translation) > data-ename (often romaji) > text content
-      var nameEl = item.selectFirst(".film-name a");
-      if (!nameEl) nameEl = item.selectFirst(".dynamic-name");
-      var name = "";
-      if (nameEl) {
-        name = (nameEl.attr("title") || nameEl.attr("data-ename") || nameEl.text || "").trim();
+      // .film-poster-ahref carries title="English Name" in static HTML.
+      // .film-name a only has the romaji text content.
+      var name = (anchor ? anchor.attr("title") : "") || "";
+      if (!name) {
+        var nameEl = item.selectFirst(".film-name a") || item.selectFirst(".dynamic-name");
+        if (nameEl) name = (nameEl.attr("title") || nameEl.attr("data-ename") || nameEl.text || "").trim();
       }
+      name = name.trim();
 
       var img = item.selectFirst(".film-poster-img");
       if (!img) img = item.selectFirst(".film-poster img");
