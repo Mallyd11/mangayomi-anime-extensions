@@ -10,7 +10,8 @@ const mangayomiSources = [
     "typeSource": "single",
     "isManga": true,
     "itemType": 0,
-    "version": "0.1.0",
+    "hasCloudflare": true,
+    "version": "0.1.1",
     "pkgPath": "manga/src/en/weebcentral.js"
   }
 ];

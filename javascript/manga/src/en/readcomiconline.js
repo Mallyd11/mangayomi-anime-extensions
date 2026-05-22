@@ -3,14 +3,14 @@ const mangayomiSources = [
     "name": "ReadComicOnline",
     "lang": "en",
     "id": 376287717,
-    "baseUrl": "https://readcomiconline.li",
+    "baseUrl": "https://rcostation.xyz",
     "apiUrl": "",
     "iconUrl":
-      "https://www.google.com/s2/favicons?sz=256&domain=https://readcomiconline.li/",
+      "https://www.google.com/s2/favicons?sz=256&domain=https://rcostation.xyz/",
     "typeSource": "single",
     "isManga": true,
     "itemType": 0,
-    "version": "0.3.0",
+    "version": "0.3.1",
     "pkgPath": "manga/src/en/readcomiconline.js",
   },
 ];
@@ -119,7 +119,7 @@ class DefaultExtension extends MProvider {
     }
     var baseUrl = this.source.baseUrl;
     if (url.includes(baseUrl)) url = url.replace(baseUrl, "");
-    var link = baseUrl + link;
+    var link = baseUrl + url;
     var doc = await this.request(url);
 
     var detailsSection = doc.selectFirst(".barContent");
