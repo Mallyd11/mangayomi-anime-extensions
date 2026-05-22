@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -236,10 +236,12 @@ class DefaultExtension extends MProvider {
     var statusMatch = html.match(/Status[\s\S]{0,80}?(Currently Airing|Finished Airing|Ongoing|Completed|Releasing|Not Yet Released|Upcoming)/i);
     if (statusMatch) status = this.statusCode(statusMatch[1]);
 
-    // Episode thumbnails via ani.zip — search both pages for a MAL or AniList ID.
-    // Patterns cover: href links, data-* attrs, and embedded JSON/JS vars.
+    // Episode thumbnails via ani.zip (only if user has enabled them in settings).
+    var thumbsEnabled = true;
+    try { thumbsEnabled = new SharedPreferences().get("hianime_pref_thumbnails") !== false; } catch (e) {}
+
     var thumbMap = {};
-    try {
+    if (thumbsEnabled) try {
       var combined = html + infoHtml;
       var anilistId = null;
       var malId     = null;
@@ -550,6 +552,14 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "hianime_pref_thumbnails",
+        switchPreferenceCompat: {
+          title: "Episode thumbnails",
+          summary: "Fetch episode thumbnails from ani.zip (adds a small delay when loading episodes)",
+          value: true,
         },
       },
     ];
