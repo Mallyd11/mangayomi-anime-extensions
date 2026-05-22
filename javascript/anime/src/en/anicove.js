@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -33,90 +33,69 @@ class DefaultExtension extends MProvider {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
   }
 
+  get headers() {
+    return {
+      "User-Agent": this.ua,
+      "Referer": this.source.baseUrl + "/",
+    };
+  }
+
   get supportsLatest() {
     return true;
   }
 
-  // Fetch a page of media from AniList and convert to Mangayomi list items.
-  // sortKey: e.g. "TRENDING_DESC" or "START_DATE_DESC"
-  async fetchAniListPage(page, sortKey) {
-    var q = "query ($page: Int, $perPage: Int) { Page(page: $page, perPage: $perPage) {"
-      + " pageInfo { hasNextPage }"
-      + " media(type: ANIME, sort: " + sortKey + ", isAdult: false) {"
-      + " id title { romaji english } coverImage { extraLarge large } } } }";
-
-    var res = await this.client.post(
-      "https://graphql.anilist.co",
-      {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": this.ua,
-      },
-      JSON.stringify({ query: q, variables: { page: page, perPage: 30 } })
-    );
-
-    var json = JSON.parse(res.body || "{}");
-    var pageData = (json && json.data && json.data.Page) ? json.data.Page : null;
-    if (!pageData) return { list: [], hasNextPage: false };
-
-    var mediaList = pageData.media || [];
+  // Parse anime cards from any page that uses the site's standard grid layout.
+  // The selector uses .anime-card (class only) rather than a.anime-card
+  // because Mangayomi's DOM API may not support compound element+class selectors.
+  parseCards(doc) {
+    var cards = doc.select(".anime-card");
     var list = [];
-    for (var i = 0; i < mediaList.length; i++) {
-      var m = mediaList[i];
-      var title = (m.title && (m.title.english || m.title.romaji)) || "";
-      var cover = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
-      list.push({
-        name: title,
-        imageUrl: cover,
-        link: this.source.baseUrl + "/anime/" + m.id,
-      });
-    }
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
 
-    return { list: list, hasNextPage: !!(pageData.pageInfo && pageData.pageInfo.hasNextPage) };
+      var href = card.attr("href") || "";
+      if (!href) continue;
+      var link = href.indexOf("http") === 0 ? href : this.source.baseUrl + href;
+      // Only include actual anime pages
+      if (link.indexOf("/anime/") < 0) continue;
+
+      var titleEl = card.selectFirst(".anime-card-title");
+      var name = titleEl ? (titleEl.text || "").trim() : "";
+      if (!name) continue;
+
+      var img = card.selectFirst("img");
+      var imageUrl = img ? (img.attr("src") || img.attr("data-src") || "") : "";
+
+      list.push({ name: name, imageUrl: imageUrl, link: link });
+    }
+    return list;
   }
 
   async getPopular(page) {
-    return this.fetchAniListPage(page, "TRENDING_DESC");
+    var res = await this.client.get(
+      this.source.baseUrl + "/category/trending",
+      this.headers
+    );
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   async getLatestUpdates(page) {
-    return this.fetchAniListPage(page, "START_DATE_DESC");
+    var res = await this.client.get(
+      this.source.baseUrl + "/category/recently-updated",
+      this.headers
+    );
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   async search(query, page, filters) {
-    var q = "query ($search: String, $page: Int, $perPage: Int) { Page(page: $page, perPage: $perPage) {"
-      + " pageInfo { hasNextPage }"
-      + " media(type: ANIME, search: $search, isAdult: false) {"
-      + " id title { romaji english } coverImage { extraLarge large } } } }";
-
-    var res = await this.client.post(
-      "https://graphql.anilist.co",
-      {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": this.ua,
-      },
-      JSON.stringify({ query: q, variables: { search: query, page: page, perPage: 30 } })
+    var res = await this.client.get(
+      this.source.baseUrl + "/search?q=" + encodeURIComponent(query),
+      this.headers
     );
-
-    var json = JSON.parse(res.body || "{}");
-    var pageData = (json && json.data && json.data.Page) ? json.data.Page : null;
-    if (!pageData) return { list: [], hasNextPage: false };
-
-    var mediaList = pageData.media || [];
-    var list = [];
-    for (var i = 0; i < mediaList.length; i++) {
-      var m = mediaList[i];
-      var title = (m.title && (m.title.english || m.title.romaji)) || "";
-      var cover = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
-      list.push({
-        name: title,
-        imageUrl: cover,
-        link: this.source.baseUrl + "/anime/" + m.id,
-      });
-    }
-
-    return { list: list, hasNextPage: !!(pageData.pageInfo && pageData.pageInfo.hasNextPage) };
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   statusCode(s) {
@@ -140,6 +119,15 @@ class DefaultExtension extends MProvider {
     var animeId = this.extractAnimeId(url);
     if (!animeId) throw new Error("Cannot parse anime ID from: " + url);
 
+    // AniList requires Origin + Referer to avoid 403.
+    var alHeaders = {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "User-Agent": this.ua,
+      "Origin": "https://anilist.co",
+      "Referer": "https://anilist.co/",
+    };
+
     var alQuery = "query ($id: Int) { Media(id: $id, type: ANIME) {"
       + " id title { romaji english native }"
       + " coverImage { extraLarge large }"
@@ -152,11 +140,7 @@ class DefaultExtension extends MProvider {
     try {
       var alRes = await this.client.post(
         "https://graphql.anilist.co",
-        {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "User-Agent": this.ua,
-        },
+        alHeaders,
         JSON.stringify({ query: alQuery, variables: { id: parseInt(animeId) } })
       );
       var alJson = JSON.parse(alRes.body);
@@ -168,10 +152,7 @@ class DefaultExtension extends MProvider {
     // Fetch the watch page — episode list is server-side rendered in the sidebar.
     var watchRes = await this.client.get(
       this.source.baseUrl + "/watch/" + animeId + "/ep-1",
-      {
-        "User-Agent": this.ua,
-        "Referer": this.source.baseUrl + "/",
-      }
+      this.headers
     );
     var html = (watchRes && watchRes.body) || "";
     var doc = new Document(html);
@@ -250,8 +231,6 @@ class DefaultExtension extends MProvider {
     var lang = "sub";
     try { lang = new SharedPreferences().get("anicove_lang") || "sub"; } catch (e) {}
 
-    // Fetch the watch page. The server fetches video sources from its private Miruro
-    // API and embeds the resulting URL in window.WATCH_CONFIG.
     var watchHeaders = {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
