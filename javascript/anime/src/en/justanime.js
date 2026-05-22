@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.9",
+    "version": "0.1.0",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -159,6 +159,11 @@ class DefaultExtension extends MProvider {
     try {
       var data = await this.apiGet("/watch/" + animeId + "/episode/" + epNum + "/animepahe");
 
+      // API returns {"error":"..."} with HTTP 200 for bad episodes
+      if (data.error || (!data.sub && !data.dub)) {
+        throw new Error(data.error || "No sources");
+      }
+
       var types = ["sub", "dub"];
       for (var ti = 0; ti < types.length; ti++) {
         var type = types[ti];
@@ -185,7 +190,8 @@ class DefaultExtension extends MProvider {
       }
     } catch (e) {}
 
-    var pref = new SharedPreferences().get("justanime_pref_audio");
+    var pref = "sub";
+    try { pref = new SharedPreferences().get("justanime_pref_audio") || "sub"; } catch (e) {}
     if (pref === "dub") {
       return dubVideos.concat(subVideos);
     }
