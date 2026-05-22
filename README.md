@@ -10,17 +10,17 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| Mangapark | 1.0.1 | en | 2026/05/22 |
 | Mangapill | 1.0.4 | en | 2026/05/22 |
-| ReadComicOnline | 0.3.0 | en | 2026/05/22 |
 | Weeb Central | 0.1.0 | en | 2026/05/22 |
+| ReadComicOnline | 0.3.0 | en | 2026/05/22 |
+| Mangapark | 1.0.1 | en | 2026/05/22 |
 | WeLoMa | 1.0.0 | ja | 2026/05/22 |
 
 ## Anime
 
 | Name | Version | Downloads | Sub/Dub | Last Updated |
 |------|---------|-----------|---------|--------------|
-| AniCove | 0.1.7 | No | Sub+Dub | 2026/05/22 |
+| AniCove | 0.1.8 | No | Sub+Dub | 2026/05/22 |
 | AniKoto | 0.1.9 | Yes | Sub+Dub | 2026/05/22 |
 | Anidap | 1.5.21 | No | Sub+Dub | 2025/05/20 |
 | AnimeHeaven | 0.0.6 | Yes | Sub Only | 2025/05/20 |

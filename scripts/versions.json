@@ -1,14 +1,14 @@
 {
     "manga": {
-        "Mangapark": {
-            "name": "Mangapark",
-            "version": "1.0.1",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
         "Mangapill": {
             "name": "Mangapill",
             "version": "1.0.4",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "Weeb Central": {
+            "name": "Weeb Central",
+            "version": "0.1.0",
             "langs": "en",
             "lastUpd": 1779410651.044824
         },
@@ -18,9 +18,9 @@
             "langs": "en",
             "lastUpd": 1779410651.044824
         },
-        "Weeb Central": {
-            "name": "Weeb Central",
-            "version": "0.1.0",
+        "Mangapark": {
+            "name": "Mangapark",
+            "version": "1.0.1",
             "langs": "en",
             "lastUpd": 1779410651.044824
         },
@@ -34,7 +34,13 @@
     "anime": {
         "AniCove": {
             "name": "AniCove",
-            "version": "0.1.7",
+            "version": "0.1.8",
+            "langs": "en",
+            "lastUpd": 1779412331.476826
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.1.4",
             "langs": "en",
             "lastUpd": 1779412257.983487
         },
@@ -43,18 +49,6 @@
             "version": "0.1.9",
             "langs": "en",
             "lastUpd": 1779412257.983487
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.1.4",
-            "langs": "en",
-            "lastUpd": 1779412257.983487
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.21",
-            "langs": "en",
-            "lastUpd": 1747738043.896285
         },
         "AnimeHeaven": {
             "name": "AnimeHeaven",
@@ -68,15 +62,15 @@
             "langs": "en",
             "lastUpd": 1747738043.896285
         },
-        "AnimeParadise": {
-            "name": "AnimeParadise",
-            "version": "0.3.0",
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.5.21",
             "langs": "en",
             "lastUpd": 1747738043.896285
         },
-        "Animetsu": {
-            "name": "Animetsu",
-            "version": "1.3.7",
+        "AnimeParadise": {
+            "name": "AnimeParadise",
+            "version": "0.3.0",
             "langs": "en",
             "lastUpd": 1747738043.896285
         },
@@ -89,6 +83,12 @@
         "MyroniX": {
             "name": "MyroniX",
             "version": "0.1.2",
+            "langs": "en",
+            "lastUpd": 1747738043.896285
+        },
+        "Animetsu": {
+            "name": "Animetsu",
+            "version": "1.3.7",
             "langs": "en",
             "lastUpd": 1747738043.896285
         }
