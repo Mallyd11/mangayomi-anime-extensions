@@ -66,28 +66,6 @@
         "notes": ""
     },
     {
-        "name": "Mangapark",
-        "id": 2302366102,
-        "baseUrl": "https://mangapark.net",
-        "lang": "en",
-        "typeSource": "single",
-        "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mangapark.net",
-        "dateFormat": "",
-        "dateFormatLocale": "",
-        "isNsfw": false,
-        "hasCloudflare": true,
-        "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/manga/src/en/mangapark.js",
-        "apiUrl": "",
-        "version": "1.0.3",
-        "isManga": true,
-        "itemType": 0,
-        "isFullData": false,
-        "appMinVerReq": "0.5.0",
-        "additionalParams": "",
-        "sourceCodeLanguage": 1,
-        "notes": ""
-    },
-    {
         "name": "WeLoMa",
         "id": 1890238687,
         "baseUrl": "https://weloma.art",
