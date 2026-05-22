@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -234,47 +234,25 @@ class DefaultExtension extends MProvider {
           // Grab the MAL ID from the first episode (same for all episodes of an anime).
           var animeMALId = epEls.length > 0 ? (epEls[0].attr("data-mal") || "") : "";
 
-          // Fetch episode thumbnails from AniList streamingEpisodes (one GraphQL call).
-          // Thumbnails come from Crunchyroll/streaming platforms — not always complete,
-          // but usually covers all episodes for currently-airing / recent anime.
+          // Fetch episode thumbnails from ani.zip (sourced from AniDB/TVDB/Crunchyroll).
+          // ani.zip keys episodes by season-relative number ("1", "2", …) — the same
+          // numbering the site uses — so no offset calculation is needed.
+          // The API supports ?mal_id= directly, which we already have.
           var thumbMap = {}; // epNum (string) → thumbnail URL
           if (animeMALId) {
             try {
-              var alRes = await this.client.post(
-                "https://graphql.anilist.co",
-                {
-                  "Content-Type": "application/json",
-                  "Accept": "application/json",
-                  "User-Agent": this.ua,
-                },
-                JSON.stringify({
-                  query: "query($id:Int){Media(idMal:$id,type:ANIME){streamingEpisodes{title thumbnail}}}",
-                  variables: { id: parseInt(animeMALId) },
-                })
+              var azRes = await this.client.get(
+                "https://api.ani.zip/mappings?mal_id=" + animeMALId,
+                { "User-Agent": this.ua, "Accept": "application/json" }
               );
-              var alJson = JSON.parse(alRes.body);
-              var streamEps = (alJson.data && alJson.data.Media && alJson.data.Media.streamingEpisodes) || [];
-              // Collect {num, thumb} pairs first so we can compute the episode offset.
-              // AniList uses absolute numbering across seasons (S2 ep 1 = "Episode 13"),
-              // while the site uses season-relative numbering (ep 1). We subtract
-              // (minNum - 1) so the lowest AniList episode maps to site episode 1.
-              var parsedEps = [];
-              for (var se = 0; se < streamEps.length; se++) {
-                var seThumb = streamEps[se].thumbnail || "";
-                if (!seThumb) continue;
-                // Title is usually "Episode 5 - Name" or "Episode 5"
-                var seNum = (streamEps[se].title || "").match(/Episode\s+([\d.]+)/i);
-                if (seNum) parsedEps.push({ num: parseFloat(seNum[1]), thumb: seThumb });
-              }
-              if (parsedEps.length > 0) {
-                var minNum = parsedEps[0].num;
-                for (var pe = 1; pe < parsedEps.length; pe++) {
-                  if (parsedEps[pe].num < minNum) minNum = parsedEps[pe].num;
-                }
-                var epOffset = minNum - 1; // 0 for S1, 12 for S2 starting at ep 13, etc.
-                for (var pe = 0; pe < parsedEps.length; pe++) {
-                  var siteNum = parsedEps[pe].num - epOffset;
-                  thumbMap[String(Math.floor(siteNum))] = parsedEps[pe].thumb;
+              if (azRes.statusCode === 200 && azRes.body) {
+                var azJson = JSON.parse(azRes.body);
+                if (azJson.episodes) {
+                  var epKeys = Object.keys(azJson.episodes);
+                  for (var ek = 0; ek < epKeys.length; ek++) {
+                    var epImg = azJson.episodes[epKeys[ek]].image;
+                    if (epImg) thumbMap[epKeys[ek]] = epImg;
+                  }
                 }
               }
             } catch (e) {}
