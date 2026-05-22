@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AniCove": {
+            "name": "AniCove",
+            "version": "0.2.0",
+            "langs": "en",
+            "lastUpd": 1779491006.587111
+        },
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.1.2",
@@ -49,12 +55,6 @@
             "version": "1.3.8",
             "langs": "en",
             "lastUpd": 1779460261.340664
-        },
-        "AniCove": {
-            "name": "AniCove",
-            "version": "0.1.9",
-            "langs": "en",
-            "lastUpd": 1779413221.417586
         },
         "AnimeHeaven": {
             "name": "AnimeHeaven",
