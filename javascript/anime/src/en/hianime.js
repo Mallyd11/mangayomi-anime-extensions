@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.2.1",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -59,13 +59,13 @@ class DefaultExtension extends MProvider {
       var href = anchor ? anchor.attr("href") : "";
       var link = href.startsWith("http") ? href : this.source.baseUrl + href;
 
-      var nameEl = item.selectFirst(".dynamic-name");
-      if (!nameEl) nameEl = item.selectFirst(".film-name a");
+      // Prefer .film-name a for title since it reliably carries the title attr.
+      // Priority: title attr (English translation) > data-ename (often romaji) > text content
+      var nameEl = item.selectFirst(".film-name a");
+      if (!nameEl) nameEl = item.selectFirst(".dynamic-name");
       var name = "";
       if (nameEl) {
-        // data-ename = English name, title attr = English name (fallback),
-        // nameEl.text = whatever is rendered (often romaji/Japanese)
-        name = (nameEl.attr("data-ename") || nameEl.attr("title") || nameEl.text || "").trim();
+        name = (nameEl.attr("title") || nameEl.attr("data-ename") || nameEl.text || "").trim();
       }
 
       var img = item.selectFirst(".film-poster-img");
