@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -237,8 +237,8 @@ class DefaultExtension extends MProvider {
     if (statusMatch) status = this.statusCode(statusMatch[1]);
 
     // Episode thumbnails via ani.zip (only if user has enabled them in settings).
-    var thumbsEnabled = true;
-    try { thumbsEnabled = new SharedPreferences().get("hianime_pref_thumbnails") !== false; } catch (e) {}
+    var thumbsEnabled = false;
+    try { thumbsEnabled = new SharedPreferences().get("hianime_pref_thumbnails") === true; } catch (e) {}
 
     var thumbMap = {};
     if (thumbsEnabled) try {
@@ -559,7 +559,7 @@ class DefaultExtension extends MProvider {
         switchPreferenceCompat: {
           title: "Episode thumbnails",
           summary: "Fetch episode thumbnails from ani.zip (adds a small delay when loading episodes)",
-          value: true,
+          value: false,
         },
       },
     ];
