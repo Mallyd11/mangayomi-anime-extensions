@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -169,12 +169,12 @@ class DefaultExtension extends MProvider {
       if (descMeta) description = descMeta.attr("content") || "";
     }
 
-    // Genres and status from .meta span elements.
+    // Genres and status from .info span elements.
     // Observed values: "TV", "WINTER 2025", "Jan 5, 2025 to ...", "Finished Airing",
     //                  "Action  ,  Adventure  ,  Fantasy", "8.87", "24m min", "13", "Studio"
     var genre = [];
     var status = 5;
-    var metaSpans = doc.select(".meta span");
+    var metaSpans = doc.select(".info span");
     for (var i = 0; i < metaSpans.length; i++) {
       var t = (metaSpans[i].text || "").trim();
       if (!t) continue;
