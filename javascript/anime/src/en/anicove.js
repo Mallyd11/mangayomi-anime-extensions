@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -149,24 +149,27 @@ class DefaultExtension extends MProvider {
       }
     } catch (e) {}
 
-    // Fetch episode thumbnails from ani.zip (TVDB/Crunchyroll screenshots).
-    // Returns a map of episode number string → image URL.
+    // Fetch episode thumbnails from ani.zip only if the user has enabled them.
     var thumbMap = {};
-    try {
-      var zipRes = await this.client.get(
-        "https://api.ani.zip/mappings?anilist_id=" + animeId,
-        { "User-Agent": this.ua }
-      );
-      var zipJson = JSON.parse(zipRes.body);
-      if (zipJson && zipJson.episodes) {
-        var zipKeys = Object.keys(zipJson.episodes);
-        for (var ki = 0; ki < zipKeys.length; ki++) {
-          var zk = zipKeys[ki];
-          var ze = zipJson.episodes[zk];
-          if (ze && ze.image) thumbMap[zk] = ze.image;
+    var thumbsEnabled = false;
+    try { thumbsEnabled = this.getPreference("anicove_episode_thumbnails"); } catch (e) {}
+    if (thumbsEnabled) {
+      try {
+        var zipRes = await this.client.get(
+          "https://api.ani.zip/mappings?anilist_id=" + animeId,
+          { "User-Agent": this.ua }
+        );
+        var zipJson = JSON.parse(zipRes.body);
+        if (zipJson && zipJson.episodes) {
+          var zipKeys = Object.keys(zipJson.episodes);
+          for (var ki = 0; ki < zipKeys.length; ki++) {
+            var zk = zipKeys[ki];
+            var ze = zipJson.episodes[zk];
+            if (ze && ze.image) thumbMap[zk] = ze.image;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
     var watchRes = await this.client.get(
       this.source.baseUrl + "/watch/" + animeId + "/ep-1",
@@ -325,6 +328,14 @@ class DefaultExtension extends MProvider {
           values: ["sub", "dub"],
           entries: ["Sub (subtitled)", "Dub (dubbed)"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "anicove_episode_thumbnails",
+        switchPreferenceCompat: {
+          title: "Episode thumbnails",
+          summary: "Show episode screenshots in the episode list. Adds an extra request per anime page load.",
+          value: false,
         },
       },
     ];
