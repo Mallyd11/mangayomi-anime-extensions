@@ -34,19 +34,25 @@
     "anime": {
         "AniCove": {
             "name": "AniCove",
-            "version": "0.1.6",
+            "version": "0.1.7",
             "langs": "en",
-            "lastUpd": 1779411686.834589
+            "lastUpd": 1779412257.983487
+        },
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.1.9",
+            "langs": "en",
+            "lastUpd": 1779412257.983487
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.1.4",
+            "langs": "en",
+            "lastUpd": 1779412257.983487
         },
         "Anidap": {
             "name": "Anidap",
             "version": "1.5.21",
-            "langs": "en",
-            "lastUpd": 1747738043.896285
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.1.7",
             "langs": "en",
             "lastUpd": 1747738043.896285
         },
@@ -71,12 +77,6 @@
         "Animetsu": {
             "name": "Animetsu",
             "version": "1.3.7",
-            "langs": "en",
-            "lastUpd": 1747738043.896285
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.1.3",
             "langs": "en",
             "lastUpd": 1747738043.896285
         },

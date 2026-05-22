@@ -13,10 +13,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set timezone
         uses: szenius/set-timezone@v2.0
@@ -42,4 +46,7 @@ jobs:
 
       - name: Commit and Push Changes
         run: |
-          python scripts/git.py
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add .
+          git diff --staged --quiet && echo "Nothing to commit" || (git commit -m "[bot] Update README and index" && git push)
