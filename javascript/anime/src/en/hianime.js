@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.3",
+    "version": "0.2.4",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -203,10 +203,10 @@ class DefaultExtension extends MProvider {
       throw new Error("Could not parse anime slug from URL: " + url);
     }
 
-    // Fetch watch page (episodes + metadata) and info page (external IDs) in parallel
+    // Fetch watch page (episodes + metadata) and details page (description, IDs) in parallel
     var watchPath = this.buildWatchUrl(info.slug, 1);
     var watchUrl  = this.source.baseUrl + watchPath;
-    var infoUrl   = this.source.baseUrl + "/" + info.slug;
+    var infoUrl   = this.source.baseUrl + "/details/" + info.slug;
     var [res, infoRes] = await Promise.all([
       this.client.get(watchUrl, this.headers),
       this.client.get(infoUrl, this.headers).catch(function() { return { body: "" }; }),
@@ -214,6 +214,7 @@ class DefaultExtension extends MProvider {
     var html    = res.body;
     var infoHtml = infoRes.body || "";
     var doc = new Document(html);
+    var infoDoc = infoHtml ? new Document(infoHtml) : null;
 
     // Title - prefer the h1/h2 on the page, fall back to og:title
     var name = "";
@@ -235,24 +236,29 @@ class DefaultExtension extends MProvider {
     var ogImage = doc.selectFirst("meta[property='og:image']");
     if (ogImage) imageUrl = ogImage.attr("content") || "";
 
-    // Description - og:description or meta description (strip "Watch X Episode 1 online in HD." prefix)
+    // Description - full synopsis from details page (#synopsis-text), fall back to meta
     var description = "";
-    var descMeta = doc.selectFirst("meta[name='description'], meta[property='og:description']");
-    if (descMeta) {
-      description = (descMeta.attr("content") || "")
-        .replace(/^Watch\s+[^.]+\.\s*/i, "")
-        .replace(/^[^.]+anime with Sub\/Dub\.\s*/i, "")
-        .trim();
+    if (infoDoc) {
+      var synopsisEl = infoDoc.selectFirst("#synopsis-text, .film-description .text");
+      if (synopsisEl) description = synopsisEl.text.trim();
+    }
+    if (!description) {
+      var descMeta = doc.selectFirst("meta[name='description'], meta[property='og:description']");
+      if (descMeta) {
+        description = (descMeta.attr("content") || "")
+          .replace(/^Watch\s+[^.]+\.\s*/i, "")
+          .replace(/^[^.]+anime with Sub\/Dub\.\s*/i, "")
+          .trim();
+      }
     }
 
-    // Genres - links to /genre/ pages
+    // Genres - use badge--genre anchors on the watch page (accurate, no nav pollution)
     var genre = [];
-    var genreEls = doc.select("a[href*='/genre/']");
+    var genreEls = doc.select("a.badge--genre");
     var seenGenre = {};
     for (var i = 0; i < genreEls.length; i++) {
       var g = genreEls[i].text.trim();
-      if (g && !seenGenre[g.toLowerCase()] && g.length < 40) {
-        // Skip nav-style entries by filtering on length
+      if (g && !seenGenre[g.toLowerCase()]) {
         seenGenre[g.toLowerCase()] = true;
         genre.push(g);
       }
@@ -272,12 +278,12 @@ class DefaultExtension extends MProvider {
       var combined = html + infoHtml;
       var anilistId = null;
       var malId     = null;
-      var aMatch = combined.match(/anilist\.co\/anime\/(\d+)/i)
-                || combined.match(/["\s]anilist[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i)
-                || combined.match(/data-anilist[_\-]?id=["']?(\d+)/i);
-      var mMatch = combined.match(/myanimelist\.net\/anime\/(\d+)/i)
-                || combined.match(/["\s]mal[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i)
-                || combined.match(/data-mal[_\-]?id=["']?(\d+)/i);
+      var aMatch = combined.match(/var\s+anilistId\s*=\s*(\d+)/i)
+                || combined.match(/anilist\.co\/anime\/(\d+)/i)
+                || combined.match(/anilist[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i);
+      var mMatch = combined.match(/var\s+malId\s*=\s*(\d+)/i)
+                || combined.match(/myanimelist\.net\/anime\/(\d+)/i)
+                || combined.match(/mal[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i);
       if (aMatch) anilistId = aMatch[1];
       if (mMatch) malId     = mMatch[1];
 
