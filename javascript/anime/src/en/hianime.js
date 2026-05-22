@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -284,10 +284,16 @@ class DefaultExtension extends MProvider {
       var hasDub = ep.attr("data-has-dub") === "1";
       var titleSpan = ep.selectFirst(".ws-ep__title, .ep-name");
       var epTitle = titleSpan ? titleSpan.text.trim() : "";
-      // Skip Japanese/CJK titles — only append if the title is Latin/English
-      var isJapanese = /[぀-ヿ一-鿿＀-￯]/.test(epTitle);
+      // Skip non-Latin titles: walk chars and reject any CJK/hiragana/katakana codepoint
+      var isNonLatin = false;
+      for (var ci = 0; ci < epTitle.length; ci++) {
+        var cp = epTitle.charCodeAt(ci);
+        if ((cp >= 0x3000 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFFEF)) {
+          isNonLatin = true; break;
+        }
+      }
       var label = "Episode " + epNum;
-      if (epTitle && !isJapanese) label += ": " + epTitle;
+      if (epTitle && !isNonLatin) label += ": " + epTitle;
       var langs = [];
       if (hasSub) langs.push("Sub");
       if (hasDub) langs.push("Dub");
