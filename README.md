@@ -6,20 +6,38 @@ This repository contains the available javascript extension catalogues for the M
 <details>
 <summary><span style="font-size:1.7em; font-weight:bold;">Expand list</span></summary>
 
+## Manga
+
+| Name | Version | Language | Last Updated |
+|------|---------|----------|---------------|
+| Mangapark | 1.0.1 | en | 2026/05/22 |
+| Mangapill | 1.0.4 | en | 2026/05/22 |
+| ReadComicOnline | 0.3.0 | en | 2026/05/22 |
+| Weeb Central | 0.1.0 | en | 2026/05/22 |
+| WeLoMa | 1.0.0 | ja | 2026/05/22 |
+
 ## Anime
 
 | Name | Version | Downloads | Sub/Dub | Last Updated |
 |------|---------|-----------|---------|--------------|
-| AniCove | 0.1.0 | No | Sub+Dub | 2026/05/21 |
-| Anidap | 1.5.21 | No | Sub+Dub | 2026/05/21 |
-| AniKoto | 0.1.7 | Yes | Sub+Dub | 2026/05/21 |
-| AnimeHeaven | 0.0.6 | Yes | Sub Only | 2026/05/21 |
-| AnimeKai | 1.1.18 | Yes | Sub+Dub | 2026/05/21 |
-| AnimeParadise | 0.3.0 | No | Sub Only | 2026/05/21 |
-| Animetsu | 1.3.7 | No | Sub+Dub | 2026/05/21 |
-| HiAnime | 0.1.3 | Yes | Sub+Dub | 2026/05/21 |
-| JustAnime | 0.0.9 | Yes | Sub+Dub | 2026/05/21 |
-| MyroniX | 0.1.2 | Yes | Sub+Dub | 2026/05/21 |
+| AniCove | 0.1.4 | No | Sub+Dub | 2026/05/22 |
+| AniKoto | 0.1.7 | Yes | Sub+Dub | 2025/05/20 |
+| Anidap | 1.5.21 | No | Sub+Dub | 2025/05/20 |
+| AnimeHeaven | 0.0.6 | Yes | Sub Only | 2025/05/20 |
+| AnimeKai | 1.1.18 | Yes | Sub+Dub | 2025/05/20 |
+| AnimeParadise | 0.3.0 | No | Sub Only | 2025/05/20 |
+| Animetsu | 1.3.7 | No | Sub+Dub | 2025/05/20 |
+| HiAnime | 0.1.3 | Yes | Sub+Dub | 2025/05/20 |
+| JustAnime | 0.0.9 | Yes | Sub+Dub | 2025/05/20 |
+| MyroniX | 0.1.2 | Yes | Sub+Dub | 2025/05/20 |
+
+## Novel
+
+| Name | Version | Language | Last Updated |
+|------|---------|----------|---------------|
+| bookReadFree | 0.0.1 | en | 2026/05/22 |
+| Novelbuddy | 0.0.9 | en | 2026/05/22 |
+| NovelFire | 0.0.1 | en | 2026/05/22 |
 
 </details>
 
