@@ -1,11 +1,5 @@
 {
     "manga": {
-        "Mangapark": {
-            "name": "Mangapark",
-            "version": "1.0.3",
-            "langs": "en",
-            "lastUpd": 1779416593.167882
-        },
         "Weeb Central": {
             "name": "Weeb Central",
             "version": "0.1.1",
