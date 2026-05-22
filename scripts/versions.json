@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1779489517.771653
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.2.2",
@@ -65,12 +71,6 @@
         "AnimeParadise": {
             "name": "AnimeParadise",
             "version": "0.3.0",
-            "langs": "en",
-            "lastUpd": 1747738043.896285
-        },
-        "JustAnime": {
-            "name": "JustAnime",
-            "version": "0.0.9",
             "langs": "en",
             "lastUpd": 1747738043.896285
         },
