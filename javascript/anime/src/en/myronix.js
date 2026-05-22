@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -259,93 +259,99 @@ class DefaultExtension extends MProvider {
     var pref = "sub";
     try { pref = new SharedPreferences().get("myronix_pref_lang") || "sub"; } catch (e) {}
 
-    // Collect sub and dub streams separately so we can order them by preference
+    // Fetch sub and dub sources in parallel — cuts load time roughly in half
+    // compared to sequential awaits.
+    var self = this;
+    var fetchCategory = function(category) {
+      var apiUrl = self.source.baseUrl + "/api/v2/allanime/episode/sources" +
+        "?animeEpisodeId=" + encodeURIComponent(episodeId) +
+        "&server=Default" +
+        "&category=" + category;
+      return self.client.get(apiUrl, self.getHeaders)
+        .then(function(res) {
+          if (res.statusCode !== 200) return { category: category, data: null };
+          var json = JSON.parse(res.body);
+          return { category: category, data: json.data || null };
+        })
+        .catch(function() { return { category: category, data: null }; });
+    };
+
+    var results = await Promise.all([fetchCategory("sub"), fetchCategory("dub")]);
+
     var subStreams = [];
     var dubStreams = [];
-    var seen       = {};
-    var categories = ["sub", "dub"];
+    var seen = {};
 
-    for (var ci = 0; ci < categories.length; ci++) {
-      var category = categories[ci];
+    for (var ri = 0; ri < results.length; ri++) {
+      var result   = results[ri];
+      var category = result.category;
+      var data     = result.data;
       var bucket   = category === "sub" ? subStreams : dubStreams;
-      try {
-        // Server "Default" → Wix CDN (publicly accessible).
-        // Server "Ok" uses signed, IP-bound okcdn.ru URLs that only work from
-        // the MyroniX server's IP — skip it.
-        var apiUrl = this.source.baseUrl + "/api/v2/allanime/episode/sources" +
-          "?animeEpisodeId=" + encodeURIComponent(episodeId) +
-          "&server=Default" +
-          "&category=" + category;
 
-        var res = await this.client.get(apiUrl, this.getHeaders);
-        if (res.statusCode !== 200) continue;
-        var json = JSON.parse(res.body);
-        if (!json.data || !json.data.sources) continue;
+      if (!data || !data.sources) continue;
 
-        // The API returns the exact CDN headers we should forward with stream requests
-        var apiHdr = json.data.headers || {};
-        var streamHeaders = {
-          "User-Agent": apiHdr["User-Agent"] || this.ua,
-          "Referer":    apiHdr["Referer"]    || (this.source.baseUrl + "/"),
-        };
-        if (apiHdr["Origin"]) streamHeaders["Origin"] = apiHdr["Origin"];
+      // Use CDN headers returned by the API
+      var apiHdr = data.headers || {};
+      var streamHeaders = {
+        "User-Agent": apiHdr["User-Agent"] || this.ua,
+        "Referer":    apiHdr["Referer"]    || (this.source.baseUrl + "/"),
+      };
+      if (apiHdr["Origin"]) streamHeaders["Origin"] = apiHdr["Origin"];
 
-        // Subtitle tracks
-        var subtitles = [];
-        var tracks = json.data.tracks || [];
-        for (var ti = 0; ti < tracks.length; ti++) {
-          var t = tracks[ti];
-          if (t && t.file) subtitles.push({ file: t.file, label: t.label || "Unknown" });
-        }
+      // Subtitle tracks
+      var subtitles = [];
+      var tracks = data.tracks || [];
+      for (var ti = 0; ti < tracks.length; ti++) {
+        var t = tracks[ti];
+        if (t && t.file) subtitles.push({ file: t.file, label: t.label || "Unknown" });
+      }
 
-        var sources = json.data.sources;
-        for (var k = 0; k < sources.length; k++) {
-          var src    = sources[k];
-          var srcUrl = src && src.url;
-          if (!srcUrl) continue;
+      var sources = data.sources;
+      for (var k = 0; k < sources.length; k++) {
+        var src    = sources[k];
+        var srcUrl = src && src.url;
+        if (!srcUrl) continue;
 
-          if (srcUrl.indexOf(".m3u8") >= 0) {
-            // For Wix CDN masters, decode quality variants directly from the URL —
-            // no extra HTTP request, no chance of a CDN fetch failure.
-            var variants = this.parseWixMaster(srcUrl);
-            if (variants && variants.length > 0) {
-              for (var vi = 0; vi < variants.length; vi++) {
-                var v   = variants[vi];
-                var vk  = v.url + "|" + category;
-                if (seen[vk]) continue;
-                seen[vk] = true;
-                bucket.push({
-                  url: v.url, originalUrl: srcUrl,
-                  quality: v.label + " [" + category.toUpperCase() + "]",
-                  headers: streamHeaders, subtitles: subtitles,
-                });
-              }
-            } else {
-              // Non-Wix HLS master — pass through and let the player handle it
-              var mk = srcUrl + "|" + category;
-              if (!seen[mk]) {
-                seen[mk] = true;
-                bucket.push({
-                  url: srcUrl, originalUrl: srcUrl,
-                  quality: "HLS [" + category.toUpperCase() + "]",
-                  headers: streamHeaders, subtitles: subtitles,
-                });
-              }
+        if (srcUrl.indexOf(".m3u8") >= 0) {
+          // Wix CDN: extract quality variants directly from the URL — no extra request
+          var variants = this.parseWixMaster(srcUrl);
+          if (variants && variants.length > 0) {
+            for (var vi = 0; vi < variants.length; vi++) {
+              var v  = variants[vi];
+              var vk = v.url + "|" + category;
+              if (seen[vk]) continue;
+              seen[vk] = true;
+              bucket.push({
+                url: v.url, originalUrl: srcUrl,
+                quality: v.label + " [" + category.toUpperCase() + "]",
+                headers: streamHeaders, subtitles: subtitles,
+              });
             }
           } else {
-            // Direct video URL (MP4, etc.)
-            var dk = srcUrl + "|" + category;
-            if (!seen[dk]) {
-              seen[dk] = true;
+            // Non-Wix HLS — pass master URL through
+            var mk = srcUrl + "|" + category;
+            if (!seen[mk]) {
+              seen[mk] = true;
               bucket.push({
                 url: srcUrl, originalUrl: srcUrl,
-                quality: (src.quality || "Auto") + " [" + category.toUpperCase() + "]",
+                quality: "HLS [" + category.toUpperCase() + "]",
                 headers: streamHeaders, subtitles: subtitles,
               });
             }
           }
+        } else {
+          // Direct MP4 or other
+          var dk = srcUrl + "|" + category;
+          if (!seen[dk]) {
+            seen[dk] = true;
+            bucket.push({
+              url: srcUrl, originalUrl: srcUrl,
+              quality: (src.quality || "Auto") + " [" + category.toUpperCase() + "]",
+              headers: streamHeaders, subtitles: subtitles,
+            });
+          }
         }
-      } catch (e) { /* skip on any error */ }
+      }
     }
 
     // Return preferred language first
