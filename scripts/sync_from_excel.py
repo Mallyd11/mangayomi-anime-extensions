@@ -144,9 +144,33 @@ def sync():
     save_json(metadata_path, metadata)
     save_json(index_path, index)
 
+    # Add any extensions in anime_index.json that are missing from Excel
+    excel_names = set()
+    for row_idx in range(2, ws.max_row + 1):
+        raw = ws.cell(row_idx, col_name).value
+        if raw:
+            excel_names.add(canonical_name(str(raw)))
+
+    added_to_excel = []
+    for entry in index:
+        name = entry["name"]
+        if name not in excel_names:
+            meta = metadata.get(name, {})
+            next_row = ws.max_row + 1
+            ws.cell(next_row, col_name).value = name
+            ws.cell(next_row, col_dl).value = meta.get("downloads", "?")
+            ws.cell(next_row, col_subdub).value = meta.get("subDub", "?")
+            ws.cell(next_row, col_version).value = entry["version"]
+            added_to_excel.append(f"  {name} (v{entry['version']})")
+            excel_changed = True
+
     if excel_changed:
         wb.save(EXCEL_PATH)
         print(f"Saved: {EXCEL_PATH.name}")
+
+    if added_to_excel:
+        print("\nNew extensions added to Excel:")
+        print("\n".join(added_to_excel))
 
     if updated_meta:
         print("Metadata updated:")
