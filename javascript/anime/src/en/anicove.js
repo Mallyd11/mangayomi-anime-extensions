@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -175,6 +175,12 @@ class DefaultExtension extends MProvider {
     var html = (watchRes && watchRes.body) || "";
     var doc = new Document(html);
 
+    // Extract the poster URL from WATCH_CONFIG — used as fallback for the
+    // anime cover image if AniList didn't respond. Do NOT use og:image from
+    // the watch page because it points to the episode screenshot, not the poster.
+    var posterM = html.match(/poster:\s*"([^"]+)"/);
+    var watchPoster = posterM ? posterM[1] : "";
+
     var epEls = doc.select("a.episode-sidebar-item");
     var chapters = [];
 
@@ -192,7 +198,6 @@ class DefaultExtension extends MProvider {
       chapters.push({
         name: label,
         url: animeId + "||" + epNum,
-        imageUrl: "",
         thumbnailUrl: thumbMap[epNum] || "",
         scanlator: (ep.attr("class") || "").indexOf("is-filler") >= 0 ? "Filler" : "",
       });
@@ -207,7 +212,6 @@ class DefaultExtension extends MProvider {
         chapters.push({
           name: "Episode " + j,
           url: animeId + "||" + j,
-          imageUrl: "",
           thumbnailUrl: thumbMap[String(j)] || "",
           scanlator: "",
         });
@@ -222,13 +226,15 @@ class DefaultExtension extends MProvider {
     var genre = media ? (media.genres || []) : [];
     var status = media ? this.statusCode(media.status) : 5;
 
+    // If AniList failed, fall back to data extracted from the watch page.
+    // Use WATCH_CONFIG animeName/poster — NOT og:image, which on the watch page
+    // is the episode screenshot rather than the anime poster.
     if (!name) {
-      var og = doc.selectFirst("meta[property='og:title']");
-      if (og) name = (og.attr("content") || "").trim();
+      var animeNameM = html.match(/animeName:\s*"([^"]+)"/);
+      if (animeNameM) name = animeNameM[1];
     }
     if (!imageUrl) {
-      var ogImg = doc.selectFirst("meta[property='og:image']");
-      if (ogImg) imageUrl = ogImg.attr("content") || "";
+      imageUrl = watchPoster;
     }
 
     return {
