@@ -24,15 +24,15 @@ If you installed the app via Live Container, then use the following buttons inst
 
 **Anime (LiveContainer)**
 
-<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSUyME1hbGx5JTIwZXh0ZW5zaW9ucyZyZXBvX3VybD1odHRwczovL2dpdGh1Yi5jb20vTWFsbHlkMTEvbWFuZ2F5b21pLWFuaW1lLWV4dGVuc2lvbnMmYW5pbWVfdXJsPWh0dHBzOi8vcmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucy9tYWluL2FuaW1lX2luZGV4Lmpzb24="><img alt="Add anime repository" src="https://img.shields.io/badge/Add%20Anime%20Repository%20(LiveContainer)-4A1F9E?style=for-the-badge&logoColor=white" height="35"></a>
+<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSUyME1hbGx5JTIwZXh0ZW5zaW9ucyZyZXBvX3VybD1odHRwczovL2dpdGh1Yi5jb20vTWFsbHlkMTEvbWFuZ2F5b21pLWFuaW1lLWV4dGVuc2lvbnMmYW5pbWVfdXJsPWh0dHBzOi8vcmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucy9tYWluL2FuaW1lX2luZGV4Lmpzb24="><img alt="Add anime repository" src="https://img.shields.io/badge/Add%20Anime%20Repository%20(LiveContainer)-1A7F3C?style=for-the-badge&logoColor=white" height="35"></a>
 
 **Manga (LiveContainer)**
 
-<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBNYWxseSBleHRlbnNpb25zJnJlcG9fdXJsPWh0dHBzOi8vZ2l0aHViLmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucyZtYW5nYV91cmw9aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL01hbGx5ZDExL21hbmdheW9taS1hbmltZS1leHRlbnNpb25zL21haW4vaW5kZXguanNvbg=="><img alt="Add manga repository" src="https://img.shields.io/badge/Add%20Manga%20Repository%20(LiveContainer)-4A1F9E?style=for-the-badge&logoColor=white" height="35"></a>
+<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBNYWxseSBleHRlbnNpb25zJnJlcG9fdXJsPWh0dHBzOi8vZ2l0aHViLmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucyZtYW5nYV91cmw9aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL01hbGx5ZDExL21hbmdheW9taS1hbmltZS1leHRlbnNpb25zL21haW4vaW5kZXguanNvbg=="><img alt="Add manga repository" src="https://img.shields.io/badge/Add%20Manga%20Repository%20(LiveContainer)-1A7F3C?style=for-the-badge&logoColor=white" height="35"></a>
 
 **Light Novels (LiveContainer)**
 
-<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBNYWxseSBleHRlbnNpb25zJnJlcG9fdXJsPWh0dHBzOi8vZ2l0aHViLmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucyZub3ZlbF91cmw9aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL01hbGx5ZDExL21hbmdheW9taS1hbmltZS1leHRlbnNpb25zL21haW4vbm92ZWxfaW5kZXguanNvbg=="><img alt="Add novel repository" src="https://img.shields.io/badge/Add%20Novel%20Repository%20(LiveContainer)-4A1F9E?style=for-the-badge&logoColor=white" height="35"></a>
+<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBNYWxseSBleHRlbnNpb25zJnJlcG9fdXJsPWh0dHBzOi8vZ2l0aHViLmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucyZub3ZlbF91cmw9aHR0cHM6Ly9yYXcuZ2l0aHVidXNlcmNvbnRlbnQuY29tL01hbGx5ZDExL21hbmdheW9taS1hbmltZS1leHRlbnNpb25zL21haW4vbm92ZWxfaW5kZXguanNvbg=="><img alt="Add novel repository" src="https://img.shields.io/badge/Add%20Novel%20Repository%20(LiveContainer)-1A7F3C?style=for-the-badge&logoColor=white" height="35"></a>
 
 Or add them manually in the app (More -> Settings -> Browse):
 
