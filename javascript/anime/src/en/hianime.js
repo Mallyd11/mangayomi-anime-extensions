@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -231,6 +231,30 @@ class DefaultExtension extends MProvider {
     var statusMatch = html.match(/Status[\s\S]{0,80}?(Currently Airing|Finished Airing|Ongoing|Completed|Releasing|Not Yet Released|Upcoming)/i);
     if (statusMatch) status = this.statusCode(statusMatch[1]);
 
+    // Episode thumbnails via ani.zip — try to find a MAL or AniList ID in the page
+    var thumbMap = {};
+    try {
+      var anilistMatch = html.match(/anilist\.co\/anime\/(\d+)/i);
+      var malMatch     = html.match(/myanimelist\.net\/anime\/(\d+)/i);
+      var zipUrl = null;
+      if (anilistMatch) {
+        zipUrl = "https://api.ani.zip/mappings?anilist_id=" + anilistMatch[1];
+      } else if (malMatch) {
+        zipUrl = "https://api.ani.zip/mappings?mal_id=" + malMatch[1];
+      }
+      if (zipUrl) {
+        var zipRes = await this.client.get(zipUrl, {});
+        if (zipRes.statusCode === 200) {
+          var zipData = JSON.parse(zipRes.body);
+          if (zipData && zipData.episodes) {
+            Object.keys(zipData.episodes).forEach(function(k) {
+              if (zipData.episodes[k].image) thumbMap[k] = zipData.episodes[k].image;
+            });
+          }
+        }
+      }
+    } catch (e) {}
+
     // Episodes - parse every <a> with data-stream-token attribute
     var chapters = [];
     var epAnchors = doc.select("a[data-stream-token]");
@@ -252,7 +276,8 @@ class DefaultExtension extends MProvider {
       if (langs.length) label += " [" + langs.join("+") + "]";
       // chapter url encodes everything we need: realEpId, hasSub, hasDub
       var chUrl = realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0");
-      chapters.push({ name: label, url: chUrl });
+      var thumbnailUrl = thumbMap[epNum] || thumbMap[String(parseInt(epNum, 10))] || null;
+      chapters.push({ name: label, url: chUrl, thumbnailUrl: thumbnailUrl });
     }
 
     // Reverse so newest episodes are at the top (Mangayomi convention)
