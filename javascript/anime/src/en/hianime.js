@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -176,11 +176,16 @@ class DefaultExtension extends MProvider {
       throw new Error("Could not parse anime slug from URL: " + url);
     }
 
-    // The watch page has all the data we need: metadata + every episode token
+    // Fetch watch page (episodes + metadata) and info page (external IDs) in parallel
     var watchPath = this.buildWatchUrl(info.slug, 1);
-    var watchUrl = this.source.baseUrl + watchPath;
-    var res = await this.client.get(watchUrl, this.headers);
-    var html = res.body;
+    var watchUrl  = this.source.baseUrl + watchPath;
+    var infoUrl   = this.source.baseUrl + "/" + info.slug;
+    var [res, infoRes] = await Promise.all([
+      this.client.get(watchUrl, this.headers),
+      this.client.get(infoUrl, this.headers).catch(function() { return { body: "" }; }),
+    ]);
+    var html    = res.body;
+    var infoHtml = infoRes.body || "";
     var doc = new Document(html);
 
     // Title - prefer the h1/h2 on the page, fall back to og:title
@@ -231,17 +236,28 @@ class DefaultExtension extends MProvider {
     var statusMatch = html.match(/Status[\s\S]{0,80}?(Currently Airing|Finished Airing|Ongoing|Completed|Releasing|Not Yet Released|Upcoming)/i);
     if (statusMatch) status = this.statusCode(statusMatch[1]);
 
-    // Episode thumbnails via ani.zip — try to find a MAL or AniList ID in the page
+    // Episode thumbnails via ani.zip — search both pages for a MAL or AniList ID.
+    // Patterns cover: href links, data-* attrs, and embedded JSON/JS vars.
     var thumbMap = {};
     try {
-      var anilistMatch = html.match(/anilist\.co\/anime\/(\d+)/i);
-      var malMatch     = html.match(/myanimelist\.net\/anime\/(\d+)/i);
-      var zipUrl = null;
-      if (anilistMatch) {
-        zipUrl = "https://api.ani.zip/mappings?anilist_id=" + anilistMatch[1];
-      } else if (malMatch) {
-        zipUrl = "https://api.ani.zip/mappings?mal_id=" + malMatch[1];
-      }
+      var combined = html + infoHtml;
+      var anilistId = null;
+      var malId     = null;
+      var aMatch = combined.match(/anilist\.co\/anime\/(\d+)/i)
+                || combined.match(/["\s]anilist[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i)
+                || combined.match(/data-anilist[_\-]?id=["']?(\d+)/i);
+      var mMatch = combined.match(/myanimelist\.net\/anime\/(\d+)/i)
+                || combined.match(/["\s]mal[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i)
+                || combined.match(/data-mal[_\-]?id=["']?(\d+)/i);
+      if (aMatch) anilistId = aMatch[1];
+      if (mMatch) malId     = mMatch[1];
+
+      var zipUrl = anilistId
+        ? "https://api.ani.zip/mappings?anilist_id=" + anilistId
+        : malId
+          ? "https://api.ani.zip/mappings?mal_id=" + malId
+          : null;
+
       if (zipUrl) {
         var zipRes = await this.client.get(zipUrl, {});
         if (zipRes.statusCode === 200) {
