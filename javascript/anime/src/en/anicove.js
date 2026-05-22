@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -149,6 +149,25 @@ class DefaultExtension extends MProvider {
       }
     } catch (e) {}
 
+    // Fetch episode thumbnails from ani.zip (TVDB/Crunchyroll screenshots).
+    // Returns a map of episode number string → image URL.
+    var thumbMap = {};
+    try {
+      var zipRes = await this.client.get(
+        "https://api.ani.zip/mappings?anilist_id=" + animeId,
+        { "User-Agent": this.ua }
+      );
+      var zipJson = JSON.parse(zipRes.body);
+      if (zipJson && zipJson.episodes) {
+        var zipKeys = Object.keys(zipJson.episodes);
+        for (var ki = 0; ki < zipKeys.length; ki++) {
+          var zk = zipKeys[ki];
+          var ze = zipJson.episodes[zk];
+          if (ze && ze.image) thumbMap[zk] = ze.image;
+        }
+      }
+    } catch (e) {}
+
     var watchRes = await this.client.get(
       this.source.baseUrl + "/watch/" + animeId + "/ep-1",
       this.headers
@@ -174,6 +193,7 @@ class DefaultExtension extends MProvider {
         name: label,
         url: animeId + "||" + epNum,
         imageUrl: "",
+        thumbnailUrl: thumbMap[epNum] || "",
         scanlator: (ep.attr("class") || "").indexOf("is-filler") >= 0 ? "Filler" : "",
       });
     }
@@ -184,7 +204,13 @@ class DefaultExtension extends MProvider {
         total = media.nextAiringEpisode.episode - 1;
       }
       for (var j = 1; j <= total; j++) {
-        chapters.push({ name: "Episode " + j, url: animeId + "||" + j, imageUrl: "", scanlator: "" });
+        chapters.push({
+          name: "Episode " + j,
+          url: animeId + "||" + j,
+          imageUrl: "",
+          thumbnailUrl: thumbMap[String(j)] || "",
+          scanlator: "",
+        });
       }
     }
 
