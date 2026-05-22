@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.9",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -67,7 +67,7 @@ class DefaultExtension extends MProvider {
       if (!href) href = item.attr("href") || ""; // most-viewed: item is the <a>
       if (!href) continue;
       var link = href.startsWith("http") ? href : this.source.baseUrl + href;
-      var name = (nameEl.attr("data-jp") || nameEl.text || "").trim();
+      var name = (nameEl.text || nameEl.attr("data-jp") || "").trim();
       if (!name) continue;
       var img = item.selectFirst("img");
       var imageUrl = img ? (img.attr("src") || img.attr("data-src") || "") : "";
