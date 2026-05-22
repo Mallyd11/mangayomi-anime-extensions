@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -189,6 +189,17 @@ class DefaultExtension extends MProvider {
         }
       }
     } catch (e) {}
+
+    // Sort each group highest quality first (1080p before 720p before 360p)
+    function sortByQuality(arr) {
+      return arr.sort(function(a, b) {
+        var qa = parseInt((a.quality.match(/\[(\d+)p\]/) || [0, 0])[1], 10) || 0;
+        var qb = parseInt((b.quality.match(/\[(\d+)p\]/) || [0, 0])[1], 10) || 0;
+        return qb - qa;
+      });
+    }
+    subVideos = sortByQuality(subVideos);
+    dubVideos = sortByQuality(dubVideos);
 
     var pref = "sub";
     try { pref = new SharedPreferences().get("justanime_pref_audio") || "sub"; } catch (e) {}
