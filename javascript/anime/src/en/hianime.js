@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.2",
+    "version": "0.2.3",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -40,31 +40,56 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  async fetchDoc(path) {
+  async fetchPage(path) {
     var url = path.startsWith("http") ? path : this.source.baseUrl + path;
     var res = await this.client.get(url, this.headers);
-    return new Document(res.body);
+    return { doc: new Document(res.body), html: res.body };
+  }
+
+  async fetchDoc(path) {
+    return (await this.fetchPage(path)).doc;
+  }
+
+  // Build a URL→EnglishName map from the JSON-LD <script> block on list pages.
+  // HiAnime embeds structured data with English translated names even when the
+  // card HTML only shows romaji.
+  buildNameMap(html) {
+    var nameMap = {};
+    try {
+      var re = /<script[^>]+ld\+json[^>]*>([\s\S]*?)<\/script>/gi;
+      var m;
+      while ((m = re.exec(html)) !== null) {
+        try {
+          var ld = JSON.parse(m[1]);
+          var ldItems = (ld && ld.itemListElement) ? ld.itemListElement : [];
+          for (var i = 0; i < ldItems.length; i++) {
+            if (ldItems[i].url && ldItems[i].name) {
+              nameMap[ldItems[i].url] = ldItems[i].name;
+            }
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return nameMap;
   }
 
   // Parse anime cards from list pages (.flw-item containers)
-  parseList(doc) {
+  parseList(doc, nameMap) {
     var list = [];
     var items = doc.select(".flw-item");
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
-      // Prefer the play button anchor; fall back to the title anchor
       var anchor = item.selectFirst(".film-poster-ahref");
       if (!anchor) anchor = item.selectFirst(".dynamic-name");
       if (!anchor) anchor = item.selectFirst(".film-name a");
       var href = anchor ? anchor.attr("href") : "";
       var link = href.startsWith("http") ? href : this.source.baseUrl + href;
 
-      // .film-poster-ahref carries title="English Name" in static HTML.
-      // .film-name a only has the romaji text content.
-      var name = (anchor ? anchor.attr("title") : "") || "";
+      // JSON-LD map has English translated names; fall back to data-ename (romaji)
+      var name = (nameMap && nameMap[link]) || "";
       if (!name) {
-        var nameEl = item.selectFirst(".film-name a") || item.selectFirst(".dynamic-name");
-        if (nameEl) name = (nameEl.attr("title") || nameEl.attr("data-ename") || nameEl.text || "").trim();
+        var nameEl = item.selectFirst(".dynamic-name") || item.selectFirst(".film-name a");
+        if (nameEl) name = (nameEl.attr("data-ename") || nameEl.text || "").trim();
       }
       name = name.trim();
 
@@ -90,18 +115,18 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var doc = await this.fetchDoc("/most-popular?page=" + page);
-    return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
+    var p = await this.fetchPage("/most-popular?page=" + page);
+    return { list: this.parseList(p.doc, this.buildNameMap(p.html)), hasNextPage: this.hasNextPage(p.doc) };
   }
 
   async getLatestUpdates(page) {
-    var doc = await this.fetchDoc("/top-airing?page=" + page);
-    return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
+    var p = await this.fetchPage("/top-airing?page=" + page);
+    return { list: this.parseList(p.doc, this.buildNameMap(p.html)), hasNextPage: this.hasNextPage(p.doc) };
   }
 
   async search(query, page, filters) {
-    var doc = await this.fetchDoc("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
-    return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
+    var p = await this.fetchPage("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
+    return { list: this.parseList(p.doc, this.buildNameMap(p.html)), hasNextPage: this.hasNextPage(p.doc) };
   }
 
   statusCode(status) {
