@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.2.1",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -238,8 +238,10 @@ class DefaultExtension extends MProvider {
           // ani.zip keys episodes by season-relative number ("1", "2", …) — the same
           // numbering the site uses — so no offset calculation is needed.
           // The API supports ?mal_id= directly, which we already have.
+          var showThumbs = false;
+          try { showThumbs = new SharedPreferences().get("anikoto_pref_ep_thumbnails"); } catch (e) {}
           var thumbMap = {}; // epNum (string) → thumbnail URL
-          if (animeMALId) {
+          if (showThumbs && animeMALId) {
             try {
               var azRes = await this.client.get(
                 "https://api.ani.zip/mappings?mal_id=" + animeMALId,
@@ -475,6 +477,14 @@ class DefaultExtension extends MProvider {
 
   getSourcePreferences() {
     return [
+      {
+        key: "anikoto_pref_ep_thumbnails",
+        switchPreferenceCompat: {
+          title: "Episode thumbnails",
+          summary: "Fetch per-episode thumbnails from ani.zip. Adds one extra network request when opening an anime.",
+          value: false,
+        },
+      },
       {
         key: "anikoto_pref_audio",
         listPreference: {
