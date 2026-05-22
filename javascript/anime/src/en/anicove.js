@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -248,14 +248,15 @@ class DefaultExtension extends MProvider {
 
       var videoLinkM = html.match(/videoLink:\s*'([^']*)'/);
       var sourceTypeM = html.match(/sourceType:\s*'([^']*)'/);
-      var downloadUrlM = html.match(/downloadUrl:\s*"((?:[^"\\]|\\.)*)"/);
 
       var videoLink = videoLinkM ? videoLinkM[1] : "";
       var sourceType = sourceTypeM ? sourceTypeM[1] : "hls";
-      var downloadUrl = downloadUrlM ? downloadUrlM[1].replace(/\\u0026/g, "&") : "";
 
       if (!videoLink) continue;
 
+      // The site's downloadUrl points to pahe.win (a JS-gated link shortener)
+      // which cannot be resolved without a real browser, so we only expose the
+      // HLS stream. Mangayomi's native download system can download it directly.
       if (sourceType === "hls") {
         streams.push({
           url: videoLink,
@@ -270,16 +271,6 @@ class DefaultExtension extends MProvider {
           originalUrl: videoLink,
           quality: "Embed [" + lang.toUpperCase() + "]",
           headers: { "User-Agent": this.ua },
-          subtitles: [],
-        });
-      }
-
-      if (downloadUrl && downloadUrl !== videoLink) {
-        streams.push({
-          url: downloadUrl,
-          originalUrl: downloadUrl,
-          quality: "Download [" + lang.toUpperCase() + "]",
-          headers: streamHeaders,
           subtitles: [],
         });
       }
