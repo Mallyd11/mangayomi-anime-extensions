@@ -1,5 +1,11 @@
 {
     "manga": {
+        "Mangapark": {
+            "name": "Mangapark",
+            "version": "1.0.3",
+            "langs": "en",
+            "lastUpd": 1779416593.167882
+        },
         "Weeb Central": {
             "name": "Weeb Central",
             "version": "0.1.1",
@@ -9,12 +15,6 @@
         "ReadComicOnline": {
             "name": "ReadComicOnline",
             "version": "0.3.1",
-            "langs": "en",
-            "lastUpd": 1779415180.160092
-        },
-        "Mangapark": {
-            "name": "Mangapark",
-            "version": "1.0.2",
             "langs": "en",
             "lastUpd": 1779415180.160092
         },
