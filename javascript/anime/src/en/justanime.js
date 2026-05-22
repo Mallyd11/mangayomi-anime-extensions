@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -220,10 +220,10 @@ class DefaultExtension extends MProvider {
       {
         key: "justanime_pref_audio",
         listPreference: {
-          title: "Preferred audio",
-          summary: "Which audio track appears first for streaming and downloads",
+          title: "Preferred language",
+          summary: "Primary language to use. If unavailable, the other will be used as fallback.",
           valueIndex: 0,
-          entries: ["Sub", "Dub"],
+          entries: ["Sub first, Dub fallback", "Dub first, Sub fallback"],
           entryValues: ["sub", "dub"],
         },
       },
