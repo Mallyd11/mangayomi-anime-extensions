@@ -1,26 +1,26 @@
 {
     "manga": {
-        "Mangapill": {
-            "name": "Mangapill",
-            "version": "1.0.4",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
         "Weeb Central": {
             "name": "Weeb Central",
-            "version": "0.1.0",
+            "version": "0.1.1",
             "langs": "en",
-            "lastUpd": 1779410651.044824
+            "lastUpd": 1779415180.160092
         },
         "ReadComicOnline": {
             "name": "ReadComicOnline",
-            "version": "0.3.0",
+            "version": "0.3.1",
             "langs": "en",
-            "lastUpd": 1779410651.044824
+            "lastUpd": 1779415180.160092
         },
         "Mangapark": {
             "name": "Mangapark",
-            "version": "1.0.1",
+            "version": "1.0.2",
+            "langs": "en",
+            "lastUpd": 1779415180.160092
+        },
+        "Mangapill": {
+            "name": "Mangapill",
+            "version": "1.0.4",
             "langs": "en",
             "lastUpd": 1779410651.044824
         },
