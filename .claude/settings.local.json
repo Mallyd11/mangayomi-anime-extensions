@@ -413,7 +413,10 @@
       "Bash(python hi_latest_check.py)",
       "Bash(python hi_pages.py)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\loving-nash-25c52e\" -Recurse -Name)",
-      "Bash(Select-Object -First 50)"
+      "Bash(Select-Object -First 50)",
+      "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 30)",
+      "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; git checkout --theirs index.json 2>&1; git add index.json 2>&1; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 20)",
+      "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; git add -A; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 20)"
     ]
   }
 }
