@@ -16,7 +16,7 @@ def generateVersionData():
     FILES = ["", "anime_", "novel_"]
     title = ["manga", "anime", "novel"]
 
-    currentDT = datetime.now(timezone("America/New_York")).timestamp()
+    currentDT = datetime.now(timezone("America/Toronto")).timestamp()
 
     newData = {}
     for file in FILES:
@@ -64,7 +64,7 @@ def generateVersionData():
 
 
 def generateExtensionList():
-    tz = timezone("America/New_York")
+    tz = timezone("America/Toronto")
     lines = []
     lines.append("## Available Extensions List")
     lines.append("<details>")
