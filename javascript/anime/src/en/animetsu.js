@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.7",
+    "version": "1.3.8",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -184,7 +184,7 @@ class DefaultExtension extends MProvider {
     epData.forEach((item) => {
       var ep_num = item.ep_num;
       var ep_title = item.name;
-      var epName = format == "MOVIE" ? ep_title : `E${ep_num} : ${ep_title}`;
+      var epName = format == "MOVIE" ? ep_title : `Episode ${ep_num} : ${ep_title}`;
       var isFiller = item.is_filler;
       var token = `${id}/${ep_num}`;
 
