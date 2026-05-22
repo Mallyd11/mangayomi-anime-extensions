@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -40,13 +40,17 @@ class DefaultExtension extends MProvider {
     };
   }
 
+  getPreference(key) {
+    return new SharedPreferences().get(key);
+  }
+
   get supportsLatest() {
     return true;
   }
 
   // Parse anime cards from any page that uses the site's standard grid layout.
-  // The selector uses .anime-card (class only) rather than a.anime-card
-  // because Mangayomi's DOM API may not support compound element+class selectors.
+  // Uses .anime-card (class only) — Mangayomi's DOM API does not support
+  // compound element+class selectors like a.anime-card.
   parseCards(doc) {
     var cards = doc.select(".anime-card");
     var list = [];
@@ -56,7 +60,6 @@ class DefaultExtension extends MProvider {
       var href = card.attr("href") || "";
       if (!href) continue;
       var link = href.indexOf("http") === 0 ? href : this.source.baseUrl + href;
-      // Only include actual anime pages
       if (link.indexOf("/anime/") < 0) continue;
 
       var titleEl = card.selectFirst(".anime-card-title");
@@ -108,8 +111,6 @@ class DefaultExtension extends MProvider {
     }
   }
 
-  // Pull the AniList numeric ID out of any AniCove URL.
-  // Handles: /anime/{id}  and  /watch/{id}/ep-N
   extractAnimeId(url) {
     var m = url.match(/\/(?:anime|watch)\/(\d+)/);
     return m ? m[1] : "";
@@ -119,7 +120,6 @@ class DefaultExtension extends MProvider {
     var animeId = this.extractAnimeId(url);
     if (!animeId) throw new Error("Cannot parse anime ID from: " + url);
 
-    // AniList requires Origin + Referer to avoid 403.
     var alHeaders = {
       "Content-Type": "application/json",
       "Accept": "application/json",
@@ -149,7 +149,6 @@ class DefaultExtension extends MProvider {
       }
     } catch (e) {}
 
-    // Fetch the watch page — episode list is server-side rendered in the sidebar.
     var watchRes = await this.client.get(
       this.source.baseUrl + "/watch/" + animeId + "/ep-1",
       this.headers
@@ -157,7 +156,6 @@ class DefaultExtension extends MProvider {
     var html = (watchRes && watchRes.body) || "";
     var doc = new Document(html);
 
-    // Parse the episode sidebar: <a class="episode-sidebar-item" data-number="N">
     var epEls = doc.select("a.episode-sidebar-item");
     var chapters = [];
 
@@ -180,7 +178,6 @@ class DefaultExtension extends MProvider {
       });
     }
 
-    // Fallback: synthesise episode list from the AniList total if sidebar was empty.
     if (chapters.length === 0 && media) {
       var total = media.episodes || 0;
       if (media.nextAiringEpisode && media.nextAiringEpisode.episode) {
@@ -191,7 +188,6 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    // Mangayomi convention: newest episode at index 0.
     chapters.reverse();
 
     var name = media ? (media.title.english || media.title.romaji || "") : "";
@@ -200,7 +196,6 @@ class DefaultExtension extends MProvider {
     var genre = media ? (media.genres || []) : [];
     var status = media ? this.statusCode(media.status) : 5;
 
-    // If AniList failed, try to extract name/image from the watch page HTML.
     if (!name) {
       var og = doc.selectFirst("meta[property='og:title']");
       if (og) name = (og.attr("content") || "").trim();
@@ -222,69 +217,72 @@ class DefaultExtension extends MProvider {
   }
 
   async getVideoList(url) {
-    // Chapter URL format: "{anilist_id}||{ep_number}"
     var parts = url.split("||");
     var animeId = parts[0];
     var epNum = parts[1] || "1";
 
-    // Read language preference (sub / dub).
-    var lang = "sub";
-    try { lang = new SharedPreferences().get("anicove_lang") || "sub"; } catch (e) {}
-
-    var watchHeaders = {
-      "User-Agent": this.ua,
-      "Referer": this.source.baseUrl + "/",
-      "Cookie": "preferred_language=" + lang,
-    };
-    var res = await this.client.get(
-      this.source.baseUrl + "/watch/" + animeId + "/ep-" + epNum,
-      watchHeaders
-    );
-    var html = (res && res.body) || "";
-
-    // Extract fields from window.WATCH_CONFIG in the inline <script> block.
-    // videoLink:   videoLink: 'https://...',   (single-quoted Jinja string)
-    // sourceType:  sourceType: 'hls',           (single-quoted Jinja string)
-    // downloadUrl: downloadUrl: "https://...",  (tojson double-quoted)
-    var videoLinkM = html.match(/videoLink:\s*'([^']*)'/);
-    var sourceTypeM = html.match(/sourceType:\s*'([^']*)'/);
-    var downloadUrlM = html.match(/downloadUrl:\s*"((?:[^"\\]|\\.)*)"/);
-
-    var videoLink = videoLinkM ? videoLinkM[1] : "";
-    var sourceType = sourceTypeM ? sourceTypeM[1] : "hls";
-    var downloadUrl = downloadUrlM ? downloadUrlM[1].replace(/\\u0026/g, "&") : "";
-
-    if (!videoLink) return [];
+    // Read multi-select language preference — defaults to both sub and dub.
+    var langs = ["sub", "dub"];
+    try {
+      var pref = this.getPreference("anicove_lang");
+      if (pref && pref.length > 0) langs = pref;
+    } catch (e) {}
 
     var streamHeaders = { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" };
     var streams = [];
 
-    if (sourceType === "hls") {
-      streams.push({
-        url: videoLink,
-        originalUrl: videoLink,
-        quality: "HLS [" + lang.toUpperCase() + "]",
-        headers: streamHeaders,
-        subtitles: [],
-      });
-    } else {
-      streams.push({
-        url: videoLink,
-        originalUrl: videoLink,
-        quality: "Embed [" + lang.toUpperCase() + "]",
-        headers: { "User-Agent": this.ua },
-        subtitles: [],
-      });
-    }
+    // Fetch streams for each selected language sequentially.
+    for (var li = 0; li < langs.length; li++) {
+      var lang = langs[li];
 
-    if (downloadUrl && downloadUrl !== videoLink) {
-      streams.push({
-        url: downloadUrl,
-        originalUrl: downloadUrl,
-        quality: "Download [" + lang.toUpperCase() + "]",
-        headers: streamHeaders,
-        subtitles: [],
-      });
+      var watchHeaders = {
+        "User-Agent": this.ua,
+        "Referer": this.source.baseUrl + "/",
+        "Cookie": "preferred_language=" + lang,
+      };
+      var res = await this.client.get(
+        this.source.baseUrl + "/watch/" + animeId + "/ep-" + epNum,
+        watchHeaders
+      );
+      var html = (res && res.body) || "";
+
+      var videoLinkM = html.match(/videoLink:\s*'([^']*)'/);
+      var sourceTypeM = html.match(/sourceType:\s*'([^']*)'/);
+      var downloadUrlM = html.match(/downloadUrl:\s*"((?:[^"\\]|\\.)*)"/);
+
+      var videoLink = videoLinkM ? videoLinkM[1] : "";
+      var sourceType = sourceTypeM ? sourceTypeM[1] : "hls";
+      var downloadUrl = downloadUrlM ? downloadUrlM[1].replace(/\\u0026/g, "&") : "";
+
+      if (!videoLink) continue;
+
+      if (sourceType === "hls") {
+        streams.push({
+          url: videoLink,
+          originalUrl: videoLink,
+          quality: "HLS [" + lang.toUpperCase() + "]",
+          headers: streamHeaders,
+          subtitles: [],
+        });
+      } else {
+        streams.push({
+          url: videoLink,
+          originalUrl: videoLink,
+          quality: "Embed [" + lang.toUpperCase() + "]",
+          headers: { "User-Agent": this.ua },
+          subtitles: [],
+        });
+      }
+
+      if (downloadUrl && downloadUrl !== videoLink) {
+        streams.push({
+          url: downloadUrl,
+          originalUrl: downloadUrl,
+          quality: "Download [" + lang.toUpperCase() + "]",
+          headers: streamHeaders,
+          subtitles: [],
+        });
+      }
     }
 
     return streams;
@@ -298,10 +296,10 @@ class DefaultExtension extends MProvider {
     return [
       {
         key: "anicove_lang",
-        listPreference: {
+        multiSelectListPreference: {
           title: "Preferred language",
-          summary: "Choose whether to stream subtitled or dubbed audio.",
-          valueIndex: 0,
+          summary: "Select sub, dub, or both. All checked types will appear as separate stream options.",
+          values: ["sub", "dub"],
           entries: ["Sub (subtitled)", "Dub (dubbed)"],
           entryValues: ["sub", "dub"],
         },

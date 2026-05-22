@@ -1,11 +1,42 @@
 {
-    "manga": {},
+    "manga": {
+        "Mangapark": {
+            "name": "Mangapark",
+            "version": "1.0.1",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "Mangapill": {
+            "name": "Mangapill",
+            "version": "1.0.4",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "ReadComicOnline": {
+            "name": "ReadComicOnline",
+            "version": "0.3.0",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "Weeb Central": {
+            "name": "Weeb Central",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "WeLoMa": {
+            "name": "WeLoMa",
+            "version": "1.0.0",
+            "langs": "ja",
+            "lastUpd": 1779410651.044824
+        }
+    },
     "anime": {
         "AniCove": {
             "name": "AniCove",
-            "version": "0.1.0",
+            "version": "0.1.4",
             "langs": "en",
-            "lastUpd": 1747738043.896285
+            "lastUpd": 1779410651.044824
         },
         "Anidap": {
             "name": "Anidap",
@@ -62,5 +93,24 @@
             "lastUpd": 1747738043.896285
         }
     },
-    "novel": {}
+    "novel": {
+        "bookReadFree": {
+            "name": "bookReadFree",
+            "version": "0.0.1",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "Novelbuddy": {
+            "name": "Novelbuddy",
+            "version": "0.0.9",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "NovelFire": {
+            "name": "NovelFire",
+            "version": "0.0.1",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        }
+    }
 }
