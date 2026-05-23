@@ -22,11 +22,11 @@ This repository contains the available javascript extension catalogues for the M
 | AniCove | 0.2.2 | No | Sub+Dub | 2026/05/23 |
 | AniKoto | 0.2.2 | Yes | Sub+Dub | 2026/05/22 |
 | Anidap | 1.5.21 | No | Sub+Dub | 2025/05/20 |
-| AnimeHeaven | 0.0.6 | Yes | Sub Only | 2025/05/20 |
+| AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/05/23 |
 | AnimeParadise | 0.3.2 | No | Sub Only | 2026/05/23 |
 | Animetsu | 1.4.1 | No | Sub+Dub | 2026/05/23 |
 | HiAnime | 0.2.4 | Yes | Sub+Dub | 2026/05/22 |
-| JustAnime | 0.1.3 | Yes | Sub+Dub | 2026/05/23 |
+| JustAnime | 0.1.4 | Yes | Sub+Dub | 2026/05/23 |
 | MyroniX | 0.1.4 | Yes | Sub+Dub | 2026/05/22 |
 
 ## Novel
