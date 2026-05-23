@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.6",
+    "version": "0.0.7",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -47,23 +47,35 @@ class DefaultExtension extends MProvider {
   }
 
   // Parse a list page (popular.php / new.php / search.php).
+  // Site structure per item:
+  //   <a href="anime.php?CODE"><img src="image.php?CODE"></a>
+  //   <a href="anime.php?CODE">Title Text</a>
+  // Attributes use double quotes; no class on img tags.
   parseList(html) {
     var list = [];
-    // Site uses single-quoted attrs; cover images carry class='coverimg'.
-    var rx = /<a[^>]+href='(anime\.php\?[\w]+)'[^>]*>\s*<img[^>]+class='coverimg'[^>]+src='([^']+)'[^>]+alt='([^']*)'/g;
     var seen = {};
-    var m;
-    while ((m = rx.exec(html)) !== null) {
-      var path = m[1];
-      var imgRel = m[2];
-      var name = m[3];
-      if (!path || !name) continue;
-      if (seen[path]) continue;
-      seen[path] = true;
-      var imageUrl = imgRel.indexOf("http") === 0 ? imgRel : this.source.baseUrl + "/" + imgRel.replace(/^\/+/, "");
+
+    // First pass: build href → imgSrc map from image-anchor elements.
+    var imgMap = {};
+    var imgRx = /<a[^>]+href=["'](anime\.php\?[\w]+)["'][^>]*>\s*<img[^>]+src=["']([^"']+)["']/g;
+    var im;
+    while ((im = imgRx.exec(html)) !== null) {
+      if (!imgMap[im[1]]) imgMap[im[1]] = im[2];
+    }
+
+    // Second pass: find plain-text title anchors and assemble list items.
+    var titleRx = /<a[^>]+href=["'](anime\.php\?[\w]+)["'][^>]*>([^<]{2,120})<\/a>/g;
+    var tm;
+    while ((tm = titleRx.exec(html)) !== null) {
+      var href = tm[1];
+      var name = tm[2].trim();
+      if (!name || seen[href]) continue;
+      seen[href] = true;
+      var imgSrc = imgMap[href] || "";
+      var imageUrl = imgSrc ? (imgSrc.indexOf("http") === 0 ? imgSrc : this.source.baseUrl + "/" + imgSrc) : "";
       list.push({
         name: this._decodeHtml(name),
-        link: this.source.baseUrl + "/" + path,
+        link: this.source.baseUrl + "/" + href,
         imageUrl: imageUrl,
       });
     }
