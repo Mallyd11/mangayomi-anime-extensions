@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.0",
+    "version": "0.3.2",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -78,12 +78,14 @@ class DefaultExtension extends MProvider {
     return await this.formList('search?q=&sort={"postDate":-1}', page);
   }
   async search(query, page, filters) {
-    var season = filters[0].values[filters[0].state].value;
-    var year = filters[1].values[filters[1].state].value;
+    var season = (filters && filters[0] && filters[0].values) ? filters[0].values[filters[0].state].value : "";
+    var year = (filters && filters[1] && filters[1].values) ? filters[1].values[filters[1].state].value : "";
 
     var genre = "genre[]=";
-    for (var filter of filters[2].state) {
-      if (filter.state == true) genre += `${filter.value}&genre[]=`;
+    if (filters && filters[2] && filters[2].state) {
+      for (var filter of filters[2].state) {
+        if (filter.state == true) genre += `${filter.value}&genre[]=`;
+      }
     }
     var slug = `search?q=${query}&year=${year}&season=${season}&${genre}`;
     return await this.formList(slug);
@@ -140,7 +142,7 @@ class DefaultExtension extends MProvider {
   }
 
   // Extracts the streams url for different resolutions from a hls stream.
-  async extractStreams(url) {
+  async extractStreams(url, autoOnly = false) {
     var proxyBase = "https://stream.animeparadise.moe/";
     var streamHeaders = {
       "Referer": "https://animeparadise.moe/",
@@ -156,24 +158,26 @@ class DefaultExtension extends MProvider {
       },
     ];
 
-    const response = await new Client().get(proxiedUrl, streamHeaders);
-    if (response.statusCode == 200) {
-      const body = response.body;
-      const lines = body.split("\n");
-      var baseUrl = url.substring(0, url.lastIndexOf("/") + 1);
+    if (!autoOnly) {
+      const response = await new Client().get(proxiedUrl, streamHeaders);
+      if (response.statusCode == 200) {
+        const body = response.body;
+        const lines = body.split("\n");
+        var baseUrl = url.substring(0, url.lastIndexOf("/") + 1);
 
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
-          var resolution = lines[i].match(/RESOLUTION=(\d+x\d+)/)[1];
-          var nextLine = lines[i + 1].trim();
-          var absoluteUrl = nextLine.startsWith("http") ? nextLine : baseUrl + nextLine;
-          var m3u8Url = proxyBase + "m3u8?url=" + absoluteUrl;
-          streams.push({
-            url: m3u8Url,
-            originalUrl: m3u8Url,
-            quality: resolution,
-            headers: streamHeaders,
-          });
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
+            var resolution = lines[i].match(/RESOLUTION=(\d+x\d+)/)[1];
+            var nextLine = lines[i + 1].trim();
+            var absoluteUrl = nextLine.startsWith("http") ? nextLine : baseUrl + nextLine;
+            var m3u8Url = proxyBase + "m3u8?url=" + absoluteUrl;
+            streams.push({
+              url: m3u8Url,
+              originalUrl: m3u8Url,
+              quality: resolution,
+              headers: streamHeaders,
+            });
+          }
         }
       }
     }
@@ -185,15 +189,14 @@ class DefaultExtension extends MProvider {
   async getVideoList(url) {
     var jsonData = await this.requestAPI(`ep/${url}`);
     var epData = jsonData.data.episode;
-    var streams = await this.extractStreams(epData.streamLink);
 
-    var subtitles = [];
-    epData.subData.forEach((sub) => {
-      subtitles.push({
-        "label": sub.label,
-        "file": `${this.source.apiUrl}/stream/file/${sub.src}`,
-      });
-    });
+    var pref = this.getPreference("animeparadise_pref_video_resolution");
+    var streams = await this.extractStreams(epData.streamLink, pref === "auto");
+
+    var subtitles = epData.subData.map((sub) => ({
+      "label": sub.label,
+      "file": `${this.source.apiUrl}/stream/file/${sub.src}`,
+    }));
 
     streams[0].subtitles = subtitles;
 
