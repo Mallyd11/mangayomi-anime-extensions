@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -108,9 +108,24 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var data = await this.apiGet("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
-    var items = data.results || data.data || [];
-    var hasNextPage = !!(data.pageInfo && data.pageInfo.hasNextPage);
+    var items = [];
+    var hasNextPage = false;
+    try {
+      var data = await this.apiGet("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
+      items = data.results || data.anime || [];
+      hasNextPage = !!(data.pageInfo && data.pageInfo.hasNextPage);
+    } catch (e) {}
+    // Fall back to the suggest endpoint when main search returns nothing.
+    if (items.length === 0) {
+      try {
+        var sugg = await this.apiGet("/search/suggest?keyword=" + encodeURIComponent(query));
+        var suggItems = sugg.results || sugg.data || sugg.anime || [];
+        if (suggItems.length > 0) {
+          items = suggItems;
+          hasNextPage = false;
+        }
+      } catch (e) {}
+    }
     return { list: this.parseAnimeList(items), hasNextPage: hasNextPage };
   }
 
