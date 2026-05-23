@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.9",
+    "version": "1.4.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -49,6 +49,21 @@ class DefaultExtension extends MProvider {
 
   getProxyMediaUrl(url) {
     return "https://swiftstream.top/proxy" + url;
+  }
+
+  // Wrap a promise with a hard timeout so hung requests don't block the isolate.
+  withTimeout(promise, ms) {
+    return new Promise((resolve, reject) => {
+      var done = false;
+      var timer = setTimeout(() => {
+        if (!done) { done = true; reject(new Error("timeout")); }
+      }, ms);
+      promise.then((v) => {
+        if (!done) { done = true; clearTimeout(timer); resolve(v); }
+      }).catch((e) => {
+        if (!done) { done = true; clearTimeout(timer); reject(e); }
+      });
+    });
   }
 
   async request(slug) {
@@ -205,29 +220,30 @@ class DefaultExtension extends MProvider {
     }
 
     var results = await Promise.all(
-      combinations.map(async ({ serverName, audioType }) => {
-        try {
-          if (serverName == "pahe" || serverName == "meg") {
-            var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
-            var epData = await this.request(epSlug);
-            if (!epData.hasOwnProperty("sources")) return [];
-            return this.getPaheMegStreams(epData.sources, audioType, serverName);
-          } else if (serverName == "kite") {
-            var epSlug = `/oppai/${anilistUrl}?server=kite&source_type=${audioType}`;
-            var epData = await this.request(epSlug);
-            if (!epData.hasOwnProperty("sources")) return [];
-            return await this.getKiteStreams(epData, audioType);
-          } else if (serverName == "dio" || serverName == "kiss") {
-            var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
-            var epData = await this.request(epSlug);
-            if (!epData.hasOwnProperty("sources")) return [];
-            return await this.getDioKissStreams(epData, audioType, serverName);
-          }
-          return [];
-        } catch (e) {
-          return [];
-        }
-      })
+      combinations.map(({ serverName, audioType }) =>
+        this.withTimeout(
+          (async () => {
+            if (serverName == "pahe" || serverName == "meg") {
+              var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
+              var epData = await this.request(epSlug);
+              if (!epData.hasOwnProperty("sources")) return [];
+              return this.getPaheMegStreams(epData.sources, audioType, serverName);
+            } else if (serverName == "kite") {
+              var epSlug = `/oppai/${anilistUrl}?server=kite&source_type=${audioType}`;
+              var epData = await this.request(epSlug);
+              if (!epData.hasOwnProperty("sources")) return [];
+              return await this.getKiteStreams(epData, audioType);
+            } else if (serverName == "dio" || serverName == "kiss") {
+              var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
+              var epData = await this.request(epSlug);
+              if (!epData.hasOwnProperty("sources")) return [];
+              return await this.getDioKissStreams(epData, audioType, serverName);
+            }
+            return [];
+          })(),
+          10000 // 10s per server — prevents any single hung request from killing the isolate
+        ).catch(() => [])
+      )
     );
 
     return results.flat();
