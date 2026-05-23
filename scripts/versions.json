@@ -26,6 +26,48 @@
         }
     },
     "anime": {
+        "AniCove": {
+            "name": "AniCove",
+            "version": "0.2.3",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.5.22",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
+        "AnimeParadise": {
+            "name": "AnimeParadise",
+            "version": "0.3.3",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.2.5",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.2.3",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
+        "MyroniX": {
+            "name": "MyroniX",
+            "version": "0.1.5",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
+        "Animetsu": {
+            "name": "Animetsu",
+            "version": "1.4.2",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
         "AnimeHeaven": {
             "name": "AnimeHeaven",
             "version": "0.0.7",
@@ -37,48 +79,6 @@
             "version": "0.1.4",
             "langs": "en",
             "lastUpd": 1779564190.256346
-        },
-        "AnimeParadise": {
-            "name": "AnimeParadise",
-            "version": "0.3.2",
-            "langs": "en",
-            "lastUpd": 1779563402.556085
-        },
-        "Animetsu": {
-            "name": "Animetsu",
-            "version": "1.4.1",
-            "langs": "en",
-            "lastUpd": 1779562130.97534
-        },
-        "AniCove": {
-            "name": "AniCove",
-            "version": "0.2.2",
-            "langs": "en",
-            "lastUpd": 1779545713.564208
-        },
-        "MyroniX": {
-            "name": "MyroniX",
-            "version": "0.1.4",
-            "langs": "en",
-            "lastUpd": 1779492073.964532
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.2.2",
-            "langs": "en",
-            "lastUpd": 1779489009.279769
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.2.4",
-            "langs": "en",
-            "lastUpd": 1779460995.824722
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.21",
-            "langs": "en",
-            "lastUpd": 1747738043.896285
         }
     },
     "novel": {
