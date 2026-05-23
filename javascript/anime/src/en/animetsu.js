@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.4.1",
+    "version": "1.4.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -118,7 +118,11 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    return await this.searchAnime({ query: query, page: page });
+    try {
+      return await this.searchAnime({ query: query, page: page });
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   async getDetail(url) {

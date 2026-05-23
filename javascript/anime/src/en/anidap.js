@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.21",
+    "version": "1.5.22",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -213,12 +213,16 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var vars = { page: page, perPage: 24 };
-    if (query && query.length > 0) { vars.search = query; vars.sort = ["SEARCH_MATCH"]; }
-    else { vars.sort = ["POPULARITY_DESC"]; }
-    var data = await this.gql(PAGE_MEDIA_QUERY, vars);
-    var p = (data && data.Page) || {};
-    return { list: this.parseMedia(p.media), hasNextPage: !!(p.pageInfo && p.pageInfo.hasNextPage) };
+    try {
+      var vars = { page: page, perPage: 24 };
+      if (query && query.length > 0) { vars.search = query; vars.sort = ["SEARCH_MATCH"]; }
+      else { vars.sort = ["POPULARITY_DESC"]; }
+      var data = await this.gql(PAGE_MEDIA_QUERY, vars);
+      var p = (data && data.Page) || {};
+      return { list: this.parseMedia(p.media), hasNextPage: !!(p.pageInfo && p.pageInfo.hasNextPage) };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   statusCode(s) {

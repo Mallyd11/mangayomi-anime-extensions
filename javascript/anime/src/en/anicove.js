@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.2",
+    "version": "0.2.3",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -99,12 +99,16 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var res = await this.client.get(
-      this.source.baseUrl + "/search?q=" + encodeURIComponent(query),
-      this.headers
-    );
-    var doc = new Document(res.body || "");
-    return { list: this.parseCards(doc), hasNextPage: false };
+    try {
+      var res = await this.client.get(
+        this.source.baseUrl + "/search?q=" + encodeURIComponent(query),
+        this.headers
+      );
+      var doc = new Document(res.body || "");
+      return { list: this.parseCards(doc), hasNextPage: false };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   statusCode(s) {
