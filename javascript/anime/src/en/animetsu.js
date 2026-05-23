@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.3.8",
+    "version": "1.3.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -154,31 +154,7 @@ class DefaultExtension extends MProvider {
 
     var chapters = [];
     var epSlug = "/eps/" + id;
-
-    // Episode thumbnails via ani.zip (sourced from Crunchyroll / TVDB).
-    // Animetsu's info response mirrors the AniList GraphQL schema — body.id is
-    // the numeric AniList ID when it comes back as a number rather than a
-    // MongoDB ObjectID string.
-    var anilistId = body.anilist_id || (typeof body.id === "number" ? body.id : null);
-    var [epData, thumbMap] = await Promise.all([
-      this.request(epSlug),
-      anilistId
-        ? this.client
-            .get("https://api.ani.zip/mappings?anilist_id=" + anilistId, {})
-            .then((r) => {
-              if (r.statusCode != 200) return {};
-              var z = JSON.parse(r.body);
-              var m = {};
-              if (z.episodes) {
-                Object.keys(z.episodes).forEach((k) => {
-                  if (z.episodes[k].image) m[k] = z.episodes[k].image;
-                });
-              }
-              return m;
-            })
-            .catch(() => ({}))
-        : Promise.resolve({}),
-    ]);
+    var epData = await this.request(epSlug);
 
     var epDescPref = this.getPreference("animetsu_pref_ep_description");
     epData.forEach((item) => {
@@ -192,8 +168,8 @@ class DefaultExtension extends MProvider {
       var dateUpload = item.hasOwnProperty("aired_at")
         ? new Date(item.aired_at).valueOf().toString()
         : null;
-      // ani.zip (Crunchyroll/TVDB) thumbnails as primary; Animetsu's own img as fallback.
-      var thumbnailUrl = thumbMap[ep_num.toString()] || (item.img ? "https://swiftstream.top/proxy" + item.img : null);
+      // Episode thumbnail served via the swiftstream proxy — confirmed to return image/jpeg.
+      var thumbnailUrl = item.img ? "https://swiftstream.top/proxy" + item.img : null;
 
       chapters.push({
         name: epName,
