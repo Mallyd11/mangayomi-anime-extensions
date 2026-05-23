@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -48,73 +48,63 @@ class DefaultExtension extends MProvider {
     return true;
   }
 
-  // Shared AniList headers — Origin + Referer are required to avoid 403.
+  // Shared AniList headers — a browser User-Agent is required; AniList
+  // returns 403 for bare library requests without one.
   get alHeaders() {
     return {
       "Content-Type": "application/json",
       "Accept": "application/json",
       "User-Agent": this.ua,
-      "Origin": "https://anilist.co",
-      "Referer": "https://anilist.co/",
     };
   }
 
-  // Convert an AniList media object to a Mangayomi list item.
-  alMediaToItem(m) {
-    var title = (m.title && (m.title.english || m.title.romaji)) || "";
-    var cover = (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "";
-    return {
-      name: title,
-      imageUrl: cover,
-      link: this.source.baseUrl + "/anime/" + m.id,
-    };
-  }
-
-  // Fetch a page of anime from AniList GraphQL.
-  // The site's own browse pages are no longer available (404), so we use
-  // AniList directly. Origin + Referer headers are required to avoid 403.
-  async fetchAniListPage(page, sortKey, searchQuery) {
-    var hasSearch = searchQuery && searchQuery.length > 0;
-
-    var q = "query ($page: Int, $perPage: Int"
-      + (hasSearch ? ", $search: String" : "")
-      + ") { Page(page: $page, perPage: $perPage) {"
-      + " pageInfo { hasNextPage }"
-      + " media(type: ANIME, isAdult: false"
-      + (hasSearch ? ", search: $search" : ", sort: " + sortKey)
-      + ") { id title { romaji english } coverImage { extraLarge large } } } }";
-
-    var vars = { page: page, perPage: 30 };
-    if (hasSearch) vars.search = searchQuery;
-
-    var res = await this.client.post(
-      "https://graphql.anilist.co",
-      this.alHeaders,
-      JSON.stringify({ query: q, variables: vars })
-    );
-
-    var json = JSON.parse(res.body || "{}");
-    var pageData = (json && json.data && json.data.Page) ? json.data.Page : null;
-    if (!pageData) return { list: [], hasNextPage: false };
-
-    var mediaList = pageData.media || [];
+  // Parse anime cards from a server-rendered AniCove page.
+  // Uses .anime-card (class only) — Mangayomi's DOM API does not support
+  // compound element+class selectors like a.anime-card.
+  parseCards(doc) {
+    var cards = doc.select(".anime-card");
     var list = [];
-    for (var i = 0; i < mediaList.length; i++) {
-      list.push(this.alMediaToItem(mediaList[i]));
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var href = card.attr("href") || "";
+      if (!href) continue;
+      var link = href.indexOf("http") === 0 ? href : this.source.baseUrl + href;
+      if (link.indexOf("/anime/") < 0) continue;
+      var titleEl = card.selectFirst(".anime-card-title");
+      var name = titleEl ? (titleEl.text || "").trim() : "";
+      if (!name) continue;
+      var img = card.selectFirst("img");
+      var imageUrl = img ? (img.attr("src") || img.attr("data-src") || "") : "";
+      list.push({ name: name, imageUrl: imageUrl, link: link });
     }
-    return { list: list, hasNextPage: !!(pageData.pageInfo && pageData.pageInfo.hasNextPage) };
+    return list;
   }
 
   async getPopular(page) {
-    return this.fetchAniListPage(page, "TRENDING_DESC", null);
+    var res = await this.client.get(
+      this.source.baseUrl + "/category/trending",
+      this.headers
+    );
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   async getLatestUpdates(page) {
-    return this.fetchAniListPage(page, "START_DATE_DESC", null);
+    var res = await this.client.get(
+      this.source.baseUrl + "/category/recently-updated",
+      this.headers
+    );
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   async search(query, page, filters) {
-    return this.fetchAniListPage(page, null, query);
+    var res = await this.client.get(
+      this.source.baseUrl + "/search?q=" + encodeURIComponent(query),
+      this.headers
+    );
+    var doc = new Document(res.body || "");
+    return { list: this.parseCards(doc), hasNextPage: false };
   }
 
   statusCode(s) {
