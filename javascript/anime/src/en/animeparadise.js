@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.2",
+    "version": "0.3.3",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -78,17 +78,21 @@ class DefaultExtension extends MProvider {
     return await this.formList('search?q=&sort={"postDate":-1}', page);
   }
   async search(query, page, filters) {
-    var season = (filters && filters[0] && filters[0].values) ? filters[0].values[filters[0].state].value : "";
-    var year = (filters && filters[1] && filters[1].values) ? filters[1].values[filters[1].state].value : "";
+    try {
+      var season = (filters && filters[0] && filters[0].values) ? filters[0].values[filters[0].state].value : "";
+      var year = (filters && filters[1] && filters[1].values) ? filters[1].values[filters[1].state].value : "";
 
-    var genre = "genre[]=";
-    if (filters && filters[2] && filters[2].state) {
-      for (var filter of filters[2].state) {
-        if (filter.state == true) genre += `${filter.value}&genre[]=`;
+      var genre = "genre[]=";
+      if (filters && filters[2] && filters[2].state) {
+        for (var filter of filters[2].state) {
+          if (filter.state == true) genre += `${filter.value}&genre[]=`;
+        }
       }
+      var slug = `search?q=${query}&year=${year}&season=${season}&${genre}`;
+      return await this.formList(slug);
+    } catch (e) {
+      return { list: [], hasNextPage: false };
     }
-    var slug = `search?q=${query}&year=${year}&season=${season}&${genre}`;
-    return await this.formList(slug);
   }
   statusCode(status) {
     return (

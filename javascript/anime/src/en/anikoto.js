@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.2",
+    "version": "0.2.3",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -99,8 +99,12 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var doc = await this.fetchDoc("/filter?keyword=" + encodeURIComponent(query) + "&page=" + page);
-    return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
+    try {
+      var doc = await this.fetchDoc("/filter?keyword=" + encodeURIComponent(query) + "&page=" + page);
+      return { list: this.parseList(doc), hasNextPage: this.hasNextPage(doc) };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   // Extract {slug} from watch page URLs:

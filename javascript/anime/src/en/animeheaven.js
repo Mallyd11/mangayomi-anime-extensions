@@ -120,8 +120,12 @@ class DefaultExtension extends MProvider {
 
   async search(query, page, filters) {
     if (page > 1) return { list: [], hasNextPage: false };
-    var html = await this.fetchHtml("search.php?s=" + encodeURIComponent(query));
-    return { list: this.parseList(html), hasNextPage: false };
+    try {
+      var html = await this.fetchHtml("search.php?s=" + encodeURIComponent(query));
+      return { list: this.parseList(html), hasNextPage: false };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   // Status mapping. AnimeHeaven uses "Currently Airing" / "Finished Airing".

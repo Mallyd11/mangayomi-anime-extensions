@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -120,9 +120,13 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var data = await this.gql(PAGE_MEDIA_QUERY, { page: page, perPage: 24, search: query, sort: ["SEARCH_MATCH"] });
-    var p = (data && data.Page) || {};
-    return { list: this.parseMedia(p.media), hasNextPage: (p.pageInfo && p.pageInfo.hasNextPage) || false };
+    try {
+      var data = await this.gql(PAGE_MEDIA_QUERY, { page: page, perPage: 24, search: query, sort: ["SEARCH_MATCH"] });
+      var p = (data && data.Page) || {};
+      return { list: this.parseMedia(p.media), hasNextPage: (p.pageInfo && p.pageInfo.hasNextPage) || false };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   statusCode(s) {

@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.4",
+    "version": "0.2.5",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -125,8 +125,12 @@ class DefaultExtension extends MProvider {
   }
 
   async search(query, page, filters) {
-    var p = await this.fetchPage("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
-    return { list: this.parseList(p.doc, this.buildNameMap(p.html)), hasNextPage: this.hasNextPage(p.doc) };
+    try {
+      var p = await this.fetchPage("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
+      return { list: this.parseList(p.doc, this.buildNameMap(p.html)), hasNextPage: this.hasNextPage(p.doc) };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   statusCode(status) {
