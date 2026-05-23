@@ -26,15 +26,21 @@
         }
     },
     "anime": {
-        "AnimeParadise": {
-            "name": "AnimeParadise",
-            "version": "0.3.2",
+        "AnimeHeaven": {
+            "name": "AnimeHeaven",
+            "version": "0.0.7",
             "langs": "en",
-            "lastUpd": 1779563402.556085
+            "lastUpd": 1779564190.256346
         },
         "JustAnime": {
             "name": "JustAnime",
-            "version": "0.1.3",
+            "version": "0.1.4",
+            "langs": "en",
+            "lastUpd": 1779564190.256346
+        },
+        "AnimeParadise": {
+            "name": "AnimeParadise",
+            "version": "0.3.2",
             "langs": "en",
             "lastUpd": 1779563402.556085
         },
@@ -67,12 +73,6 @@
             "version": "0.2.4",
             "langs": "en",
             "lastUpd": 1779460995.824722
-        },
-        "AnimeHeaven": {
-            "name": "AnimeHeaven",
-            "version": "0.0.6",
-            "langs": "en",
-            "lastUpd": 1747738043.896285
         },
         "Anidap": {
             "name": "Anidap",
