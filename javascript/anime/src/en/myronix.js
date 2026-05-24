@@ -169,7 +169,8 @@ class DefaultExtension extends MProvider {
       if (epRes && epRes.statusCode === 200) {
         var epJson = JSON.parse(epRes.body);
         var episodes = (epJson.data && epJson.data.episodes) || [];
-        var seenIds = {};
+        var seenIds  = {};   // dedup by full episodeId (same showId+epNum)
+        var seenNums = {};   // dedup by episode number (different showIds, same ep)
         for (var i = 0; i < episodes.length; i++) {
           var ep = episodes[i];
           // Parse "allanime:{showId}:{epNum}" → two colon positions
@@ -177,14 +178,15 @@ class DefaultExtension extends MProvider {
           var c1 = rawId.indexOf(":");
           var c2 = rawId.indexOf(":", c1 + 1);
           if (c1 < 0 || c2 < 0) continue;
-          // Deduplicate by episodeId
-          if (seenIds[rawId]) continue;
-          seenIds[rawId] = true;
+          var numStr = String(ep.number);
+          // Deduplicate by episodeId and by episode number
+          if (seenIds[rawId] || seenNums[numStr]) continue;
+          seenIds[rawId]   = true;
+          seenNums[numStr] = true;
           var showId = rawId.substring(c1 + 1, c2);
           var epNum  = rawId.substring(c2 + 1);
           // Build label: always prefix with episode number so the list is
           // scannable. Skip redundant titles like "Episode 1" that add nothing.
-          var numStr   = String(ep.number);
           var epTitle  = (ep.title || "").trim();
           var fallback = "Episode " + numStr;
           var label = (epTitle && epTitle !== fallback)
