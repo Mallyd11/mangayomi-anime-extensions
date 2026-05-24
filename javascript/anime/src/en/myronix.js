@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -164,13 +164,18 @@ class DefaultExtension extends MProvider {
 
     // Fetch episode list from the site's AllAnime API.
     // Chapter URL = "{showId}|{epNum}" — pipe-separated, no URL-scheme prefix.
+    // AllAnime can map several internal show records to the same AniList ID,
+    // so the episodes API may return duplicates with different showIds.
+    // We build a map keyed by epNum (from the episodeId itself, not ep.number
+    // which can vary in type/format across records) and keep the best entry
+    // — titled over untitled.
     var chapters = [];
     try {
       if (epRes && epRes.statusCode === 200) {
         var epJson = JSON.parse(epRes.body);
         var episodes = (epJson.data && epJson.data.episodes) || [];
-        var seenIds  = {};   // dedup by full episodeId (same showId+epNum)
-        var seenNums = {};   // dedup by episode number (different showIds, same ep)
+        // epMap[epNum] = { showId, epNum, numStr, label }
+        var epMap = {};
         for (var i = 0; i < episodes.length; i++) {
           var ep = episodes[i];
           // Parse "allanime:{showId}:{epNum}" → two colon positions
@@ -178,21 +183,28 @@ class DefaultExtension extends MProvider {
           var c1 = rawId.indexOf(":");
           var c2 = rawId.indexOf(":", c1 + 1);
           if (c1 < 0 || c2 < 0) continue;
-          var numStr = String(ep.number);
-          // Deduplicate by episodeId and by episode number
-          if (seenIds[rawId] || seenNums[numStr]) continue;
-          seenIds[rawId]   = true;
-          seenNums[numStr] = true;
-          var showId = rawId.substring(c1 + 1, c2);
-          var epNum  = rawId.substring(c2 + 1);
-          // Build label: always prefix with episode number so the list is
-          // scannable. Skip redundant titles like "Episode 1" that add nothing.
+          var showId   = rawId.substring(c1 + 1, c2);
+          var epNum    = rawId.substring(c2 + 1);   // e.g. "25"
           var epTitle  = (ep.title || "").trim();
+          var numStr   = (ep.number !== undefined && ep.number !== null)
+            ? String(ep.number) : epNum;
           var fallback = "Episode " + numStr;
-          var label = (epTitle && epTitle !== fallback)
-            ? "E" + numStr + ": " + epTitle
-            : fallback;
-          chapters.push({ name: label, url: showId + "|" + epNum });
+          var label    = (epTitle && epTitle !== fallback)
+            ? "E" + numStr + ": " + epTitle : fallback;
+          var hasTitle = epTitle !== "" && epTitle !== fallback;
+          var existing = epMap[epNum];
+          // Always accept the first entry; replace only if we upgrade
+          // from untitled to titled (keeps the better streaming showId too).
+          if (!existing || (hasTitle && !existing.hasTitle)) {
+            epMap[epNum] = { showId: showId, epNum: epNum, label: label, hasTitle: hasTitle };
+          }
+        }
+        // Sort episodes numerically, then build the chapters array
+        var epNums = Object.keys(epMap);
+        epNums.sort(function(a, b) { return (parseFloat(a) || 0) - (parseFloat(b) || 0); });
+        for (var ni = 0; ni < epNums.length; ni++) {
+          var entry = epMap[epNums[ni]];
+          chapters.push({ name: entry.label, url: entry.showId + "|" + entry.epNum });
         }
       }
     } catch (e) { /* fall through */ }
