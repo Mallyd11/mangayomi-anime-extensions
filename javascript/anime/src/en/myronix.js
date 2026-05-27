@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.5",
+    "version": "0.1.7",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -164,33 +164,64 @@ class DefaultExtension extends MProvider {
 
     // Fetch episode list from the site's AllAnime API.
     // Chapter URL = "{showId}|{epNum}" — pipe-separated, no URL-scheme prefix.
+    // AllAnime maps multiple internal show records to the same AniList ID.
+    // Strategy: group episodes by showId, pick the single best record
+    // (most titled episodes; tiebreak: most episodes), and use only that one.
+    // A single record has no duplicates by construction.
     var chapters = [];
     try {
       if (epRes && epRes.statusCode === 200) {
         var epJson = JSON.parse(epRes.body);
         var episodes = (epJson.data && epJson.data.episodes) || [];
-        var seenIds = {};
+
+        // Group by showId
+        var showGroups = {};
         for (var i = 0; i < episodes.length; i++) {
           var ep = episodes[i];
-          // Parse "allanime:{showId}:{epNum}" → two colon positions
           var rawId = ep.episodeId || "";
           var c1 = rawId.indexOf(":");
           var c2 = rawId.indexOf(":", c1 + 1);
           if (c1 < 0 || c2 < 0) continue;
-          // Deduplicate by episodeId
-          if (seenIds[rawId]) continue;
-          seenIds[rawId] = true;
-          var showId = rawId.substring(c1 + 1, c2);
-          var epNum  = rawId.substring(c2 + 1);
-          // Build label: always prefix with episode number so the list is
-          // scannable. Skip redundant titles like "Episode 1" that add nothing.
-          var numStr   = String(ep.number);
+          var sid = rawId.substring(c1 + 1, c2);
+          if (!showGroups[sid]) showGroups[sid] = [];
+          showGroups[sid].push(ep);
+        }
+
+        // Pick the showId with the most titled episodes (tiebreak: most episodes)
+        var bestShowId = null;
+        var bestScore  = -1;
+        var showIds = Object.keys(showGroups);
+        for (var si = 0; si < showIds.length; si++) {
+          var sid  = showIds[si];
+          var seps = showGroups[sid];
+          var titled = 0;
+          for (var ti = 0; ti < seps.length; ti++) {
+            if (seps[ti].title && seps[ti].title.trim()) titled++;
+          }
+          var score = titled * 100000 + seps.length;
+          if (score > bestScore) { bestScore = score; bestShowId = sid; }
+        }
+
+        var bestEps = (bestShowId && showGroups[bestShowId]) || [];
+        // Sort ascending by episode number
+        bestEps.sort(function(a, b) {
+          return (parseFloat(a.number) || 0) - (parseFloat(b.number) || 0);
+        });
+
+        for (var ei = 0; ei < bestEps.length; ei++) {
+          var ep     = bestEps[ei];
+          var rawId  = ep.episodeId || "";
+          var c1     = rawId.indexOf(":");
+          var c2     = rawId.indexOf(":", c1 + 1);
+          if (c1 < 0 || c2 < 0) continue;
+          var epNum    = rawId.substring(c2 + 1);
+          var numStr   = (ep.number !== undefined && ep.number !== null)
+            ? String(ep.number) : epNum;
           var epTitle  = (ep.title || "").trim();
           var fallback = "Episode " + numStr;
-          var label = (epTitle && epTitle !== fallback)
-            ? "E" + numStr + ": " + epTitle
-            : fallback;
-          chapters.push({ name: label, url: showId + "|" + epNum });
+          var label    = (epTitle && epTitle !== fallback)
+            ? "E" + numStr + ": " + epTitle : fallback;
+          chapters.push({ name: label, url: bestShowId + "|" + epNum });
         }
       }
     } catch (e) { /* fall through */ }
