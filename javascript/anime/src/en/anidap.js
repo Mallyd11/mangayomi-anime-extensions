@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.23",
+    "version": "1.5.24",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -387,23 +387,22 @@ class DefaultExtension extends MProvider {
           /https:\/\/[^/]+\//,
           "https://ply.24stream.xyz/media/"
         );
+      case "wave":
+        return url.replace(/https?:\/\/[^/]+\//, "https://wv.24stream.xyz/");
 
       // ── origin-swap providers ──────────────────────────────────────────────
-      case "nuri":  return this.replaceOrigin(url, "https://rapid-cloud.co");
       case "shiro": return this.replaceOrigin(url, "https://kem.clvd.xyz");
       case "kami":  return this.replaceOrigin(url, "https://krussdomi.com");
       case "yuki":  return this.replaceOrigin(url, "https://megaplay.buzz");
       case "koto":  return this.replaceOrigin(url, "https://megacloud.blog");
       case "miru":  return this.replaceOrigin(url, "https://senshi.live");
       case "maze":  return this.replaceOrigin(url, "https://ayy-eu.1stkmgv1.com");
-      case "kiwi":  return this.replaceOrigin(url, "https://4spromax.site");
       case "zaza":  return this.replaceOrigin(url, "https://anizone.to");
 
-      // ── remaining providers ────────────────────────────────────────────────
-      case "mimi": return this.replaceOrigin(url, "https://otakuhg.site");
-      case "wave": return url.replace(/https?:\/\/[^/]+\//, "https://wv.24stream.xyz/");
-
-      // vee, beep — identity (no transform)
+      // ── identity providers (URL returned by API is already correct) ────────
+      // kiwi: site JS confirms kiwi:t=>t — no transform needed
+      // mimi: site JS confirms mimi:t=>t — no transform needed
+      // vee, beep, zone: also identity
       default: return url;
     }
   }
