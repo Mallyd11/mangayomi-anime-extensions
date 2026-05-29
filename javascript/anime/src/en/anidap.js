@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.24",
+    "version": "1.5.25",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -482,12 +482,12 @@ class DefaultExtension extends MProvider {
     var anilistId = parts[0] || "";
     var epNum     = parts[1] || "";
 
-    var audioPref = this.getPreference("anidap_audio_pref");
-    var dlMode    = this.getPreference("anidap_download_mode") || "off";
+    var audioPref  = this.getPreference("anidap_audio_pref");
+    var dlMode     = this.getPreference("anidap_download_mode") || "off";
+    var serverPref = this.getPreference("anidap_preferred_server") || "auto";
 
-    // Cache key includes dlMode — changing the preference must produce a fresh
-    // stream list (download links vs HLS-only) rather than a stale cached result.
-    var cacheKey = url + "|" + dlMode;
+    // Cache key includes mode + server pref so changing either gives fresh results.
+    var cacheKey = url + "|" + dlMode + "|" + serverPref;
     var _now = Date.now();
     if (_vlCache[cacheKey] && _now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
       return _vlCache[cacheKey];
@@ -521,15 +521,32 @@ class DefaultExtension extends MProvider {
     }
 
     // Build provider ordering for one audio type.
-    //   Playback mode  → single best HLS provider only.
-    //   Download mode  → MP4 providers first (kiwi, mochi), then all others.
-    //                    More providers = more chances that one works.
+    //
+    //   Playback mode  → ALL non-mochi providers, ordered:
+    //                      1. Preferred server (if set and available)
+    //                      2. API default server
+    //                      3. Everything else
+    //                    All appear in the quality picker so the user can
+    //                    switch if the first one buffers.
+    //
+    //   Download mode  → mochi first (confirmed MP4), then all others.
     function buildCategories(type, providers) {
       if (dlMode !== "on") {
-        var best = hlsProvider(providers);
-        if (best) return [{ type: type, provider: best }];
-        if (providers.length) return [{ type: type, provider: providers[0] }];
-        return [];
+        var pref     = [];
+        var defaults = [];
+        var rest     = [];
+        for (var i = 0; i < providers.length; i++) {
+          var p = providers[i];
+          if (p.id === "mochi") continue; // skip MP4-only server for playback
+          if (serverPref !== "auto" && p.id === serverPref) pref.push(p);
+          else if (p.default) defaults.push(p);
+          else rest.push(p);
+        }
+        var ordered = pref.concat(defaults).concat(rest);
+        // Last resort: include everything including mochi if nothing else available
+        if (ordered.length === 0 && providers.length > 0)
+          ordered = providers.slice();
+        return ordered.map(function(p) { return { type: type, provider: p }; });
       }
       // Download mode: mochi first (confirmed MP4), then all other providers.
       var mochi = [];
@@ -691,6 +708,16 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub (default)", "Dub (default)"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "anidap_preferred_server",
+        listPreference: {
+          title: "Preferred server",
+          summary: "Server tried first for playback. All servers appear in the quality picker. Switch to Kiwi if the default (UWU) buffers.",
+          valueIndex: 0,
+          entries: ["Auto (API default)", "Kiwi", "UWU", "Beep", "MIMI", "Yuki", "Mochi", "Wave", "Vee"],
+          entryValues: ["auto", "kiwi", "uwu", "beep", "mimi", "yuki", "mochi", "wave", "vee"],
         },
       },
       {
