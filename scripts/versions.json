@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.5.23",
+            "langs": "en",
+            "lastUpd": 1780058782.686096
+        },
         "MyroniX": {
             "name": "MyroniX",
             "version": "0.1.7",
@@ -59,12 +65,6 @@
         "AnimeParadise": {
             "name": "AnimeParadise",
             "version": "0.3.3",
-            "langs": "en",
-            "lastUpd": 1779565217.520518
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.22",
             "langs": "en",
             "lastUpd": 1779565217.520518
         },
