@@ -32,27 +32,9 @@
             "langs": "en",
             "lastUpd": 1779640100.815635
         },
-        "AniCove": {
-            "name": "AniCove",
-            "version": "0.2.3",
-            "langs": "en",
-            "lastUpd": 1779565217.520518
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.22",
-            "langs": "en",
-            "lastUpd": 1779565217.520518
-        },
-        "AnimeParadise": {
-            "name": "AnimeParadise",
-            "version": "0.3.3",
-            "langs": "en",
-            "lastUpd": 1779565217.520518
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.2.5",
+        "Animetsu": {
+            "name": "Animetsu",
+            "version": "1.4.2",
             "langs": "en",
             "lastUpd": 1779565217.520518
         },
@@ -62,26 +44,50 @@
             "langs": "en",
             "lastUpd": 1779565217.520518
         },
-        "Animetsu": {
-            "name": "Animetsu",
-            "version": "1.4.2",
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.2.5",
             "langs": "en",
             "lastUpd": 1779565217.520518
         },
-        "AnimeHeaven": {
-            "name": "AnimeHeaven",
-            "version": "0.0.7",
+        "AniCove": {
+            "name": "AniCove",
+            "version": "0.2.3",
             "langs": "en",
-            "lastUpd": 1779564190.256346
+            "lastUpd": 1779565217.520518
+        },
+        "AnimeParadise": {
+            "name": "AnimeParadise",
+            "version": "0.3.3",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.5.22",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
         },
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.1.4",
             "langs": "en",
             "lastUpd": 1779564190.256346
+        },
+        "AnimeHeaven": {
+            "name": "AnimeHeaven",
+            "version": "0.0.7",
+            "langs": "en",
+            "lastUpd": 1779564190.256346
         }
     },
     "novel": {
+        "NovelFire": {
+            "name": "NovelFire",
+            "version": "0.0.1",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
         "bookReadFree": {
             "name": "bookReadFree",
             "version": "0.0.1",
@@ -91,12 +97,6 @@
         "Novelbuddy": {
             "name": "Novelbuddy",
             "version": "0.0.9",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
-        "NovelFire": {
-            "name": "NovelFire",
-            "version": "0.0.1",
             "langs": "en",
             "lastUpd": 1779410651.044824
         }
