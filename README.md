@@ -33,9 +33,9 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
+| NovelFire | 0.0.1 | en | 2026/05/21 |
 | bookReadFree | 0.0.1 | en | 2026/05/21 |
 | Novelbuddy | 0.0.9 | en | 2026/05/21 |
-| NovelFire | 0.0.1 | en | 2026/05/21 |
 
 </details>
 
