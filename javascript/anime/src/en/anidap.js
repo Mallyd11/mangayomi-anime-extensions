@@ -508,15 +508,13 @@ class DefaultExtension extends MProvider {
 
     // ── Stream helpers ─────────────────────────────────────────────────────
 
-    // Providers that typically serve direct MP4 files (downloadable).
-    // All others are assumed to be HLS/adaptive streams.
-    var MP4_PROVIDERS = { kiwi: true, mochi: true };
-
-    // Return the best HLS (non-MP4) provider from a list.
+    // Return the best non-mochi provider from a list.
+    // Mochi is a confirmed MP4-only server — skipped for HLS playback.
+    // All other providers (including kiwi) may serve HLS and are eligible.
     function hlsProvider(list) {
       var fallback = null;
       for (var i = 0; i < list.length; i++) {
-        if (MP4_PROVIDERS[list[i].id]) continue;
+        if (list[i].id === "mochi") continue;
         if (list[i].default) return list[i];
         if (!fallback) fallback = list[i];
       }
@@ -534,14 +532,14 @@ class DefaultExtension extends MProvider {
         if (providers.length) return [{ type: type, provider: providers[0] }];
         return [];
       }
-      // Download mode: MP4-first ordering, all providers included.
-      var mp4  = [];
-      var rest = [];
+      // Download mode: mochi first (confirmed MP4), then all other providers.
+      var mochi = [];
+      var rest  = [];
       for (var i = 0; i < providers.length; i++) {
-        if (MP4_PROVIDERS[providers[i].id]) mp4.push(providers[i]);
-        else                                rest.push(providers[i]);
+        if (providers[i].id === "mochi") mochi.push(providers[i]);
+        else                             rest.push(providers[i]);
       }
-      var ordered = mp4.concat(rest);
+      var ordered = mochi.concat(rest);
       return ordered.map(function(p) { return { type: type, provider: p }; });
     }
 
