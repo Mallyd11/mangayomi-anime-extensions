@@ -357,31 +357,37 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Fetch the megaplay.buzz player page and parse data-id from #megaplay-player
+  // Fetch the megaplay.buzz player page and parse data-id from #megaplay-player.
+  // Some episodes redirect via an s-5 iframe — follow it if needed.
   async getMegaplayDataId(realEpId, audioType) {
-    var streamPath = "/stream/s-2/" + realEpId + "/" + audioType;
-    var url = "https://megaplay.buzz" + streamPath;
-    try {
-      var res = await this.client.get(url, {
-        "User-Agent": this.ua,
-        "Referer": this.source.baseUrl + "/",
-      });
-      // Quickly check for error page
-      if (res.body.indexOf("File not found") >= 0 || res.body.indexOf("We can&apos;t find") >= 0 ||
-          res.body.indexOf("Error - MegaPlay") >= 0) {
-        return null;
-      }
-      // Find data-id on the player div
-      var doc = new Document(res.body);
-      var playerEl = doc.selectFirst("#megaplay-player[data-id]");
-      if (playerEl) {
-        return { dataId: playerEl.attr("data-id"), refererUrl: url };
-      }
-      // Fallback: regex
-      var m = res.body.match(/id="megaplay-player"[^>]*data-id="(\d+)"/);
-      if (m) return { dataId: m[1], refererUrl: url };
-    } catch (e) {}
-    return null;
+    var megaHeaders = {
+      "User-Agent": this.ua,
+      "Referer": this.source.baseUrl + "/",
+    };
+    var tryUrl = async (url) => {
+      try {
+        var res = await this.client.get(url, megaHeaders);
+        if (!res.body) return null;
+        if (res.body.indexOf("File not found") >= 0 || res.body.indexOf("Error - MegaPlay") >= 0) return null;
+        // Direct player div
+        var m = res.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
+        if (m) return { dataId: m[1], refererUrl: url };
+        // s-5 iframe redirect
+        var iframeM = res.body.match(/src="(https:\/\/megaplay\.buzz\/stream\/s-5\/[^"]+)"/);
+        if (iframeM) {
+          var s5Res = await this.client.get(iframeM[1], {
+            "User-Agent": this.ua,
+            "Referer": url,
+          });
+          if (s5Res && s5Res.body) {
+            var s5m = s5Res.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
+            if (s5m) return { dataId: s5m[1], refererUrl: iframeM[1] };
+          }
+        }
+      } catch (e) {}
+      return null;
+    };
+    return await tryUrl("https://megaplay.buzz/stream/s-2/" + realEpId + "/" + audioType);
   }
 
   async _fetchWithRetry(url, headers, attempts) {
