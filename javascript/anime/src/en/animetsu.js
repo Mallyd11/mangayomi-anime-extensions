@@ -277,8 +277,6 @@ class DefaultExtension extends MProvider {
 
   async getKiteStreams(epData, audioType) {
     var hdr = this.getHeaders();
-    var streams = [];
-
     var subtitles = [];
     if (epData.hasOwnProperty("subs")) {
       epData.subs.forEach((item) => {
@@ -286,9 +284,11 @@ class DefaultExtension extends MProvider {
       });
     }
 
-    for (var item of epData.sources) {
+    // Fetch all source masters in parallel instead of sequentially.
+    var perSource = await Promise.all(epData.sources.map(async (item) => {
       var masterUrl = this.getProxyMediaUrl(item.url);
       var baseDir = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+      var result = [];
       var parsed = false;
 
       try {
@@ -308,18 +308,15 @@ class DefaultExtension extends MProvider {
                 quality: this.streamNamer(resolution, "soft" + audioType, "kite"),
                 headers: hdr,
               };
-              if (!parsed) {
-                stream.subtitles = subtitles;
-                parsed = true;
-              }
-              streams.push(stream);
+              if (!parsed) { stream.subtitles = subtitles; parsed = true; }
+              result.push(stream);
             }
           }
         }
       } catch (e) {}
 
       if (!parsed) {
-        streams.push({
+        result.push({
           url: masterUrl,
           originalUrl: masterUrl + ".m3u8",
           quality: this.streamNamer("Auto", "soft" + audioType, "kite"),
@@ -327,9 +324,11 @@ class DefaultExtension extends MProvider {
           subtitles: subtitles,
         });
       }
-    }
 
-    return streams;
+      return result;
+    }));
+
+    return perSource.flat();
   }
 
   // Dio (hard sub, multi-quality HLS) and Kiss (soft sub, multi-language HLS).
@@ -343,8 +342,6 @@ class DefaultExtension extends MProvider {
   // Kiss = separate subtitle tracks → audio label shown with "soft" prefix.
   async getDioKissStreams(epData, audioType, serverName) {
     var hdr = this.getHeaders();
-    var streams = [];
-
     var subtitles = [];
     if (epData.hasOwnProperty("subs")) {
       epData.subs.forEach((item) => {
@@ -354,9 +351,11 @@ class DefaultExtension extends MProvider {
 
     var isSoftSub = serverName === "kiss";
 
-    for (var item of epData.sources) {
+    // Fetch all source masters in parallel instead of sequentially.
+    var perSource = await Promise.all(epData.sources.map(async (item) => {
       var masterUrl = this.getProxyMediaUrl(item.url);
       var audioLabel = isSoftSub ? "soft" + audioType : audioType;
+      var result = [];
       var parsed = false;
 
       // Only attempt master parsing for non-direct-playlist sources (old_hls == false).
@@ -380,7 +379,7 @@ class DefaultExtension extends MProvider {
                   headers: hdr,
                 };
                 if (!parsed) { stream.subtitles = subtitles; parsed = true; }
-                streams.push(stream);
+                result.push(stream);
               }
             }
           }
@@ -395,12 +394,14 @@ class DefaultExtension extends MProvider {
           quality: this.streamNamer(item.quality || "auto", audioLabel, serverName),
           headers: hdr,
         };
-        if (streams.length === 0) stream.subtitles = subtitles;
-        streams.push(stream);
+        if (result.length === 0) stream.subtitles = subtitles;
+        result.push(stream);
       }
-    }
 
-    return streams;
+      return result;
+    }));
+
+    return perSource.flat();
   }
 
   getFilterList() {
@@ -441,8 +442,8 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_stream_server",
         multiSelectListPreference: {
           title: "Preferred server",
-          summary: "Choose the server/s you want to extract streams from",
-          values: ["pahe", "kite", "meg", "kiss"],
+          summary: "Fewer servers = faster load. Pahe is fastest; Kite/Kiss/Meg each add extra requests.",
+          values: ["pahe"],
           entries: ["Pahe", "Kite", "Meg", "Kiss"],
           entryValues: ["pahe", "kite", "meg", "kiss"],
         },
@@ -451,8 +452,8 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_stream_subdub_type",
         multiSelectListPreference: {
           title: "Preferred stream sub/dub type",
-          summary: "",
-          values: ["sub", "dub"],
+          summary: "Selecting both Sub and Dub doubles the number of requests per server.",
+          values: ["sub"],
           entries: ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
         },
