@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.2.6",
+            "langs": "en",
+            "lastUpd": 1780352082.962824
+        },
         "Anidap": {
             "name": "Anidap",
             "version": "1.5.26",
@@ -47,12 +53,6 @@
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.2.3",
-            "langs": "en",
-            "lastUpd": 1779565217.520518
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.2.5",
             "langs": "en",
             "lastUpd": 1779565217.520518
         },
