@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.5",
+    "version": "0.2.6",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
