@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.4.3",
+    "version": "1.4.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -444,10 +444,10 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_stream_server",
         multiSelectListPreference: {
           title: "Preferred server",
-          summary: "Default = site's own server, fastest. Fewer servers = faster load.",
-          values: ["default"],
-          entries: ["Default", "Pahe", "Kite", "Meg", "Kiss"],
-          entryValues: ["default", "pahe", "kite", "meg", "kiss"],
+          summary: "Default/Dio = fastest. Fewer servers = faster load. Kite is currently broken.",
+          values: ["default", "dio"],
+          entries: ["Default", "Dio", "Pahe", "Meg", "Kiss"],
+          entryValues: ["default", "dio", "pahe", "meg", "kiss"],
         },
       },
       {
