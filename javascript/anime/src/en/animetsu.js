@@ -191,7 +191,7 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     var serverPref = this.getPreference("animetsu_pref_stream_server");
-    if (serverPref.length < 1) serverPref.push("pahe");
+    if (serverPref.length < 1) serverPref.push("default");
 
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
     if (audioPref.length < 1) audioPref.push("sub");
@@ -211,16 +211,18 @@ class DefaultExtension extends MProvider {
     var results = await Promise.all(
       combinations.map(async ({ serverName, audioType }) => {
         try {
-          if (serverName == "pahe" || serverName == "meg") {
+          if (serverName == "default" || serverName == "kite") {
+            // "default" is the server the site's own player uses — fastest CDN, ~1ms stream latency.
+            // Both return an HLS master that needs variant parsing.
+            var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
+            var epData = await this.request(epSlug);
+            if (!epData.hasOwnProperty("sources")) return [];
+            return await this.getKiteStreams(epData, audioType, serverName);
+          } else if (serverName == "pahe" || serverName == "meg") {
             var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
             if (!epData.hasOwnProperty("sources")) return [];
             return this.getPaheMegStreams(epData.sources, audioType, serverName);
-          } else if (serverName == "kite") {
-            var epSlug = `/oppai/${anilistUrl}?server=kite&source_type=${audioType}`;
-            var epData = await this.request(epSlug);
-            if (!epData.hasOwnProperty("sources")) return [];
-            return await this.getKiteStreams(epData, audioType);
           } else if (serverName == "dio" || serverName == "kiss") {
             var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
@@ -275,7 +277,7 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  async getKiteStreams(epData, audioType) {
+  async getKiteStreams(epData, audioType, serverName = "kite") {
     var hdr = this.getHeaders();
     var subtitles = [];
     if (epData.hasOwnProperty("subs")) {
@@ -305,7 +307,7 @@ class DefaultExtension extends MProvider {
               var stream = {
                 url: variantUrl,
                 originalUrl: variantUrl + ".m3u8",
-                quality: this.streamNamer(resolution, "soft" + audioType, "kite"),
+                quality: this.streamNamer(resolution, "soft" + audioType, serverName),
                 headers: hdr,
               };
               if (!parsed) { stream.subtitles = subtitles; parsed = true; }
@@ -319,7 +321,7 @@ class DefaultExtension extends MProvider {
         result.push({
           url: masterUrl,
           originalUrl: masterUrl + ".m3u8",
-          quality: this.streamNamer("Auto", "soft" + audioType, "kite"),
+          quality: this.streamNamer("Auto", "soft" + audioType, serverName),
           headers: hdr,
           subtitles: subtitles,
         });
@@ -442,10 +444,10 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_stream_server",
         multiSelectListPreference: {
           title: "Preferred server",
-          summary: "Fewer servers = faster load. Pahe is fastest; Kite/Kiss/Meg each add extra requests.",
-          values: ["pahe"],
-          entries: ["Pahe", "Kite", "Meg", "Kiss"],
-          entryValues: ["pahe", "kite", "meg", "kiss"],
+          summary: "Default = site's own server, fastest. Fewer servers = faster load.",
+          values: ["default"],
+          entries: ["Default", "Pahe", "Kite", "Meg", "Kiss"],
+          entryValues: ["default", "pahe", "kite", "meg", "kiss"],
         },
       },
       {
