@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.1.0",
+    "version": "4.2.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -427,8 +427,11 @@ class DefaultExtension extends MProvider {
           var out = [];
           for (var si = 0; si < srcs.length; si++) {
             var src = srcs[si];
+            // Skip embed streams (kwik.cx etc.) — Mangayomi can't play them
+            if (src.type === "embed") continue;
             var su = src.url || src.file;
-            if (!su) continue;
+            // Skip empty URLs
+            if (!su || su.length < 10) continue;
             var entry = {
               url: su, originalUrl: su,
               quality: (src.quality || "Auto") + " [" + combo.cat.toUpperCase() + " · " + combo.prov + "]",
@@ -500,10 +503,10 @@ class DefaultExtension extends MProvider {
         key: "miruro_providers",
         multiSelectListPreference: {
           title: "Providers",
-          summary: "Only the selected providers are used. Fewer = faster load.",
-          values:      ["kiwi", "arc"],
-          entries:     ["Kiwi", "Arc", "Ally", "Bee", "Dune"],
-          entryValues: ["kiwi", "arc", "ally", "bee", "dune"],
+          summary: "Only selected providers are used. Fewer = faster load.",
+          values:      ["moo", "bonk", "bee"],
+          entries:     ["Moo (direct MP4)", "Bonk (HLS)", "Bee (HLS)", "Ally (Wix)", "Kiwi (embed/low-res)"],
+          entryValues: ["moo", "bonk", "bee", "ally", "kiwi"],
         },
       },
       {
