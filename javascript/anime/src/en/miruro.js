@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.8.0",
+    "version": "4.9.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -507,9 +507,9 @@ class DefaultExtension extends MProvider {
         multiSelectListPreference: {
           title: "Providers",
           summary: "Only selected providers are used. Fewer = faster load.",
-          values:      ["bee", "ally"],
-          entries:     ["Bee (streaming)", "Ally (downloads + streaming)", "Kiwi (low-res)"],
-          entryValues: ["bee", "ally", "kiwi"],
+          values:      ["ally"],
+          entries:     ["Ally (downloads + streaming)", "Bee (streaming)", "Kiwi (low-res)"],
+          entryValues: ["ally", "bee", "kiwi"],
         },
       },
       {
