@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.2.0",
+    "version": "4.3.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -427,15 +427,18 @@ class DefaultExtension extends MProvider {
           var out = [];
           for (var si = 0; si < srcs.length; si++) {
             var src = srcs[si];
-            // Skip embed streams (kwik.cx etc.) — Mangayomi can't play them
+            // Skip embed streams (kwik.cx, vibeplayer embeds etc.) — not playable in Mangayomi
             if (src.type === "embed") continue;
             var su = src.url || src.file;
             // Skip empty URLs
             if (!su || su.length < 10) continue;
+            // Use the stream's own referer field — each CDN checks this and rejects wrong origins
+            var referer = src.referer || "https://www.miruro.to/";
+            var server = src.server ? (" " + src.server) : "";
             var entry = {
               url: su, originalUrl: su,
-              quality: (src.quality || "Auto") + " [" + combo.cat.toUpperCase() + " · " + combo.prov + "]",
-              headers: { "User-Agent": self.ua, "Referer": "https://www.miruro.to/" },
+              quality: (src.quality || "Auto") + server + " [" + combo.cat.toUpperCase() + " · " + combo.prov + "]",
+              headers: { "User-Agent": self.ua, "Referer": referer, "Origin": referer.replace(/\/$/, "") },
             };
             if (subtitles.length > 0) entry.subtitles = subtitles;
             out.push(entry);
