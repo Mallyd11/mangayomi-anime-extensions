@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.6.0",
+    "version": "4.8.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -281,7 +281,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getLatestUpdates(page) {
-    var q = "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,status:RELEASING,isAdult:false){id title{romaji english}coverImage{large}}}}";
+    var q = "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
     var d = await this.gql(q, { p: page, n: 20 });
     var pg = d.Page || {};
     return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
@@ -507,8 +507,8 @@ class DefaultExtension extends MProvider {
         multiSelectListPreference: {
           title: "Providers",
           summary: "Only selected providers are used. Fewer = faster load.",
-          values:      ["bee"],
-          entries:     ["Bee (recommended)", "Ally (HLS)", "Kiwi (low-res)"],
+          values:      ["bee", "ally"],
+          entries:     ["Bee (streaming)", "Ally (downloads + streaming)", "Kiwi (low-res)"],
           entryValues: ["bee", "ally", "kiwi"],
         },
       },
