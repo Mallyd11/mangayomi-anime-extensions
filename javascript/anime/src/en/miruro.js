@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.0.0",
+    "version": "4.1.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -389,58 +389,64 @@ class DefaultExtension extends MProvider {
     var id = info.animeId;
     var ids = info.ids || {};
 
-    var audioP = this.pref("miruro_audio") || "sub";
-    var cats = audioP === "dub" ? ["dub", "sub"] : ["sub", "dub"];
-
+    // Read exactly what the user selected — no auto-fallback to other providers
     var provP = this.pref("miruro_providers") || [];
-    if (!provP || provP.length === 0) provP = ["kiwi", "arc", "ally", "bee"];
+    if (!provP || provP.length === 0) provP = ["kiwi", "arc"];
 
-    // All (provider, category) pairs: preferred providers first, then the rest
-    var pairs = [], seen = {};
-    for (var ci = 0; ci < cats.length; ci++) {
-      for (var pi = 0; pi < provP.length; pi++) {
-        var prov = provP[pi], cat = cats[ci], key = prov + "|" + cat;
-        if (!seen[key] && ids[prov] && ids[prov][cat]) { seen[key] = 1; pairs.push([prov, cat]); }
-      }
-    }
-    var allP = Object.keys(ids);
-    for (var ci = 0; ci < cats.length; ci++) {
-      for (var pi = 0; pi < allP.length; pi++) {
-        var prov = allP[pi], cat = cats[ci], key = prov + "|" + cat;
-        if (!seen[key] && ids[prov] && ids[prov][cat]) { seen[key] = 1; pairs.push([prov, cat]); }
+    var audioP = this.pref("miruro_audio") || [];
+    if (!audioP || audioP.length === 0) audioP = ["sub"];
+
+    // Build (provider, category) combinations from selected prefs only
+    var combinations = [];
+    for (var pi = 0; pi < provP.length; pi++) {
+      for (var ai = 0; ai < audioP.length; ai++) {
+        var prov = provP[pi], cat = audioP[ai];
+        if (ids[prov] && ids[prov][cat]) {
+          combinations.push({ prov: prov, cat: cat });
+        }
       }
     }
 
-    var streams = [];
-    for (var oi = 0; oi < pairs.length; oi++) {
-      var prov = pairs[oi][0], cat = pairs[oi][1];
-      try {
-        var data = await this.pipe("sources", {
-          episodeId: this.encodeId(ids[prov][cat]),
-          provider:  prov,
-          category:  cat,
+    // Fire all selected combinations in parallel (mirrors Animetsu's Promise.all)
+    var self = this;
+    var results = await Promise.all(
+      combinations.map(function(combo) {
+        return self.pipe("sources", {
+          episodeId: self.encodeId(ids[combo.prov][combo.cat]),
+          provider:  combo.prov,
+          category:  combo.cat,
           anilistId: id,
-        });
-        var srcs = data.streams || data.sources || [];
-        var subs = data.subtitles || [];
-        var subtitles = [];
-        for (var ti = 0; ti < subs.length; ti++) {
-          var t = subs[ti];
-          if (t.file || t.url) subtitles.push({ file: t.file || t.url, label: t.label || t.lang || "Sub" });
-        }
-        for (var si = 0; si < srcs.length; si++) {
-          var src = srcs[si];
-          var su = src.url || src.file;
-          if (!su) continue;
-          var entry = {
-            url: su, originalUrl: su,
-            quality: (src.quality || "Auto") + " [" + cat.toUpperCase() + " · " + prov + "]",
-            headers: { "User-Agent": this.ua, "Referer": "https://www.miruro.to/" },
-          };
-          if (subtitles.length > 0) entry.subtitles = subtitles;
-          streams.push(entry);
-        }
-      } catch (ex) {}
+        }).then(function(data) {
+          var srcs = data.streams || data.sources || [];
+          var subs = data.subtitles || [];
+          var subtitles = [];
+          for (var ti = 0; ti < subs.length; ti++) {
+            var t = subs[ti];
+            if (t.file || t.url) subtitles.push({ file: t.file || t.url, label: t.label || t.lang || "Sub" });
+          }
+          var out = [];
+          for (var si = 0; si < srcs.length; si++) {
+            var src = srcs[si];
+            var su = src.url || src.file;
+            if (!su) continue;
+            var entry = {
+              url: su, originalUrl: su,
+              quality: (src.quality || "Auto") + " [" + combo.cat.toUpperCase() + " · " + combo.prov + "]",
+              headers: { "User-Agent": self.ua, "Referer": "https://www.miruro.to/" },
+            };
+            if (subtitles.length > 0) entry.subtitles = subtitles;
+            out.push(entry);
+          }
+          return out;
+        }).catch(function() { return []; });
+      })
+    );
+
+    // Flatten results from all parallel requests
+    var streams = [];
+    for (var ri = 0; ri < results.length; ri++) {
+      var r = results[ri];
+      for (var si = 0; si < r.length; si++) streams.push(r[si]);
     }
     return streams;
   }
@@ -480,19 +486,36 @@ class DefaultExtension extends MProvider {
 
   getSourcePreferences() {
     return [
-      { key: "miruro_lang", listPreference: {
-          title: "Title language", summary: "Language for anime titles",
-          valueIndex: 0, entries: ["English", "Romaji", "Native"], entryValues: ["english", "romaji", "native"],
-      }},
-      { key: "miruro_audio", listPreference: {
-          title: "Preferred audio", summary: "Sub or Dub first in stream list",
-          valueIndex: 0, entries: ["Sub", "Dub"], entryValues: ["sub", "dub"],
-      }},
-      { key: "miruro_providers", multiSelectListPreference: {
-          title: "Preferred providers", summary: "Tried first; all others used as fallback",
-          values: ["kiwi", "arc", "ally", "bee"],
-          entries: ["Kiwi", "Arc", "Ally", "Bee", "Dune"], entryValues: ["kiwi", "arc", "ally", "bee", "dune"],
-      }},
+      {
+        key: "miruro_lang",
+        listPreference: {
+          title: "Preferred title language",
+          summary: "Language used for anime titles",
+          valueIndex: 0,
+          entries:     ["English", "Romaji", "Native"],
+          entryValues: ["english", "romaji", "native"],
+        },
+      },
+      {
+        key: "miruro_providers",
+        multiSelectListPreference: {
+          title: "Providers",
+          summary: "Only the selected providers are used. Fewer = faster load.",
+          values:      ["kiwi", "arc"],
+          entries:     ["Kiwi", "Arc", "Ally", "Bee", "Dune"],
+          entryValues: ["kiwi", "arc", "ally", "bee", "dune"],
+        },
+      },
+      {
+        key: "miruro_audio",
+        multiSelectListPreference: {
+          title: "Stream type",
+          summary: "Selecting both Sub and Dub doubles the number of requests per provider.",
+          values:      ["sub"],
+          entries:     ["Sub", "Dub"],
+          entryValues: ["sub", "dub"],
+        },
+      },
     ];
   }
 }
