@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.4.4",
+    "version": "1.4.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -222,7 +222,7 @@ class DefaultExtension extends MProvider {
             var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
             if (!epData.hasOwnProperty("sources")) return [];
-            return this.getPaheMegStreams(epData.sources, audioType, serverName);
+            return this.getPaheMegStreams(epData, audioType, serverName);
           } else if (serverName == "dio" || serverName == "kiss") {
             var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
@@ -245,35 +245,24 @@ class DefaultExtension extends MProvider {
 
   getPaheMegStreams(epData, audioType, serverName) {
     var hdr = this.getHeaders();
+    var subtitles = [];
+    if (epData.hasOwnProperty("subs")) {
+      epData.subs.forEach((item) => {
+        subtitles.push({ file: item.url, label: item.lang, headers: hdr });
+      });
+    }
     var streams = [];
-
-    epData.forEach((item) => {
+    epData.sources.forEach((item) => {
       var quality = item.quality;
       var link = this.getProxyMediaUrl(item.url);
-
-      if (serverName === "meg") {
-        // Meg serves direct MP4 via the swiftstream proxy.
-        // url == originalUrl (no extension) — swiftstream's HEAD handler returns
-        // content-length: 2 which causes Mangayomi's direct-file downloader to
-        // reject the stream. Treating it like Pahe (plain URL, no extension)
-        // lets libmpv detect the content-type from the actual response instead.
-        streams.push({
-          url: link,
-          originalUrl: link,
-          quality: this.streamNamer(quality, audioType, serverName),
-          headers: hdr,
-        });
-      } else {
-        // pahe = AES-128 encrypted HLS — stream only, no download label
-        streams.push({
-          url: link,
-          originalUrl: link,
-          quality: this.streamNamer(quality, audioType, serverName),
-          headers: hdr,
-        });
-      }
+      streams.push({
+        url: link,
+        originalUrl: link,
+        quality: this.streamNamer(quality, audioType, serverName),
+        headers: hdr,
+        subtitles: subtitles,
+      });
     });
-
     return streams;
   }
 
@@ -444,10 +433,10 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_stream_server",
         multiSelectListPreference: {
           title: "Preferred server",
-          summary: "Default/Dio = fastest. Fewer servers = faster load. Kite is currently broken.",
-          values: ["default", "dio"],
-          entries: ["Default", "Dio", "Pahe", "Meg", "Kiss"],
-          entryValues: ["default", "dio", "pahe", "meg", "kiss"],
+          summary: "Default = fastest. Fewer servers = faster load.",
+          values: ["default"],
+          entries: ["Default", "Pahe", "Meg", "Kiss"],
+          entryValues: ["default", "pahe", "meg", "kiss"],
         },
       },
       {
