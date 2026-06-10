@@ -26,17 +26,17 @@
         }
     },
     "anime": {
+        "Animetsu": {
+            "name": "Animetsu",
+            "version": "1.4.5",
+            "langs": "en",
+            "lastUpd": 1781110623.930432
+        },
         "Miruro": {
             "name": "Miruro",
             "version": "4.9.0",
             "langs": "en",
             "lastUpd": 1780757262.866028
-        },
-        "Animetsu": {
-            "name": "Animetsu",
-            "version": "1.4.4",
-            "langs": "en",
-            "lastUpd": 1780587724.408571
         },
         "HiAnime": {
             "name": "HiAnime",
