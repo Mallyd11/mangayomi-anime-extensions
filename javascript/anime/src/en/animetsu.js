@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.4.5",
+    "version": "1.4.6",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -191,7 +191,7 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     var serverPref = this.getPreference("animetsu_pref_stream_server");
-    if (serverPref.length < 1) serverPref.push("default");
+    if (serverPref.length < 1) serverPref.push("pahe");
 
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
     if (audioPref.length < 1) audioPref.push("sub");
@@ -433,10 +433,10 @@ class DefaultExtension extends MProvider {
         key: "animetsu_pref_stream_server",
         multiSelectListPreference: {
           title: "Preferred server",
-          summary: "Default = fastest. Fewer servers = faster load.",
-          values: ["default"],
-          entries: ["Default", "Pahe", "Meg", "Kiss"],
-          entryValues: ["default", "pahe", "meg", "kiss"],
+          summary: "Fewer servers = faster load.",
+          values: ["pahe"],
+          entries: ["Pahe", "Meg", "Kiss"],
+          entryValues: ["pahe", "meg", "kiss"],
         },
       },
       {
