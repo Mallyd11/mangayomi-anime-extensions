@@ -12,7 +12,7 @@
         "hasCloudflare": true,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/animetsu.js",
         "apiUrl": "",
-        "version": "1.4.5",
+        "version": "1.4.6",
         "isManga": false,
         "itemType": 1,
         "isFullData": false,
