@@ -62,15 +62,15 @@
             "langs": "en",
             "lastUpd": 1779565217.520518
         },
-        "AniCove": {
-            "name": "AniCove",
-            "version": "0.2.3",
-            "langs": "en",
-            "lastUpd": 1779565217.520518
-        },
         "AnimeParadise": {
             "name": "AnimeParadise",
             "version": "0.3.3",
+            "langs": "en",
+            "lastUpd": 1779565217.520518
+        },
+        "AniCove": {
+            "name": "AniCove",
+            "version": "0.2.3",
             "langs": "en",
             "lastUpd": 1779565217.520518
         },
@@ -94,15 +94,15 @@
             "langs": "en",
             "lastUpd": 1779410651.044824
         },
-        "bookReadFree": {
-            "name": "bookReadFree",
-            "version": "0.0.1",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
         "Novelbuddy": {
             "name": "Novelbuddy",
             "version": "0.0.9",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "bookReadFree": {
+            "name": "bookReadFree",
+            "version": "0.0.1",
             "langs": "en",
             "lastUpd": 1779410651.044824
         }
