@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.2.8",
+            "langs": "en",
+            "lastUpd": 1781445068.675069
+        },
         "MyroniX": {
             "name": "MyroniX",
             "version": "0.1.8",
@@ -43,12 +49,6 @@
             "version": "4.10.0",
             "langs": "en",
             "lastUpd": 1781444715.059391
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.2.7",
-            "langs": "en",
-            "lastUpd": 1781444449.697972
         },
         "Animetsu": {
             "name": "Animetsu",

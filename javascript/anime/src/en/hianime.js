@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.7",
+    "version": "0.2.8",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -337,8 +337,9 @@ class DefaultExtension extends MProvider {
       if (hasSub) langs.push("Sub");
       if (hasDub) langs.push("Dub");
       if (langs.length) label += " [" + langs.join("+") + "]";
-      // chapter url encodes everything we need: realEpId, hasSub, hasDub
-      var chUrl = realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0");
+      // chapter url: realEpId, hasSub, hasDub, HiAnime internal episode ID (for API server)
+      var hiAnimeEpId = ep.attr("data-id") || "";
+      var chUrl = realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0") + "|" + hiAnimeEpId;
       var thumbnailUrl = thumbMap[epNum] || thumbMap[String(parseInt(epNum, 10))] || null;
       chapters.push({ name: label, url: chUrl, thumbnailUrl: thumbnailUrl });
     }
@@ -357,37 +358,70 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Fetch the megaplay.buzz player page and parse data-id from #megaplay-player.
-  // Some episodes redirect via an s-5 iframe — follow it if needed.
-  async getMegaplayDataId(realEpId, audioType) {
-    var megaHeaders = {
-      "User-Agent": this.ua,
-      "Referer": this.source.baseUrl + "/",
-    };
-    var tryUrl = async (url) => {
-      try {
-        var res = await this.client.get(url, megaHeaders);
-        if (!res.body) return null;
-        if (res.body.indexOf("File not found") >= 0 || res.body.indexOf("Error - MegaPlay") >= 0) return null;
-        // Direct player div
-        var m = res.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
-        if (m) return { dataId: m[1], refererUrl: url };
-        // s-5 iframe redirect
-        var iframeM = res.body.match(/src="(https:\/\/megaplay\.buzz\/stream\/s-5\/[^"]+)"/);
-        if (iframeM) {
-          var s5Res = await this.client.get(iframeM[1], {
-            "User-Agent": this.ua,
-            "Referer": url,
-          });
-          if (s5Res && s5Res.body) {
-            var s5m = s5Res.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
-            if (s5m) return { dataId: s5m[1], refererUrl: iframeM[1] };
+  // Fetch any MegaPlay page URL, find the data-id, and return all HLS sources.
+  // Follows embedded iframe redirects (s-5 etc.) if the player div isn't on the first page.
+  async extractMegaplayFromPageUrl(pageUrl, referer, audioType, audioLabel) {
+    try {
+      var res = await this.client.get(pageUrl, { "User-Agent": this.ua, "Referer": referer });
+      if (!res || !res.body) return [];
+      if (res.body.indexOf("File not found") >= 0 || res.body.indexOf("Error - MegaPlay") >= 0) return [];
+      var m = res.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
+      if (m) return await this.fetchMegaplaySourcesById(m[1], pageUrl, audioType, audioLabel);
+      // Follow any megaplay iframe redirect
+      var iframeM = res.body.match(/src="(https:\/\/megaplay\.buzz\/[^"]+)"/);
+      if (iframeM) {
+        var iRes = await this.client.get(iframeM[1], { "User-Agent": this.ua, "Referer": pageUrl });
+        if (iRes && iRes.body) {
+          var im = iRes.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
+          if (im) return await this.fetchMegaplaySourcesById(im[1], iframeM[1], audioType, audioLabel);
+        }
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  // Call the MegaPlay getSources API for a known data-id and build stream list
+  async fetchMegaplaySourcesById(dataId, refererUrl, audioType, audioLabel) {
+    var streams = [];
+    try {
+      var res = await this.client.get("https://megaplay.buzz/stream/getSources?id=" + dataId, {
+        "User-Agent": this.ua,
+        "Referer": refererUrl,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+      });
+      var data = JSON.parse(res.body);
+      if (!data || !data.sources) return streams;
+      var sourceList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
+      var subtitles = [];
+      if (audioType !== "dub" && Array.isArray(data.tracks)) {
+        for (var t = 0; t < data.tracks.length; t++) {
+          var track = data.tracks[t];
+          if (track && track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
+            subtitles.push({ file: track.file, label: track.label || "Unknown" });
           }
         }
-      } catch (e) {}
-      return null;
-    };
-    return await tryUrl("https://megaplay.buzz/stream/s-2/" + realEpId + "/" + audioType);
+      }
+      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
+      for (var s = 0; s < sourceList.length; s++) {
+        var src = sourceList[s];
+        var fileUrl = src.file || src.url;
+        if (!fileUrl) continue;
+        if (fileUrl.indexOf(".m3u8") >= 0) {
+          var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
+          if (resolved.kind === "master") {
+            for (var v = 0; v < resolved.variants.length; v++) {
+              streams.push({ url: resolved.variants[v].url, originalUrl: fileUrl, quality: resolved.variants[v].label + " - MegaPlay [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
+            }
+          } else if (resolved.kind === "flat") {
+            streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "MegaPlay [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
+          }
+        } else {
+          streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "MegaPlay [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
+        }
+      }
+    } catch (e) {}
+    return streams;
   }
 
   // Resolve an HLS playlist URL to one stream entry per variant.
@@ -444,121 +478,90 @@ class DefaultExtension extends MProvider {
     return { kind: "master", variants: variants };
   }
 
-  // Extract HLS sources from the megaplay.buzz getSources API
+  // Direct approach: construct megaplay s-2 URL from realEpId
   async extractMegaplaySources(realEpId, audioType, audioLabel) {
+    return await this.extractMegaplayFromPageUrl(
+      "https://megaplay.buzz/stream/s-2/" + realEpId + "/" + audioType,
+      this.source.baseUrl + "/",
+      audioType, audioLabel
+    );
+  }
+
+  // API approach: use HiAnime's own AJAX to discover servers and get embed URLs
+  async getStreamsViaHiAnimeApi(hiAnimeEpId, audioType, audioLabel) {
     var streams = [];
-    var info = await this.getMegaplayDataId(realEpId, audioType);
-    if (!info) return streams;
-
+    if (!hiAnimeEpId) return streams;
     try {
-      var apiUrl = "https://megaplay.buzz/stream/getSources?id=" + info.dataId;
-      var res = await this.client.get(apiUrl, {
+      var apiHeaders = {
         "User-Agent": this.ua,
-        "Referer": info.refererUrl,
+        "Referer": this.source.baseUrl + "/",
         "X-Requested-With": "XMLHttpRequest",
-        "Accept": "application/json",
-      });
-      var data = JSON.parse(res.body);
-      if (!data || !data.sources) return streams;
-
-      // sources can be an object {file: "..."} or an array [{file: "..."}, ...]
-      var sourceList = [];
-      if (Array.isArray(data.sources)) {
-        sourceList = data.sources;
-      } else if (data.sources.file) {
-        sourceList = [data.sources];
-      }
-
-      // Build subtitles list from tracks — dub streams get no subtitles by default
-      var subtitles = [];
-      if (audioType !== "dub" && Array.isArray(data.tracks)) {
-        for (var t = 0; t < data.tracks.length; t++) {
-          var track = data.tracks[t];
-          if (track && track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
-            subtitles.push({ file: track.file, label: track.label || "Unknown" });
-          }
-        }
-      }
-
-      var streamHeaders = {
-        "User-Agent": this.ua,
-        "Referer": "https://megaplay.buzz/",
-        "Origin": "https://megaplay.buzz",
       };
-
-      for (var s = 0; s < sourceList.length; s++) {
-        var src = sourceList[s];
-        var fileUrl = src.file || src.url;
-        if (!fileUrl) continue;
-
-        // For HLS, resolve the master playlist so Mangayomi sees segments
-        // directly. For mp4 or non-m3u8, just emit as-is.
-        var emitted = false;
-        if (fileUrl.indexOf(".m3u8") >= 0) {
-          var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
-          if (resolved.kind === "master") {
-            for (var v = 0; v < resolved.variants.length; v++) {
-              streams.push({
-                url: resolved.variants[v].url,
-                originalUrl: fileUrl,
-                quality: resolved.variants[v].label + " - MegaPlay [" + audioLabel + "]",
-                headers: streamHeaders,
-                subtitles: subtitles,
-              });
-              emitted = true;
-            }
-          } else if (resolved.kind === "flat") {
-            // Already a flat playlist with segments — emit as-is.
-            streams.push({
-              url: fileUrl,
-              originalUrl: fileUrl,
-              quality: "MegaPlay [" + audioLabel + "]",
-              headers: streamHeaders,
-              subtitles: subtitles,
-            });
-            emitted = true;
+      var sRes = await this.client.get(
+        this.source.baseUrl + "/ajax/v2/episode/servers?episodeId=" + hiAnimeEpId,
+        apiHeaders
+      );
+      var sData = JSON.parse(sRes.body);
+      if (!sData || !sData.html) return streams;
+      var sDoc = new Document(sData.html);
+      var items = sDoc.select("div.server-item");
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        if ((item.attr("data-type") || "").toLowerCase() !== audioType) continue;
+        var serverId = item.attr("data-id");
+        if (!serverId) continue;
+        try {
+          var srcRes = await this.client.get(
+            this.source.baseUrl + "/ajax/v2/episode/sources?id=" + serverId,
+            apiHeaders
+          );
+          var srcData = JSON.parse(srcRes.body);
+          var embedUrl = srcData && (srcData.link || srcData.url);
+          if (!embedUrl) continue;
+          if (embedUrl.indexOf("megaplay.buzz") >= 0) {
+            var epStreams = await this.extractMegaplayFromPageUrl(embedUrl, this.source.baseUrl + "/", audioType, audioLabel);
+            streams = streams.concat(epStreams);
           }
-          // For "empty-master" or "fetch-failed", deliberately skip emitting:
-          // an unresolved master URL would make Mangayomi treat the variant
-          // playlist line as a single video segment, breaking downloads.
-        } else {
-          // Non-HLS (mp4 etc.) — emit as-is.
-          streams.push({
-            url: fileUrl,
-            originalUrl: fileUrl,
-            quality: "MegaPlay [" + audioLabel + "]",
-            headers: streamHeaders,
-            subtitles: subtitles,
-          });
-          emitted = true;
-        }
+        } catch (e) {}
       }
     } catch (e) {}
-
     return streams;
   }
 
   async getVideoList(url) {
-    // chapter url format: "{realEpId}|{hasSub}|{hasDub}"
+    // chapter url: "{realEpId}|{hasSub}|{hasDub}|{hiAnimeEpId}"
     var parts = url.split("|");
     var realEpId = parts[0];
     var hasSub = parts[1] === "1";
     var hasDub = parts[2] === "1";
+    var hiAnimeEpId = parts[3] || "";
 
-    // Determine preferred order
     var pref = "sub";
     try { pref = new SharedPreferences().get("hianime_pref_audio") || "sub"; } catch (e) {}
+    var server = "megaplay";
+    try { server = new SharedPreferences().get("hianime_pref_server") || "megaplay"; } catch (e) {}
 
-    // Fetch sub and dub in parallel to avoid sequential HTTP round-trips
+    var getStreams = async (audioType, audioLabel) => {
+      if (server === "megaplay") {
+        return await this.extractMegaplaySources(realEpId, audioType, audioLabel);
+      }
+      if (server === "api") {
+        return await this.getStreamsViaHiAnimeApi(hiAnimeEpId, audioType, audioLabel);
+      }
+      // "auto": try MegaPlay direct first, fall back to HiAnime API if empty
+      var streams = await this.extractMegaplaySources(realEpId, audioType, audioLabel);
+      if (streams.length === 0 && hiAnimeEpId) {
+        streams = await this.getStreamsViaHiAnimeApi(hiAnimeEpId, audioType, audioLabel);
+      }
+      return streams;
+    };
+
     var results = await Promise.all([
-      hasSub ? this.extractMegaplaySources(realEpId, "sub", "Sub") : Promise.resolve([]),
-      hasDub ? this.extractMegaplaySources(realEpId, "dub", "Dub") : Promise.resolve([]),
+      hasSub ? getStreams("sub", "Sub") : Promise.resolve([]),
+      hasDub ? getStreams("dub", "Dub") : Promise.resolve([]),
     ]);
-    var subStreams = results[0];
-    var dubStreams = results[1];
-
-    if (pref === "dub") return dubStreams.concat(subStreams);
-    return subStreams.concat(dubStreams);
+    if (pref === "dub") return results[1].concat(results[0]);
+    return results[0].concat(results[1]);
   }
 
   getFilterList() {
@@ -575,6 +578,16 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "hianime_pref_server",
+        listPreference: {
+          title: "Streaming server",
+          summary: "MegaPlay direct: uses megaplay.buzz/stream/s-2 URL. HiAnime API: discovers servers via HiAnime's own AJAX API. Auto: tries MegaPlay first, falls back to API.",
+          valueIndex: 0,
+          entries: ["MegaPlay (direct)", "HiAnime API", "Auto (MegaPlay → API)"],
+          entryValues: ["megaplay", "api", "auto"],
         },
       },
       {
