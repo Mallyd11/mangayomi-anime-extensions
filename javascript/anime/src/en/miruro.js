@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.10.0",
+    "version": "4.11.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -251,9 +251,16 @@ class DefaultExtension extends MProvider {
     var res = await this.client.post(
       "https://graphql.anilist.co",
       { "Content-Type": "application/json", "Accept": "application/json" },
-      JSON.stringify({ query: query, variables: vars })
+      { query: query, variables: vars }
     );
-    return JSON.parse(res.body).data;
+    if (!res || res.statusCode !== 200) {
+      throw new Error("AniList HTTP " + (res ? res.statusCode : "no response"));
+    }
+    var parsed = JSON.parse(res.body);
+    if (parsed.errors && parsed.errors.length) {
+      throw new Error(parsed.errors[0].message);
+    }
+    return parsed.data || {};
   }
 
   title(t) {
@@ -276,14 +283,14 @@ class DefaultExtension extends MProvider {
   async getPopular(page) {
     var q = "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(sort:[TRENDING_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
     var d = await this.gql(q, { p: page, n: 20 });
-    var pg = d.Page || {};
+    var pg = (d && d.Page) ? d.Page : {};
     return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
   }
 
   async getLatestUpdates(page) {
     var q = "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
     var d = await this.gql(q, { p: page, n: 20 });
-    var pg = d.Page || {};
+    var pg = (d && d.Page) ? d.Page : {};
     return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
   }
 
