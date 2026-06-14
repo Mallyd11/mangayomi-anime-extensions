@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.4",
+    "version": "0.3.5",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -324,11 +324,9 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
-  // Resolve a Kiwi-Stream/server linkId to a playable stream URL.
-  // Tries three strategies in order:
-  //   1. result.url or result (string) → if it IS .m3u8/.mp4, use directly
-  //   2. URL fragment (#BASE64) → base64-decode to get the stream URL
-  //   3. Fetch the embed page and regex-scan for .m3u8/.mp4 URLs in the source
+  // Resolve a server linkId → embed URL → playable stream.
+  // Strategy 1: result IS a direct .m3u8/.mp4 URL → use it
+  // Strategy 2: result has a # fragment → base64-decode to get stream URL
   async _resolveStream(linkId, audioType) {
     var embedUrl = "";
     try {
@@ -343,67 +341,70 @@ class DefaultExtension extends MProvider {
       );
       var serverData;
       try { serverData = JSON.parse(serverRes.body); } catch (e) { return null; }
-      if (!serverData || serverData.status !== 200) return null;
+      if (!serverData || !serverData.result) return null;
 
-      // result can be {url:"..."}, {link:"..."}, or a plain string URL
-      if (serverData.result) {
-        if (typeof serverData.result === "string") {
-          embedUrl = serverData.result;
-        } else if (serverData.result.url) {
-          embedUrl = serverData.result.url;
-        } else if (serverData.result.link) {
-          embedUrl = serverData.result.link;
-        }
+      if (typeof serverData.result === "string") {
+        embedUrl = serverData.result;
+      } else if (serverData.result.url) {
+        embedUrl = serverData.result.url;
+      } else if (serverData.result.link) {
+        embedUrl = serverData.result.link;
       }
     } catch (e) { return null; }
     if (!embedUrl) return null;
 
-    // Strategy 1: direct stream URL
     if (embedUrl.includes(".m3u8") || embedUrl.includes(".mp4")) {
       return { url: embedUrl, originalUrl: embedUrl, quality: audioType, headers: { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" }, subtitles: [] };
     }
 
-    // Strategy 2: base64-encoded stream URL in the # fragment
     var hashIdx = embedUrl.indexOf("#");
     if (hashIdx >= 0) {
       var hashPart = embedUrl.substring(hashIdx + 1);
-      if (hashPart) {
-        var decoded = this._b64dec(hashPart);
-        if (decoded && (decoded.includes(".m3u8") || decoded.includes(".mp4"))) {
-          var playerBase = embedUrl.substring(0, hashIdx);
-          var playerOrigin = playerBase.match(/^(https?:\/\/[^/]+)/);
-          var referer = playerOrigin ? playerOrigin[1] + "/" : this.source.baseUrl + "/";
-          return { url: decoded, originalUrl: decoded, quality: audioType, headers: { "User-Agent": this.ua, "Referer": referer }, subtitles: [] };
-        }
+      var decoded = this._b64dec(hashPart);
+      if (decoded && (decoded.includes(".m3u8") || decoded.includes(".mp4"))) {
+        var originM = embedUrl.match(/^(https?:\/\/[^/]+)/);
+        var referer = originM ? originM[1] + "/" : this.source.baseUrl + "/";
+        return { url: decoded, originalUrl: decoded, quality: audioType, headers: { "User-Agent": this.ua, "Referer": referer }, subtitles: [] };
       }
     }
 
-    // Strategy 3: fetch the embed page and scan for stream URLs in the source
+    return null;
+  }
+
+  // MegaPlay stream extraction via MAL ID — mirrors the HiAnime approach.
+  // megaplay.buzz indexes content by MAL ID so it works for any site.
+  async _fetchMegaplaySources(dataId, referer, audioLabel) {
+    var streams = [];
     try {
-      var embedRes = await this.client.get(embedUrl, {
-        "User-Agent": this.ua,
-        "Referer": this.source.baseUrl + "/",
-      });
-      var html = embedRes.body || "";
-      // Direct stream URLs
-      var m = html.match(/["'`](https?:\/\/[^"'`\s]+\.m3u8[^"'`\s]*)/);
-      if (!m) m = html.match(/["'`](https?:\/\/[^"'`\s]+\.mp4[^"'`\s]*)/);
-      if (m) {
-        var streamUrl = m[1];
-        return { url: streamUrl, originalUrl: streamUrl, quality: audioType, headers: { "User-Agent": this.ua, "Referer": embedUrl }, subtitles: [] };
-      }
-      // atob() calls in page JS with embedded base64
-      var b64Re = /atob\(["']([A-Za-z0-9+/=]{40,})["']\)/g;
-      var b64M;
-      while ((b64M = b64Re.exec(html)) !== null) {
-        var dec = this._b64dec(b64M[1]);
-        if (dec && (dec.includes(".m3u8") || dec.includes(".mp4"))) {
-          return { url: dec, originalUrl: dec, quality: audioType, headers: { "User-Agent": this.ua, "Referer": embedUrl }, subtitles: [] };
-        }
+      var res = await this.client.get(
+        "https://megaplay.buzz/stream/getSources?id=" + dataId,
+        { "User-Agent": this.ua, "Referer": referer, "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" }
+      );
+      var data;
+      try { data = JSON.parse(res.body); } catch (e) { return streams; }
+      if (!data || !data.sources) return streams;
+      var srcList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
+      var hdrs = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
+      for (var i = 0; i < srcList.length; i++) {
+        var fileUrl = srcList[i].file || srcList[i].url;
+        if (!fileUrl) continue;
+        streams.push({ url: fileUrl, originalUrl: fileUrl, quality: audioLabel + " [MegaPlay]", headers: hdrs, subtitles: [] });
       }
     } catch (e) {}
+    return streams;
+  }
 
-    return null;
+  async _extractMegaplay(malId, epNum, audioType, audioLabel) {
+    var pageUrl = "https://megaplay.buzz/stream/mal/" + malId + "/" + epNum + "/" + audioType;
+    try {
+      var res = await this.client.get(pageUrl, { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" });
+      if (!res || !res.body) return [];
+      var m = res.body.match(/data-id="(\d+)"[^>]*id="megaplay-player"/) ||
+               res.body.match(/id="megaplay-player"[^>]*data-id="(\d+)"/) ||
+               res.body.match(/megaplay-player[\s\S]{0,200}?data-id="(\d+)"/);
+      if (m) return await this._fetchMegaplaySources(m[1], pageUrl, audioLabel);
+    } catch (e) {}
+    return [];
   }
 
   // Fetch malId + timestamp for an episode when the chapter URL is missing them.
@@ -509,21 +510,23 @@ class DefaultExtension extends MProvider {
       if (!malId || !timestamp) return [];
     }
 
-    var serverPref = "mapper";
-    try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "mapper"; } catch (e) {}
+    var serverPref = "megaplay";
+    try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "megaplay"; } catch (e) {}
     var audioPref = "sub_dub";
     try { audioPref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
 
-    // If server list is requested but ids wasn't stored in the chapter URL, fetch it now
-    if (serverPref !== "mapper" && !ids) {
-      var m2 = await this._fetchEpMeta(slug, epNum);
-      if (m2 && m2.ids) ids = m2.ids;
-    }
-
     var subStreams = [], dubStreams = [];
 
+    // MegaPlay via MAL ID — most reliable, independent of site-specific stream servers
+    if (serverPref === "megaplay" || serverPref === "all") {
+      var mpSub = await this._extractMegaplay(malId, epNum, "sub", "Sub");
+      var mpDub = await this._extractMegaplay(malId, epNum, "dub", "Dub");
+      subStreams = subStreams.concat(mpSub);
+      dubStreams = dubStreams.concat(mpDub);
+    }
+
     // Kiwi-Stream via mapper.nekostream.site
-    if (serverPref !== "list") {
+    if (serverPref === "mapper" || serverPref === "all") {
       var mapRes;
       try {
         mapRes = await this.client.get(
@@ -544,8 +547,12 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    // Direct server list: VidPlay / Vidstream / HD via /ajax/server/list
-    if (serverPref !== "mapper" && ids) {
+    // Server list: VidPlay / Vidstream / HD — fetch per-server linkIds and resolve each
+    if (serverPref === "list") {
+      if (!ids) {
+        var m2 = await this._fetchEpMeta(slug, epNum);
+        if (m2 && m2.ids) ids = m2.ids;
+      }
       var listSub = await this._fetchServerListStreams(ids, "sub", "Sub");
       var listDub = await this._fetchServerListStreams(ids, "dub", "Dub");
       subStreams = subStreams.concat(listSub);
@@ -568,14 +575,15 @@ class DefaultExtension extends MProvider {
         key: "anikoto_pref_server",
         listPreference: {
           title: "Stream source",
-          summary: "Kiwi-Stream uses the mapper API. Server List tries VidPlay / Vidstream / HD directly. Use All to try both.",
+          summary: "MegaPlay uses MAL ID and works independently of the site's own servers. Kiwi-Stream uses the mapper API. Server List (VidPlay/Vidstream/HD) is slow and may time out.",
           valueIndex: 0,
           entries: [
+            "MegaPlay (MAL ID)",
+            "All (MegaPlay + Kiwi-Stream)",
             "Kiwi-Stream (Mapper)",
             "Server List (VidPlay / Vidstream / HD)",
-            "All (Mapper + Server List)",
           ],
-          entryValues: ["mapper", "list", "all"],
+          entryValues: ["megaplay", "all", "mapper", "list"],
         },
       },
       {
