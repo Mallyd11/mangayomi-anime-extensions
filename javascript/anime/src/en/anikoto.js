@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.1",
+    "version": "0.3.2",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -308,6 +308,22 @@ class DefaultExtension extends MProvider {
     };
   }
 
+  // Pure-JS base64 decoder — atob() is not available in Mangayomi's QuickJS runtime.
+  _b64dec(s) {
+    var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    s = s.replace(/[^A-Za-z0-9+/]/g, "");
+    var out = "", i = 0;
+    while (i < s.length) {
+      var a = t.indexOf(s[i++]), b = t.indexOf(s[i++]);
+      var c = t.indexOf(s[i++]), d = t.indexOf(s[i++]);
+      if (a < 0 || b < 0) break;
+      out += String.fromCharCode((a << 2) | (b >> 4));
+      if (c >= 0) out += String.fromCharCode(((b & 15) << 4) | (c >> 2));
+      if (d >= 0) out += String.fromCharCode(((c & 3) << 6) | d);
+    }
+    return out;
+  }
+
   // Call /ajax/server?get={linkId} → get mewcdn URL → base64-decode fragment → m3u8.
   // URL format: https://mewcdn.online/player/plyr.php#BASE64_ENCODED_M3U8_URL#
   async _resolveStream(linkId, audioType) {
@@ -329,8 +345,7 @@ class DefaultExtension extends MProvider {
       var hashPart = embedUrl.split("#")[1];
       if (!hashPart) return null;
 
-      var streamUrl;
-      try { streamUrl = atob(hashPart); } catch (e) { return null; }
+      var streamUrl = this._b64dec(hashPart);
       if (!streamUrl || (!streamUrl.includes(".m3u8") && !streamUrl.includes(".mp4"))) return null;
 
       return {
@@ -345,13 +360,60 @@ class DefaultExtension extends MProvider {
     }
   }
 
+  // Fetch malId + timestamp for an episode when the chapter URL is missing them.
+  // This happens when the user last refreshed during v0.3.0 (2-part URL format).
+  async _fetchEpMeta(slug, epNum) {
+    try {
+      var res = await this.client.get(this.source.baseUrl + "/watch/" + slug, this.headers);
+      var html = res.body || "";
+      var doc = new Document(html);
+      var animeId = "";
+      var watchMain = doc.selectFirst("#watch-main");
+      if (watchMain) animeId = watchMain.attr("data-id") || "";
+      if (!animeId) {
+        var m = html.match(/data-id="(\d+)"/);
+        if (m) animeId = m[1];
+      }
+      if (!animeId) return null;
+
+      var epRes = await this.client.get(
+        this.source.baseUrl + "/ajax/episode/list/" + animeId + "?vrf=",
+        { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/watch/" + slug + "/", "X-Requested-With": "XMLHttpRequest", "Accept": "application/json, text/javascript, */*; q=0.01" }
+      );
+      var epData;
+      try { epData = JSON.parse(epRes.body); } catch (e) { return null; }
+      if (!epData || !epData.result) return null;
+
+      var epDoc = new Document(epData.result);
+      var epEls = epDoc.select("a[data-num]");
+      for (var i = 0; i < epEls.length; i++) {
+        if (epEls[i].attr("data-num") === epNum) {
+          return {
+            malId: epEls[i].attr("data-mal") || "",
+            timestamp: epEls[i].attr("data-timestamp") || "",
+            ids: epEls[i].attr("data-ids") || "",
+          };
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
   async getVideoList(url) {
     // Chapter URL format: "{slug}||{epNum}||{malId}||{timestamp}||{ids}"
+    // Older cached formats may have fewer parts — fall back to fetching ep metadata.
     var parts = url.split("||");
+    var slug = parts[0] || "";
     var epNum = parts[1] || "1";
     var malId = parts[2] || "";
     var timestamp = parts[3] || "";
-    if (!malId || !timestamp) return [];
+
+    if (!malId || !timestamp) {
+      var meta = await this._fetchEpMeta(slug, epNum);
+      if (!meta || !meta.malId || !meta.timestamp) return [];
+      malId = meta.malId;
+      timestamp = meta.timestamp;
+    }
 
     // mapper.nekostream.site returns Kiwi-Stream link IDs keyed under "Kiwi-Stream-".
     // Response: { "Kiwi-Stream-": { sub?: { url }, dub?: { url } }, ... }
