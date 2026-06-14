@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.2",
+    "version": "0.3.3",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -399,6 +399,43 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
+  // Try every server returned by /ajax/server/list?servers={ids}.
+  // Each server entry has a data-link-id (the linkId for /ajax/server?get=).
+  // Filters by data-type (sub/dub) when present; otherwise tries all entries.
+  async _fetchServerListStreams(ids, audioType, audioLabel) {
+    var streams = [];
+    if (!ids) return streams;
+    try {
+      var res = await this.client.get(
+        this.source.baseUrl + "/ajax/server/list?servers=" + ids,
+        {
+          "User-Agent": this.ua,
+          "Referer": this.source.baseUrl + "/",
+          "X-Requested-With": "XMLHttpRequest",
+          "Accept": "application/json, text/javascript, */*; q=0.01",
+        }
+      );
+      var html = res.body || "";
+      try { var p = JSON.parse(html); if (p && p.result) html = p.result; } catch (e) {}
+
+      var doc = new Document(html);
+      var serverEls = doc.select("[data-link-id]");
+      if (serverEls.length === 0) serverEls = doc.select("li[data-id]");
+
+      for (var i = 0; i < serverEls.length; i++) {
+        var el = serverEls[i];
+        var elType = (el.attr("data-type") || "").toLowerCase();
+        if (elType && elType !== audioType) continue;
+        var linkId = el.attr("data-link-id") || el.attr("data-id") || "";
+        if (!linkId) continue;
+        var svName = (el.text || el.attr("data-sv-id") || "Server " + (i + 1)).trim();
+        var stream = await this._resolveStream(linkId, audioLabel + " [" + svName + "]");
+        if (stream) streams.push(stream);
+      }
+    } catch (e) {}
+    return streams;
+  }
+
   async getVideoList(url) {
     // Chapter URL format: "{slug}||{epNum}||{malId}||{timestamp}||{ids}"
     // Older cached formats may have fewer parts — fall back to fetching ep metadata.
@@ -407,47 +444,58 @@ class DefaultExtension extends MProvider {
     var epNum = parts[1] || "1";
     var malId = parts[2] || "";
     var timestamp = parts[3] || "";
+    var ids = parts[4] || "";
 
     if (!malId || !timestamp) {
       var meta = await this._fetchEpMeta(slug, epNum);
-      if (!meta || !meta.malId || !meta.timestamp) return [];
-      malId = meta.malId;
-      timestamp = meta.timestamp;
+      if (meta) {
+        malId = meta.malId || malId;
+        timestamp = meta.timestamp || timestamp;
+        ids = meta.ids || ids;
+      }
+      if (!malId || !timestamp) return [];
     }
 
-    // mapper.nekostream.site returns Kiwi-Stream link IDs keyed under "Kiwi-Stream-".
-    // Response: { "Kiwi-Stream-": { sub?: { url }, dub?: { url } }, ... }
-    var mapRes;
-    try {
-      mapRes = await this.client.get(
-        "https://mapper.nekostream.site/api/mal/" + malId + "/" + epNum + "/" + timestamp,
-        { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/", "Accept": "application/json" }
-      );
-    } catch (e) { return []; }
-
-    var data;
-    try { data = JSON.parse(mapRes.body); } catch (e) { return []; }
-
-    var kiwi = data["Kiwi-Stream-"] || {};
-    var subLinkId = kiwi.sub && kiwi.sub.url ? kiwi.sub.url : "";
-    var dubLinkId = kiwi.dub && kiwi.dub.url ? kiwi.dub.url : "";
-
-    var pref = "sub_dub";
-    try { pref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
+    var serverPref = "mapper";
+    try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "mapper"; } catch (e) {}
+    var audioPref = "sub_dub";
+    try { audioPref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
 
     var subStreams = [], dubStreams = [];
-    if (subLinkId) {
-      var s = await this._resolveStream(subLinkId, "Sub");
-      if (s) subStreams.push(s);
-    }
-    if (dubLinkId) {
-      var d = await this._resolveStream(dubLinkId, "Dub");
-      if (d) dubStreams.push(d);
+
+    // Kiwi-Stream via mapper.nekostream.site
+    if (serverPref !== "list") {
+      var mapRes;
+      try {
+        mapRes = await this.client.get(
+          "https://mapper.nekostream.site/api/mal/" + malId + "/" + epNum + "/" + timestamp,
+          { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/", "Accept": "application/json" }
+        );
+      } catch (e) {}
+      if (mapRes) {
+        var mapData;
+        try { mapData = JSON.parse(mapRes.body); } catch (e) {}
+        if (mapData) {
+          var kiwi = mapData["Kiwi-Stream-"] || {};
+          var subLinkId = kiwi.sub && kiwi.sub.url ? kiwi.sub.url : "";
+          var dubLinkId = kiwi.dub && kiwi.dub.url ? kiwi.dub.url : "";
+          if (subLinkId) { var ks = await this._resolveStream(subLinkId, "Sub [Kiwi-Stream]"); if (ks) subStreams.push(ks); }
+          if (dubLinkId) { var kd = await this._resolveStream(dubLinkId, "Dub [Kiwi-Stream]"); if (kd) dubStreams.push(kd); }
+        }
+      }
     }
 
-    if (pref === "dub_sub") return dubStreams.concat(subStreams);
-    if (pref === "sub")     return subStreams;
-    if (pref === "dub")     return dubStreams;
+    // Direct server list: VidPlay / Vidstream / HD via /ajax/server/list
+    if (serverPref !== "mapper" && ids) {
+      var listSub = await this._fetchServerListStreams(ids, "sub", "Sub");
+      var listDub = await this._fetchServerListStreams(ids, "dub", "Dub");
+      subStreams = subStreams.concat(listSub);
+      dubStreams = dubStreams.concat(listDub);
+    }
+
+    if (audioPref === "dub_sub") return dubStreams.concat(subStreams);
+    if (audioPref === "sub")     return subStreams;
+    if (audioPref === "dub")     return dubStreams;
     return subStreams.concat(dubStreams);
   }
 
@@ -457,6 +505,20 @@ class DefaultExtension extends MProvider {
 
   getSourcePreferences() {
     return [
+      {
+        key: "anikoto_pref_server",
+        listPreference: {
+          title: "Stream source",
+          summary: "Kiwi-Stream uses the mapper API. Server List tries VidPlay / Vidstream / HD directly. Use All to try both.",
+          valueIndex: 0,
+          entries: [
+            "Kiwi-Stream (Mapper)",
+            "Server List (VidPlay / Vidstream / HD)",
+            "All (Mapper + Server List)",
+          ],
+          entryValues: ["mapper", "list", "all"],
+        },
+      },
       {
         key: "anikoto_pref_ep_thumbnails",
         switchPreferenceCompat: {
