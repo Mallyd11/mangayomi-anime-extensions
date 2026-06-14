@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.9.0",
+    "version": "4.10.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -251,7 +251,7 @@ class DefaultExtension extends MProvider {
     var res = await this.client.post(
       "https://graphql.anilist.co",
       { "Content-Type": "application/json", "Accept": "application/json" },
-      { query: query, variables: vars }
+      JSON.stringify({ query: query, variables: vars })
     );
     return JSON.parse(res.body).data;
   }
@@ -391,7 +391,7 @@ class DefaultExtension extends MProvider {
 
     // Read exactly what the user selected — no auto-fallback to other providers
     var provP = this.pref("miruro_providers") || [];
-    if (!provP || provP.length === 0) provP = ["kiwi", "arc"];
+    if (!provP || provP.length === 0) provP = ["ally"];
 
     var audioP = this.pref("miruro_audio") || [];
     if (!audioP || audioP.length === 0) audioP = ["sub"];
