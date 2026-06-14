@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.5",
+    "version": "0.3.6",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -371,6 +371,38 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
+  // Fetch a master HLS playlist and return one entry per quality variant.
+  // Returns [] if the URL is already a flat media playlist (no #EXT-X-STREAM-INF).
+  async _resolveHlsVariants(masterUrl, headers) {
+    var variants = [];
+    try {
+      var res = await this.client.get(masterUrl, headers);
+      var body = res.body || "";
+      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return variants; // flat playlist, caller uses as-is
+      var lastSlash = masterUrl.lastIndexOf("/");
+      var baseDir = lastSlash > 0 ? masterUrl.substring(0, lastSlash + 1) : masterUrl;
+      var lines = body.split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+        var resM = line.match(/RESOLUTION=\d+x(\d+)/);
+        var bwM  = line.match(/BANDWIDTH=(\d+)/);
+        var label = resM ? resM[1] + "p" : (bwM ? Math.round(parseInt(bwM[1]) / 1000) + "kbps" : "Auto");
+        for (var j = i + 1; j < lines.length; j++) {
+          var u = lines[j].trim();
+          if (!u || u.charAt(0) === "#") continue;
+          variants.push({ url: u.indexOf("http") === 0 ? u : baseDir + u, label: label });
+          break;
+        }
+      }
+      // Best quality first
+      variants.sort(function(a, b) {
+        return (parseInt(b.label) || 0) - (parseInt(a.label) || 0);
+      });
+    } catch (e) {}
+    return variants;
+  }
+
   // MegaPlay stream extraction via MAL ID — mirrors the HiAnime approach.
   // megaplay.buzz indexes content by MAL ID so it works for any site.
   async _fetchMegaplaySources(dataId, referer, audioLabel) {
@@ -385,10 +417,34 @@ class DefaultExtension extends MProvider {
       if (!data || !data.sources) return streams;
       var srcList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
       var hdrs = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
+
+      // Parse subtitle tracks from MegaPlay (present for sub streams)
+      var subtitles = [];
+      if (Array.isArray(data.tracks)) {
+        for (var t = 0; t < data.tracks.length; t++) {
+          var track = data.tracks[t];
+          if (track && track.file && track.kind !== "thumbnails") {
+            subtitles.push({ file: track.file, label: track.label || "Unknown" });
+          }
+        }
+      }
+
       for (var i = 0; i < srcList.length; i++) {
         var fileUrl = srcList[i].file || srcList[i].url;
         if (!fileUrl) continue;
-        streams.push({ url: fileUrl, originalUrl: fileUrl, quality: audioLabel + " [MegaPlay]", headers: hdrs, subtitles: [] });
+        if (fileUrl.indexOf(".m3u8") >= 0) {
+          // Resolve master playlist → one stream per quality level
+          var variants = await this._resolveHlsVariants(fileUrl, hdrs);
+          if (variants.length > 0) {
+            for (var v = 0; v < variants.length; v++) {
+              streams.push({ url: variants[v].url, originalUrl: fileUrl, quality: variants[v].label + " - " + audioLabel + " [MegaPlay]", headers: hdrs, subtitles: subtitles });
+            }
+          } else {
+            streams.push({ url: fileUrl, originalUrl: fileUrl, quality: audioLabel + " [MegaPlay]", headers: hdrs, subtitles: subtitles });
+          }
+        } else {
+          streams.push({ url: fileUrl, originalUrl: fileUrl, quality: audioLabel + " [MegaPlay]", headers: hdrs, subtitles: subtitles });
+        }
       }
     } catch (e) {}
     return streams;
