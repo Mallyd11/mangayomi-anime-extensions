@@ -26,6 +26,18 @@
         }
     },
     "anime": {
+        "MyroniX": {
+            "name": "MyroniX",
+            "version": "0.1.8",
+            "langs": "en",
+            "lastUpd": 1781444715.059391
+        },
+        "Miruro": {
+            "name": "Miruro",
+            "version": "4.10.0",
+            "langs": "en",
+            "lastUpd": 1781444715.059391
+        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.2.7",
@@ -38,23 +50,11 @@
             "langs": "en",
             "lastUpd": 1781113365.370168
         },
-        "Miruro": {
-            "name": "Miruro",
-            "version": "4.9.0",
-            "langs": "en",
-            "lastUpd": 1780757262.866028
-        },
         "Anidap": {
             "name": "Anidap",
             "version": "1.5.26",
             "langs": "en",
             "lastUpd": 1780060162.922322
-        },
-        "MyroniX": {
-            "name": "MyroniX",
-            "version": "0.1.7",
-            "langs": "en",
-            "lastUpd": 1779640100.815635
         },
         "AniKoto": {
             "name": "AniKoto",
