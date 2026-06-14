@@ -78,7 +78,7 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/anikoto.js",
         "apiUrl": "",
-        "version": "0.3.0",
+        "version": "0.3.1",
         "isManga": false,
         "itemType": 1,
         "isFullData": false,

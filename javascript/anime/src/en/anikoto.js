@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.0",
+    "version": "0.3.1",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -268,7 +268,10 @@ class DefaultExtension extends MProvider {
           for (var j = 0; j < epEls.length; j++) {
             var ep = epEls[j];
             var epNum = ep.attr("data-num") || "";
-            if (!epNum) continue;
+            var malId = ep.attr("data-mal") || "";
+            var timestamp = ep.attr("data-timestamp") || "";
+            var ids = ep.attr("data-ids") || "";
+            if (!epNum || !malId || !timestamp) continue;
 
             // Episode label: number + English title from the site
             var rawText = (ep.text || "").trim().replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ");
@@ -283,7 +286,7 @@ class DefaultExtension extends MProvider {
 
             chapters.push({
               name: label,
-              url: slug + "||" + epNum,
+              url: slug + "||" + epNum + "||" + malId + "||" + timestamp + "||" + ids,
               thumbnailUrl: thumbMap[epNum] || "",
               scanlator: badge,
             });
@@ -343,30 +346,29 @@ class DefaultExtension extends MProvider {
   }
 
   async getVideoList(url) {
-    // Chapter URL format: "{slug}||{epNum}"
+    // Chapter URL format: "{slug}||{epNum}||{malId}||{timestamp}||{ids}"
     var parts = url.split("||");
-    var slug = parts[0] || "";
     var epNum = parts[1] || "1";
-    if (!slug) return [];
+    var malId = parts[2] || "";
+    var timestamp = parts[3] || "";
+    if (!malId || !timestamp) return [];
 
-    // Fetch the watch page for this episode — the server list is embedded in the HTML.
-    var watchUrl = this.source.baseUrl + "/watch/" + slug + "/ep-" + epNum;
-    var res;
+    // mapper.nekostream.site returns Kiwi-Stream link IDs keyed under "Kiwi-Stream-".
+    // Response: { "Kiwi-Stream-": { sub?: { url }, dub?: { url } }, ... }
+    var mapRes;
     try {
-      res = await this.client.get(watchUrl, {
-        "User-Agent": this.ua,
-        "Referer": this.source.baseUrl + "/",
-        "Accept": "text/html,application/xhtml+xml,*/*",
-      });
+      mapRes = await this.client.get(
+        "https://mapper.nekostream.site/api/mal/" + malId + "/" + epNum + "/" + timestamp,
+        { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/", "Accept": "application/json" }
+      );
     } catch (e) { return []; }
 
-    var doc = new Document(res.body || "");
+    var data;
+    try { data = JSON.parse(mapRes.body); } catch (e) { return []; }
 
-    // Kiwi-Stream (data-sv-id="xtp") appears twice in the page:
-    // first occurrence = H-SUB (soft-sub), second = A-DUB.
-    var kiwiItems = doc.select('li[data-sv-id="xtp"]');
-    var subLinkId = kiwiItems.length > 0 ? (kiwiItems[0].attr("data-link-id") || "") : "";
-    var dubLinkId = kiwiItems.length > 1 ? (kiwiItems[1].attr("data-link-id") || "") : "";
+    var kiwi = data["Kiwi-Stream-"] || {};
+    var subLinkId = kiwi.sub && kiwi.sub.url ? kiwi.sub.url : "";
+    var dubLinkId = kiwi.dub && kiwi.dub.url ? kiwi.dub.url : "";
 
     var pref = "sub_dub";
     try { pref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
