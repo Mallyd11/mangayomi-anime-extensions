@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.8",
+    "version": "0.2.9",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -273,24 +273,25 @@ class DefaultExtension extends MProvider {
     var statusMatch = html.match(/Status[\s\S]{0,80}?(Currently Airing|Finished Airing|Ongoing|Completed|Releasing|Not Yet Released|Upcoming)/i);
     if (statusMatch) status = this.statusCode(statusMatch[1]);
 
+    // Parse AniList/MAL IDs from page JS vars — needed for stream URLs and thumbnails
+    var combined = html + infoHtml;
+    var anilistId = null;
+    var malId = null;
+    var aMatch = combined.match(/var\s+anilistId\s*=\s*(\d+)/i)
+              || combined.match(/anilist\.co\/anime\/(\d+)/i)
+              || combined.match(/anilist[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i);
+    var mMatch = combined.match(/var\s+malId\s*=\s*(\d+)/i)
+              || combined.match(/myanimelist\.net\/anime\/(\d+)/i)
+              || combined.match(/mal[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i);
+    if (aMatch) anilistId = aMatch[1];
+    if (mMatch) malId = mMatch[1];
+
     // Episode thumbnails via ani.zip (only if user has enabled them in settings).
     var thumbsEnabled = false;
     try { thumbsEnabled = new SharedPreferences().get("hianime_pref_thumbnails") === true; } catch (e) {}
 
     var thumbMap = {};
     if (thumbsEnabled) try {
-      var combined = html + infoHtml;
-      var anilistId = null;
-      var malId     = null;
-      var aMatch = combined.match(/var\s+anilistId\s*=\s*(\d+)/i)
-                || combined.match(/anilist\.co\/anime\/(\d+)/i)
-                || combined.match(/anilist[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i);
-      var mMatch = combined.match(/var\s+malId\s*=\s*(\d+)/i)
-                || combined.match(/myanimelist\.net\/anime\/(\d+)/i)
-                || combined.match(/mal[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i);
-      if (aMatch) anilistId = aMatch[1];
-      if (mMatch) malId     = mMatch[1];
-
       var zipUrl = anilistId
         ? "https://api.ani.zip/mappings?anilist_id=" + anilistId
         : malId
@@ -337,9 +338,8 @@ class DefaultExtension extends MProvider {
       if (hasSub) langs.push("Sub");
       if (hasDub) langs.push("Dub");
       if (langs.length) label += " [" + langs.join("+") + "]";
-      // chapter url: realEpId, hasSub, hasDub, HiAnime internal episode ID (for API server)
-      var hiAnimeEpId = ep.attr("data-id") || "";
-      var chUrl = realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0") + "|" + hiAnimeEpId;
+      // chapter url: realEpId|hasSub|hasDub|malId|anilistId|episodeNum
+      var chUrl = realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0") + "|" + (malId || "") + "|" + (anilistId || "") + "|" + epNum;
       var thumbnailUrl = thumbMap[epNum] || thumbMap[String(parseInt(epNum, 10))] || null;
       chapters.push({ name: label, url: chUrl, thumbnailUrl: thumbnailUrl });
     }
@@ -358,13 +358,14 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Fetch any MegaPlay page URL, find the data-id, and return all HLS sources.
-  // Follows embedded iframe redirects (s-5 etc.) if the player div isn't on the first page.
+  // Fetch a MegaPlay page URL and extract sources.
+  // Some pages return error HTML but still embed the player div — we check for
+  // data-id first and only bail if it's truly absent. Also follows iframe redirects.
   async extractMegaplayFromPageUrl(pageUrl, referer, audioType, audioLabel) {
     try {
       var res = await this.client.get(pageUrl, { "User-Agent": this.ua, "Referer": referer });
       if (!res || !res.body) return [];
-      if (res.body.indexOf("File not found") >= 0 || res.body.indexOf("Error - MegaPlay") >= 0) return [];
+      // Look for player data-id even if the page also contains error HTML
       var m = res.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
       if (m) return await this.fetchMegaplaySourcesById(m[1], pageUrl, audioType, audioLabel);
       // Follow any megaplay iframe redirect
@@ -478,13 +479,25 @@ class DefaultExtension extends MProvider {
     return { kind: "master", variants: variants };
   }
 
-  // Direct approach: construct megaplay s-2 URL from realEpId
-  async extractMegaplaySources(realEpId, audioType, audioLabel) {
-    return await this.extractMegaplayFromPageUrl(
-      "https://megaplay.buzz/stream/s-2/" + realEpId + "/" + audioType,
+  // MegaPlay stream fetch.
+  // HiAnime's player tries /stream/ani/{epId}/{type} first (stream-token based),
+  // then falls back to /stream/mal/{malId}/{epNum}/{type} (MAL ID based).
+  // The mal URL is the reliable path — ani often returns an error page.
+  async extractMegaplaySources(realEpId, audioType, audioLabel, malId, episodeNum) {
+    var streams = await this.extractMegaplayFromPageUrl(
+      "https://megaplay.buzz/stream/ani/" + realEpId + "/" + audioType,
       this.source.baseUrl + "/",
       audioType, audioLabel
     );
+    if (streams.length > 0) return streams;
+    if (malId && episodeNum) {
+      streams = await this.extractMegaplayFromPageUrl(
+        "https://megaplay.buzz/stream/mal/" + malId + "/" + episodeNum + "/" + audioType,
+        this.source.baseUrl + "/",
+        audioType, audioLabel
+      );
+    }
+    return streams;
   }
 
   // API approach: use HiAnime's own AJAX to discover servers and get embed URLs
@@ -529,31 +542,37 @@ class DefaultExtension extends MProvider {
   }
 
   async getVideoList(url) {
-    // chapter url: "{realEpId}|{hasSub}|{hasDub}|{hiAnimeEpId}"
+    // chapter url: "{realEpId}|{hasSub}|{hasDub}|{malId}|{anilistId}|{episodeNum}"
     var parts = url.split("|");
-    var realEpId = parts[0];
-    var hasSub = parts[1] === "1";
-    var hasDub = parts[2] === "1";
-    var hiAnimeEpId = parts[3] || "";
+    var realEpId  = parts[0];
+    var hasSub    = parts[1] === "1";
+    var hasDub    = parts[2] === "1";
+    var malId     = parts[3] || "";
+    var anilistId = parts[4] || "";
+    var episodeNum = parts[5] || "";
 
     var pref = "sub";
     try { pref = new SharedPreferences().get("hianime_pref_audio") || "sub"; } catch (e) {}
-    var server = "megaplay";
-    try { server = new SharedPreferences().get("hianime_pref_server") || "megaplay"; } catch (e) {}
+    var server = "auto";
+    try { server = new SharedPreferences().get("hianime_pref_server") || "auto"; } catch (e) {}
 
     var getStreams = async (audioType, audioLabel) => {
-      if (server === "megaplay") {
-        return await this.extractMegaplaySources(realEpId, audioType, audioLabel);
+      if (server === "ani") {
+        // ani URL only (stream-token based)
+        return await this.extractMegaplayFromPageUrl(
+          "https://megaplay.buzz/stream/ani/" + realEpId + "/" + audioType,
+          this.source.baseUrl + "/", audioType, audioLabel
+        );
       }
-      if (server === "api") {
-        return await this.getStreamsViaHiAnimeApi(hiAnimeEpId, audioType, audioLabel);
+      if (server === "mal") {
+        // mal URL only (MAL ID + episode number based — reliable)
+        return await this.extractMegaplayFromPageUrl(
+          "https://megaplay.buzz/stream/mal/" + malId + "/" + episodeNum + "/" + audioType,
+          this.source.baseUrl + "/", audioType, audioLabel
+        );
       }
-      // "auto": try MegaPlay direct first, fall back to HiAnime API if empty
-      var streams = await this.extractMegaplaySources(realEpId, audioType, audioLabel);
-      if (streams.length === 0 && hiAnimeEpId) {
-        streams = await this.getStreamsViaHiAnimeApi(hiAnimeEpId, audioType, audioLabel);
-      }
-      return streams;
+      // "auto": try ani first, fall back to mal
+      return await this.extractMegaplaySources(realEpId, audioType, audioLabel, malId, episodeNum);
     };
 
     var results = await Promise.all([
@@ -583,11 +602,11 @@ class DefaultExtension extends MProvider {
       {
         key: "hianime_pref_server",
         listPreference: {
-          title: "Streaming server",
-          summary: "MegaPlay direct: uses megaplay.buzz/stream/s-2 URL. HiAnime API: discovers servers via HiAnime's own AJAX API. Auto: tries MegaPlay first, falls back to API.",
+          title: "MegaPlay URL mode",
+          summary: "Auto tries stream/ani first then stream/mal. Use stream/mal if Auto is slow (mal is the reliable fallback HiAnime uses).",
           valueIndex: 0,
-          entries: ["MegaPlay (direct)", "HiAnime API", "Auto (MegaPlay → API)"],
-          entryValues: ["megaplay", "api", "auto"],
+          entries: ["Auto (ani → mal)", "stream/mal only", "stream/ani only"],
+          entryValues: ["auto", "mal", "ani"],
         },
       },
       {
