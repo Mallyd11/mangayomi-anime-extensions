@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.11.0",
+    "version": "4.12.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -436,9 +436,24 @@ class DefaultExtension extends MProvider {
             var src = srcs[si];
             // Skip embed streams (kwik.cx, vibeplayer embeds etc.) — not playable in Mangayomi
             if (src.type === "embed") continue;
+            // Skip streams marked inactive by the Miruro backend
+            if (src.isActive === false) continue;
             var su = src.url || src.file;
             // Skip empty URLs
             if (!su || su.length < 10) continue;
+            // Skip ally MP4 tokens that have expired (pipe caches them for 3 days, often stale)
+            // Token format: Authorization=3_CREATED_HASH_000_YYYYMMDDHHMMSS_0040_dnld
+            if (src.type === "mp4") {
+              var expiryMatch = su.match(/Authorization=[^_]+_[^_]+_[^_]+_[^_]+_(\d{14})_/);
+              if (expiryMatch) {
+                var exp = expiryMatch[1];
+                var expMs = Date.UTC(
+                  parseInt(exp.slice(0,4)), parseInt(exp.slice(4,6))-1, parseInt(exp.slice(6,8)),
+                  parseInt(exp.slice(8,10)), parseInt(exp.slice(10,12)), parseInt(exp.slice(12,14))
+                );
+                if (Date.now() > expMs) continue; // expired — skip
+              }
+            }
             // Use the stream's own referer field — each CDN checks this and rejects wrong origins
             var referer = src.referer || "https://www.miruro.to/";
             var server = src.server ? (" " + src.server) : "";
@@ -515,8 +530,8 @@ class DefaultExtension extends MProvider {
           title: "Providers",
           summary: "Only selected providers are used. Fewer = faster load.",
           values:      ["ally"],
-          entries:     ["Ally (downloads + streaming)", "Bee (streaming)", "Kiwi (low-res)"],
-          entryValues: ["ally", "bee", "kiwi"],
+          entries:     ["Ally (HLS streaming)", "Kiwi (multi-quality HLS)"],
+          entryValues: ["ally", "kiwi"],
         },
       },
       {
