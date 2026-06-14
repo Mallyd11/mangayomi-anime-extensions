@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.6",
+    "version": "0.2.7",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -390,31 +390,18 @@ class DefaultExtension extends MProvider {
     return await tryUrl("https://megaplay.buzz/stream/s-2/" + realEpId + "/" + audioType);
   }
 
-  async _fetchWithRetry(url, headers, attempts) {
-    var maxAttempts = attempts || 3;
-    var lastErr = null;
-    for (var n = 0; n < maxAttempts; n++) {
-      try {
-        var res = await this.client.get(url, headers);
-        if (res && res.body) return res.body;
-      } catch (e) {
-        lastErr = e;
-      }
-    }
-    return null;
-  }
-
   // Resolve an HLS playlist URL to one stream entry per variant.
-  // The Mangayomi downloader parses segments directly from the first m3u8 it
-  // receives, so we have to fetch and inspect the playlist ourselves.
-  //
   // Returns one of:
   //   { kind: "master", variants: [{url, label}, ...] }  — fan out to one stream per quality
   //   { kind: "flat" }                                    — already-flat playlist; caller emits URL as-is
-  //   { kind: "fetch-failed" }                            — could not fetch the playlist after retries
+  //   { kind: "fetch-failed" }                            — could not fetch the playlist
   //   { kind: "empty-master" }                            — master with no parseable variants
   async resolveHlsPlaylist(playlistUrl, baseHeaders) {
-    var body = await this._fetchWithRetry(playlistUrl, baseHeaders, 3);
+    var body = null;
+    try {
+      var hlsRes = await this.client.get(playlistUrl, baseHeaders);
+      if (hlsRes && hlsRes.body) body = hlsRes.body;
+    } catch (e) {}
     if (!body) return { kind: "fetch-failed" };
 
     var hasStreamInf = body.indexOf("#EXT-X-STREAM-INF") >= 0;
@@ -562,23 +549,16 @@ class DefaultExtension extends MProvider {
     var pref = "sub";
     try { pref = new SharedPreferences().get("hianime_pref_audio") || "sub"; } catch (e) {}
 
-    var allStreams = [];
-    var subStreams = [];
-    var dubStreams = [];
+    // Fetch sub and dub in parallel to avoid sequential HTTP round-trips
+    var results = await Promise.all([
+      hasSub ? this.extractMegaplaySources(realEpId, "sub", "Sub") : Promise.resolve([]),
+      hasDub ? this.extractMegaplaySources(realEpId, "dub", "Dub") : Promise.resolve([]),
+    ]);
+    var subStreams = results[0];
+    var dubStreams = results[1];
 
-    if (hasSub) {
-      subStreams = await this.extractMegaplaySources(realEpId, "sub", "Sub");
-    }
-    if (hasDub) {
-      dubStreams = await this.extractMegaplaySources(realEpId, "dub", "Dub");
-    }
-
-    if (pref === "dub") {
-      allStreams = dubStreams.concat(subStreams);
-    } else {
-      allStreams = subStreams.concat(dubStreams);
-    }
-    return allStreams;
+    if (pref === "dub") return dubStreams.concat(subStreams);
+    return subStreams.concat(dubStreams);
   }
 
   getFilterList() {
