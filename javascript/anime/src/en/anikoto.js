@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.3",
+    "version": "0.3.4",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -324,9 +324,13 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
-  // Call /ajax/server?get={linkId} → get mewcdn URL → base64-decode fragment → m3u8.
-  // URL format: https://mewcdn.online/player/plyr.php#BASE64_ENCODED_M3U8_URL#
+  // Resolve a Kiwi-Stream/server linkId to a playable stream URL.
+  // Tries three strategies in order:
+  //   1. result.url or result (string) → if it IS .m3u8/.mp4, use directly
+  //   2. URL fragment (#BASE64) → base64-decode to get the stream URL
+  //   3. Fetch the embed page and regex-scan for .m3u8/.mp4 URLs in the source
   async _resolveStream(linkId, audioType) {
+    var embedUrl = "";
     try {
       var serverRes = await this.client.get(
         this.source.baseUrl + "/ajax/server?get=" + encodeURIComponent(linkId),
@@ -339,25 +343,67 @@ class DefaultExtension extends MProvider {
       );
       var serverData;
       try { serverData = JSON.parse(serverRes.body); } catch (e) { return null; }
-      if (!serverData || serverData.status !== 200 || !serverData.result || !serverData.result.url) return null;
+      if (!serverData || serverData.status !== 200) return null;
 
-      var embedUrl = serverData.result.url;
-      var hashPart = embedUrl.split("#")[1];
-      if (!hashPart) return null;
+      // result can be {url:"..."}, {link:"..."}, or a plain string URL
+      if (serverData.result) {
+        if (typeof serverData.result === "string") {
+          embedUrl = serverData.result;
+        } else if (serverData.result.url) {
+          embedUrl = serverData.result.url;
+        } else if (serverData.result.link) {
+          embedUrl = serverData.result.link;
+        }
+      }
+    } catch (e) { return null; }
+    if (!embedUrl) return null;
 
-      var streamUrl = this._b64dec(hashPart);
-      if (!streamUrl || (!streamUrl.includes(".m3u8") && !streamUrl.includes(".mp4"))) return null;
-
-      return {
-        url: streamUrl,
-        originalUrl: streamUrl,
-        quality: audioType,
-        headers: { "User-Agent": this.ua, "Referer": "https://vibeplayer.site/" },
-        subtitles: [],
-      };
-    } catch (e) {
-      return null;
+    // Strategy 1: direct stream URL
+    if (embedUrl.includes(".m3u8") || embedUrl.includes(".mp4")) {
+      return { url: embedUrl, originalUrl: embedUrl, quality: audioType, headers: { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" }, subtitles: [] };
     }
+
+    // Strategy 2: base64-encoded stream URL in the # fragment
+    var hashIdx = embedUrl.indexOf("#");
+    if (hashIdx >= 0) {
+      var hashPart = embedUrl.substring(hashIdx + 1);
+      if (hashPart) {
+        var decoded = this._b64dec(hashPart);
+        if (decoded && (decoded.includes(".m3u8") || decoded.includes(".mp4"))) {
+          var playerBase = embedUrl.substring(0, hashIdx);
+          var playerOrigin = playerBase.match(/^(https?:\/\/[^/]+)/);
+          var referer = playerOrigin ? playerOrigin[1] + "/" : this.source.baseUrl + "/";
+          return { url: decoded, originalUrl: decoded, quality: audioType, headers: { "User-Agent": this.ua, "Referer": referer }, subtitles: [] };
+        }
+      }
+    }
+
+    // Strategy 3: fetch the embed page and scan for stream URLs in the source
+    try {
+      var embedRes = await this.client.get(embedUrl, {
+        "User-Agent": this.ua,
+        "Referer": this.source.baseUrl + "/",
+      });
+      var html = embedRes.body || "";
+      // Direct stream URLs
+      var m = html.match(/["'`](https?:\/\/[^"'`\s]+\.m3u8[^"'`\s]*)/);
+      if (!m) m = html.match(/["'`](https?:\/\/[^"'`\s]+\.mp4[^"'`\s]*)/);
+      if (m) {
+        var streamUrl = m[1];
+        return { url: streamUrl, originalUrl: streamUrl, quality: audioType, headers: { "User-Agent": this.ua, "Referer": embedUrl }, subtitles: [] };
+      }
+      // atob() calls in page JS with embedded base64
+      var b64Re = /atob\(["']([A-Za-z0-9+/=]{40,})["']\)/g;
+      var b64M;
+      while ((b64M = b64Re.exec(html)) !== null) {
+        var dec = this._b64dec(b64M[1]);
+        if (dec && (dec.includes(".m3u8") || dec.includes(".mp4"))) {
+          return { url: dec, originalUrl: dec, quality: audioType, headers: { "User-Agent": this.ua, "Referer": embedUrl }, subtitles: [] };
+        }
+      }
+    } catch (e) {}
+
+    return null;
   }
 
   // Fetch malId + timestamp for an episode when the chapter URL is missing them.
@@ -400,8 +446,8 @@ class DefaultExtension extends MProvider {
   }
 
   // Try every server returned by /ajax/server/list?servers={ids}.
-  // Each server entry has a data-link-id (the linkId for /ajax/server?get=).
-  // Filters by data-type (sub/dub) when present; otherwise tries all entries.
+  // The linkId for /ajax/server?get= can live in several different attribute names
+  // depending on the site version — we try all common ones.
   async _fetchServerListStreams(ids, audioType, audioLabel) {
     var streams = [];
     if (!ids) return streams;
@@ -416,19 +462,26 @@ class DefaultExtension extends MProvider {
         }
       );
       var html = res.body || "";
-      try { var p = JSON.parse(html); if (p && p.result) html = p.result; } catch (e) {}
+      // Unwrap JSON envelope: {status:200, result:"<html>"}
+      try {
+        var parsed = JSON.parse(html);
+        if (parsed && typeof parsed.result === "string") html = parsed.result;
+      } catch (e) {}
 
       var doc = new Document(html);
+      // Try multiple attribute names the site might use for the server linkId
       var serverEls = doc.select("[data-link-id]");
-      if (serverEls.length === 0) serverEls = doc.select("li[data-id]");
+      if (serverEls.length === 0) serverEls = doc.select("[data-id]");
+      if (serverEls.length === 0) serverEls = doc.select("li[class]");
 
       for (var i = 0; i < serverEls.length; i++) {
         var el = serverEls[i];
         var elType = (el.attr("data-type") || "").toLowerCase();
         if (elType && elType !== audioType) continue;
-        var linkId = el.attr("data-link-id") || el.attr("data-id") || "";
+        var linkId = el.attr("data-link-id") || el.attr("data-id") || el.attr("data-server-id") || "";
         if (!linkId) continue;
-        var svName = (el.text || el.attr("data-sv-id") || "Server " + (i + 1)).trim();
+        var svName = (el.text || el.attr("data-sv-id") || el.attr("data-name") || "Srv" + (i + 1)).trim();
+        if (svName.length > 30) svName = "Srv" + (i + 1);
         var stream = await this._resolveStream(linkId, audioLabel + " [" + svName + "]");
         if (stream) streams.push(stream);
       }
@@ -460,6 +513,12 @@ class DefaultExtension extends MProvider {
     try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "mapper"; } catch (e) {}
     var audioPref = "sub_dub";
     try { audioPref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
+
+    // If server list is requested but ids wasn't stored in the chapter URL, fetch it now
+    if (serverPref !== "mapper" && !ids) {
+      var m2 = await this._fetchEpMeta(slug, epNum);
+      if (m2 && m2.ids) ids = m2.ids;
+    }
 
     var subStreams = [], dubStreams = [];
 
