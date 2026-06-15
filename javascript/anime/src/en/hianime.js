@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.9",
+    "version": "0.3.0",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -73,41 +73,69 @@ class DefaultExtension extends MProvider {
     return nameMap;
   }
 
-  // Parse anime cards from list pages (.flw-item containers)
-  parseList(doc, nameMap) {
+  // Build list from JSON-LD itemListElement (used when .flw-item cards are absent —
+  // HiAnime moved card rendering to client-side JS in 2025, but structured data remains SSR).
+  parseListFromJsonLd(html) {
     var list = [];
-    var items = doc.select(".flw-item");
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      var anchor = item.selectFirst(".film-poster-ahref");
-      if (!anchor) anchor = item.selectFirst(".dynamic-name");
-      if (!anchor) anchor = item.selectFirst(".film-name a");
-      var href = anchor ? anchor.attr("href") : "";
-      var link = href.startsWith("http") ? href : this.source.baseUrl + href;
-
-      // JSON-LD map has English translated names; fall back to data-ename (romaji)
-      var name = (nameMap && nameMap[link]) || "";
-      if (!name) {
-        var nameEl = item.selectFirst(".dynamic-name") || item.selectFirst(".film-name a");
-        if (nameEl) name = (nameEl.attr("data-ename") || nameEl.text || "").trim();
+    try {
+      var re = /<script[^>]+ld\+json[^>]*>([\s\S]*?)<\/script>/gi;
+      var m;
+      while ((m = re.exec(html)) !== null) {
+        try {
+          var ld = JSON.parse(m[1]);
+          var ldItems = (ld && ld.itemListElement) ? ld.itemListElement : [];
+          for (var i = 0; i < ldItems.length; i++) {
+            var it = ldItems[i];
+            if (it.url && it.name) {
+              list.push({ name: it.name, imageUrl: it.image || "", link: it.url });
+            }
+          }
+        } catch (e) {}
       }
-      name = name.trim();
-
-      var img = item.selectFirst(".film-poster-img");
-      if (!img) img = item.selectFirst(".film-poster img");
-      var imageUrl = "";
-      if (img) imageUrl = img.attr("src") || img.attr("data-src") || "";
-
-      if (name && link) list.push({ name: name, imageUrl: imageUrl, link: link });
-    }
+    } catch (e) {}
     return list;
   }
 
-  hasNextPage(doc) {
-    // Pagination uses <li class="page-item"><a aria-label="Next"> when next is enabled.
-    // When next is disabled or not present, no anchor with that aria-label exists.
+  // Parse anime cards from list pages (.flw-item containers), with JSON-LD fallback.
+  parseList(doc, html) {
+    var list = [];
+    var items = doc.select(".flw-item");
+    if (items.length > 0) {
+      var nameMap = this.buildNameMap(html);
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        var anchor = item.selectFirst(".film-poster-ahref");
+        if (!anchor) anchor = item.selectFirst(".dynamic-name");
+        if (!anchor) anchor = item.selectFirst(".film-name a");
+        var href = anchor ? anchor.attr("href") : "";
+        var link = href.startsWith("http") ? href : this.source.baseUrl + href;
+
+        var name = (nameMap && nameMap[link]) || "";
+        if (!name) {
+          var nameEl = item.selectFirst(".dynamic-name") || item.selectFirst(".film-name a");
+          if (nameEl) name = (nameEl.attr("data-ename") || nameEl.text || "").trim();
+        }
+        name = name.trim();
+
+        var img = item.selectFirst(".film-poster-img");
+        if (!img) img = item.selectFirst(".film-poster img");
+        var imageUrl = "";
+        if (img) imageUrl = img.attr("src") || img.attr("data-src") || "";
+
+        if (name && link) list.push({ name: name, imageUrl: imageUrl, link: link });
+      }
+      return list;
+    }
+    // Fallback: build list from JSON-LD structured data (CSR pages)
+    return this.parseListFromJsonLd(html);
+  }
+
+  hasNextPage(doc, listLength) {
+    // DOM pagination link (present on SSR pages)
     var nextLink = doc.selectFirst("a[aria-label='Next']");
-    return !!nextLink;
+    if (nextLink) return true;
+    // Heuristic for CSR pages: full pages typically have 20–24 items
+    return (listLength || 0) >= 20;
   }
 
   get supportsLatest() {
@@ -116,18 +144,21 @@ class DefaultExtension extends MProvider {
 
   async getPopular(page) {
     var p = await this.fetchPage("/most-popular?page=" + page);
-    return { list: this.parseList(p.doc, this.buildNameMap(p.html)), hasNextPage: this.hasNextPage(p.doc) };
+    var list = this.parseList(p.doc, p.html);
+    return { list: list, hasNextPage: this.hasNextPage(p.doc, list.length) };
   }
 
   async getLatestUpdates(page) {
     var p = await this.fetchPage("/top-airing?page=" + page);
-    return { list: this.parseList(p.doc, this.buildNameMap(p.html)), hasNextPage: this.hasNextPage(p.doc) };
+    var list = this.parseList(p.doc, p.html);
+    return { list: list, hasNextPage: this.hasNextPage(p.doc, list.length) };
   }
 
   async search(query, page, filters) {
     try {
       var p = await this.fetchPage("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
-      return { list: this.parseList(p.doc, this.buildNameMap(p.html)), hasNextPage: this.hasNextPage(p.doc) };
+      var list = this.parseList(p.doc, p.html);
+      return { list: list, hasNextPage: this.hasNextPage(p.doc, list.length) };
     } catch (e) {
       return { list: [], hasNextPage: false };
     }

@@ -25,7 +25,7 @@ This repository contains the available javascript extension catalogues for the M
 | AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/06/15 |
 | AnimeParadise | 0.3.3 | No | Sub Only | 2026/06/15 |
 | Animetsu | 1.4.7 | No | Sub+Dub | 2026/06/15 |
-| HiAnime | 0.2.9 | Yes | Sub+Dub | 2026/06/15 |
+| HiAnime | 0.3.0 | Yes | Sub+Dub | 2026/06/15 |
 | JustAnime | 0.1.4 | Yes | Sub+Dub | 2026/06/15 |
 | Miruro | 4.12.0 | Yes | Sub+Dub | 2026/06/15 |
 | MyroniX | 0.1.8 | Yes | Sub+Dub | 2026/06/15 |

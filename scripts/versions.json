@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.3.0",
+            "langs": "en",
+            "lastUpd": 1781557180.246494
+        },
         "Miruro": {
             "name": "Miruro",
             "version": "4.12.0",
@@ -77,12 +83,6 @@
         "AniCove": {
             "name": "AniCove",
             "version": "0.2.3",
-            "langs": "en",
-            "lastUpd": 1781556784.385987
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.2.9",
             "langs": "en",
             "lastUpd": 1781556784.385987
         }
