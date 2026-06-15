@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "Miruro": {
+            "name": "Miruro",
+            "version": "4.12.0",
+            "langs": "en",
+            "lastUpd": 1781556800.671599
+        },
         "AniCove": {
             "name": "AniCove",
             "version": "0.2.3",
