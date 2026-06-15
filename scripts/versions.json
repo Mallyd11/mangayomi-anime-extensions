@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "Animetsu": {
+            "name": "Animetsu",
+            "version": "1.4.7",
+            "langs": "en",
+            "lastUpd": 1781556459.340797
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.3.6",
@@ -49,12 +55,6 @@
             "version": "0.1.8",
             "langs": "en",
             "lastUpd": 1781444782.49855
-        },
-        "Animetsu": {
-            "name": "Animetsu",
-            "version": "1.4.6",
-            "langs": "en",
-            "lastUpd": 1781113365.370168
         },
         "Anidap": {
             "name": "Anidap",

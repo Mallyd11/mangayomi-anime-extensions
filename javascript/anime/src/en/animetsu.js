@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.4.6",
+    "version": "1.4.7",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -223,7 +223,7 @@ class DefaultExtension extends MProvider {
             var epData = await this.request(epSlug);
             if (!epData.hasOwnProperty("sources")) return [];
             return this.getPaheMegStreams(epData, audioType, serverName);
-          } else if (serverName == "dio" || serverName == "kiss") {
+          } else if (serverName == "dio" || serverName == "kiss" || serverName == "sage") {
             var epSlug = `/oppai/${anilistUrl}?server=${serverName}&source_type=${audioType}`;
             var epData = await this.request(epSlug);
             if (!epData.hasOwnProperty("sources")) return [];
@@ -340,7 +340,7 @@ class DefaultExtension extends MProvider {
       });
     }
 
-    var isSoftSub = serverName === "kiss";
+    var isSoftSub = serverName === "kiss" || serverName === "sage";
 
     // Fetch all source masters in parallel instead of sequentially.
     var perSource = await Promise.all(epData.sources.map(async (item) => {
@@ -434,9 +434,9 @@ class DefaultExtension extends MProvider {
         multiSelectListPreference: {
           title: "Preferred server",
           summary: "Fewer servers = faster load.",
-          values: ["pahe"],
-          entries: ["Pahe", "Meg", "Kiss"],
-          entryValues: ["pahe", "meg", "kiss"],
+          values: ["sage"],
+          entries: ["Sage", "Pahe", "Dio", "Kiss", "Meg"],
+          entryValues: ["sage", "pahe", "dio", "kiss", "meg"],
         },
       },
       {
