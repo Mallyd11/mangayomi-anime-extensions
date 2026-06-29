@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.6",
+    "version": "0.0.7",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -751,14 +751,16 @@ class DefaultExtension extends MProvider {
     for (const emb of embeds) {
       let r = null;
       try { r = await this.resolveEmbed(emb.link, audioPref); } catch (e) { r = null; }
-      if (!r || !r.url) continue;
-      streams.push({
-        url: r.url,
-        originalUrl: r.url,
-        quality: emb.label + " · ReAnime",
-        headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/" },
-        subtitles: r.subtitles,
-      });
+      if (!r || !r.variants) continue;
+      for (const vrt of r.variants) {
+        streams.push({
+          url: vrt.url,
+          originalUrl: vrt.url,
+          quality: emb.label + " · " + vrt.label,
+          headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/" },
+          subtitles: r.subtitles,
+        });
+      }
     }
 
     _vlCache[cacheKey] = streams;
@@ -825,12 +827,44 @@ class DefaultExtension extends MProvider {
     if (!/^https?:\/\//.test(masterUrl)) return null;
 
     // The HLS playlists at masterUrl are base64+XOR(pk) encrypted, so a normal
-    // player can't read them.  Decrypt the whole playlist tree and inline it as
-    // a self-contained data: URI master (segments themselves are plain TS).
-    const playable = await this.buildPlayableM3u8(masterUrl, pk, audioPref);
-    if (!playable) return null;
+    // player can't read them.  Decrypt the playlist tree and inline it.
+    //
+    // DIAGNOSTIC (v0.0.7): offer two variants so we can tell whether the player
+    // can load a data: URI at all — "video-only" is a single, non-nested media
+    // playlist (no audio); "full" is the nested master with audio renditions.
+    const variants = [];
+    let videoOnly = null;
+    try { videoOnly = await this.buildVideoOnlyM3u8(masterUrl, pk); } catch (e) { videoOnly = null; }
+    if (videoOnly) variants.push({ label: "TEST-A video-only", url: videoOnly });
 
-    return { url: playable, subtitles: this.parseSubtitles(html) };
+    let full = null;
+    try { full = await this.buildPlayableM3u8(masterUrl, pk, audioPref); } catch (e) { full = null; }
+    if (full) variants.push({ label: "TEST-B full-audio", url: full });
+
+    if (variants.length === 0) return null;
+    return { variants: variants, subtitles: this.parseSubtitles(html) };
+  }
+
+  // Single, non-nested video media playlist (no audio) as a data: URI — used to
+  // probe whether the player supports data: URI HLS at all.
+  async buildVideoOnlyM3u8(masterUrl, pk) {
+    const masterBase = this.baseOf(masterUrl);
+    const master = await this.fetchPlaylist(masterUrl, pk);
+    if (master.indexOf("#EXT-X-STREAM-INF") < 0) {
+      return this.toDataUri(this.absolutizePlaylist(master, masterBase));
+    }
+    const lines = master.split("\n");
+    let videoUri = null;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().indexOf("#EXT-X-STREAM-INF") === 0) {
+        const next = (lines[i + 1] || "").trim();
+        if (next && next.charAt(0) !== "#") { videoUri = next; break; }
+      }
+    }
+    if (!videoUri) return null;
+    const u = this.absUrl(videoUri, masterBase);
+    const pl = this.absolutizePlaylist(await this.fetchPlaylist(u, pk), this.baseOf(u));
+    return this.toDataUri(pl);
   }
 
   // ── HLS playlist decryption / rewrite ──────────────────────────────────────
