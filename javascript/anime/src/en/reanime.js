@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -749,22 +749,21 @@ class DefaultExtension extends MProvider {
       embeds.push({ link: link, label: s.serverName || "HD" });
     });
 
-    // Resolve every server in parallel — each does the full decrypt pipeline.
-    const resolved = await Promise.all(
-      embeds.map((emb) => this.resolveEmbed(emb.link, audioPref).catch(() => null))
-    );
-
+    // Resolve servers one at a time — Mangayomi's bridged HTTP client is not
+    // reliably concurrency-safe, so we avoid Promise.all here.
     const streams = [];
-    resolved.forEach((r, i) => {
-      if (!r || !r.url) return;
+    for (const emb of embeds) {
+      let r = null;
+      try { r = await this.resolveEmbed(emb.link, audioPref); } catch (e) { r = null; }
+      if (!r || !r.url) continue;
       streams.push({
         url: r.url,
         originalUrl: r.url,
-        quality: embeds[i].label + " · ReAnime",
+        quality: emb.label + " · ReAnime",
         headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/" },
         subtitles: r.subtitles,
       });
-    });
+    }
 
     _vlCache[cacheKey] = streams;
     _vlCacheTs[cacheKey] = Date.now();
@@ -898,15 +897,18 @@ class DefaultExtension extends MProvider {
     }
     if (variants.length === 0) return null;
 
-    // Fetch + decrypt + absolutize every referenced media playlist in parallel.
-    const audioData = await Promise.all(audios.map((a) => {
+    // Fetch + decrypt + absolutize every referenced media playlist, one at a
+    // time (the bridged HTTP client is not reliably concurrency-safe).
+    const audioData = [];
+    for (const a of audios) {
       const u = this.absUrl(a.uri, masterBase);
-      return this.fetchPlaylist(u, pk).then((t) => this.absolutizePlaylist(t, this.baseOf(u)));
-    }));
-    const variantData = await Promise.all(variants.map((v) => {
+      audioData.push(this.absolutizePlaylist(await this.fetchPlaylist(u, pk), this.baseOf(u)));
+    }
+    const variantData = [];
+    for (const v of variants) {
       const u = this.absUrl(v.uri, masterBase);
-      return this.fetchPlaylist(u, pk).then((t) => this.absolutizePlaylist(t, this.baseOf(u)));
-    }));
+      variantData.push(this.absolutizePlaylist(await this.fetchPlaylist(u, pk), this.baseOf(u)));
+    }
 
     // Choose the default audio track from the sub/dub preference.
     // "dub" = an English/dub rendition; "sub" = the original (everything else).
