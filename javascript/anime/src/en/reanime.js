@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -642,6 +642,7 @@ class DefaultExtension extends MProvider {
           dateUpload: isNaN(aired) ? null : "" + aired,
           thumbnailUrl: ep.thumbnail || null,
           scanlator: ep.is_filler ? "Filler" : null,
+          description: this.episodeDescription(ep),
         });
       });
       chapters.reverse(); // newest first
@@ -673,6 +674,38 @@ class DefaultExtension extends MProvider {
       if (offset >= total || batch.length === 0) break;
     }
     return all;
+  }
+
+  // reanime never fills in episode synopses, so compose a useful info line from
+  // the metadata it does return (alternate title, runtime, filler/recap).
+  episodeDescription(ep) {
+    const base = (ep.description || "").replace(/<[^>]*>/g, "").trim();
+    const title = ep.title || "";
+    const parts = [];
+
+    const jp = (ep.title_japanese || "").trim();
+    const ro = (ep.title_romanji || "").trim();
+    let alt = "";
+    if (jp && jp.toLowerCase() !== title.toLowerCase()) alt = jp;
+    else if (ro && ro.toLowerCase() !== title.toLowerCase() && !/^episode\s*\d+$/i.test(ro)) alt = ro;
+    if (alt) parts.push(alt);
+
+    const dur = ep.duration;
+    if (typeof dur === "number" && dur > 0) {
+      // reanime is inconsistent: usually minutes (23) but sometimes seconds
+      // (1438). Anything over ~3h is really seconds — normalise to minutes.
+      const mins = dur > 180 ? Math.round(dur / 60) : dur;
+      parts.push(mins + " min");
+    } else if (typeof dur === "string" && dur.trim()) {
+      parts.push(dur.trim());
+    }
+
+    if (ep.is_filler) parts.push("Filler");
+    if (ep.is_recap) parts.push("Recap");
+
+    const meta = parts.join("  ·  ");
+    if (base && meta) return base + "\n\n" + meta;
+    return base || meta || null;
   }
 
   // ── Video list ─────────────────────────────────────────────────────────────
