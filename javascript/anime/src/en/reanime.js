@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -239,6 +239,17 @@ function utf8Decode(bytes) {
 }
 
 const _B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function bytesToB64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i], b1 = i + 1 < bytes.length ? bytes[i + 1] : 0, b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    s += _B64[b0 >> 2];
+    s += _B64[((b0 & 3) << 4) | (b1 >> 4)];
+    s += i + 1 < bytes.length ? _B64[((b1 & 15) << 2) | (b2 >> 6)] : "=";
+    s += i + 2 < bytes.length ? _B64[b2 & 63] : "=";
+  }
+  return s;
+}
 function b64ToBytes(str) {
   str = str.replace(/[^A-Za-z0-9+/=]/g, "");
   const out = [];
@@ -417,6 +428,12 @@ const EMBED_HOST = "https://flixcloud.cc";
 // means "no cursor", i.e. the first page).
 var _latestAiredCursors = {};
 
+// getVideoList is called for both playback and download of the same episode;
+// cache results briefly to avoid re-running the whole resolve/decrypt pipeline.
+var _vlCache = {};
+var _vlCacheTs = {};
+var VL_CACHE_TTL_MS = 5 * 60 * 1000;
+
 class DefaultExtension extends MProvider {
   constructor() {
     super();
@@ -453,11 +470,25 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Headers for flixcloud.cc.  The embed validates the referring domain.
+  // Headers for the flixcloud.cc embed page + token endpoint (validates the
+  // referring site domain).
   get embedHeaders() {
     return {
       "User-Agent": this.ua,
       "Referer": this.getBaseUrl() + "/",
+    };
+  }
+
+  // Headers for the CDN (fetch.flixcloud.cc playlists): the CDN hotlink-checks
+  // against the player's own origin, and is fronted by Cloudflare bot
+  // management — send a realistic browser header set so the request passes.
+  get cdnHeaders() {
+    return {
+      "User-Agent": this.ua,
+      "Referer": EMBED_HOST + "/",
+      "Origin": EMBED_HOST,
+      "Accept": "*/*",
+      "Accept-Language": "en-US,en;q=0.9",
     };
   }
 
@@ -652,6 +683,13 @@ class DefaultExtension extends MProvider {
     const epNum = parts[1];
     if (!anilistId || !epNum) return [];
 
+    const audioPref = this.getPreference("reanime_audio_pref") || "sub";
+    const cacheKey = url + "|" + audioPref;
+    const now = Date.now();
+    if (_vlCache[cacheKey] && now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
+      return _vlCache[cacheKey];
+    }
+
     // The flix route lives on the Cloudflare-protected frontend host.  With
     // hasCloudflare=true Mangayomi solves the challenge in a WebView once and
     // reuses the cf_clearance cookie.  No custom User-Agent here: the cookie is
@@ -666,42 +704,44 @@ class DefaultExtension extends MProvider {
       return [];
     }
 
+    // Each server is an alternate CDN (HD-1/HD-2) for the same dual-audio video;
+    // dedupe by full embed link so we offer one stream per server.
     const servers = (flix && flix.servers) || [];
-    // Collapse to unique embed ids (most servers point at the same flixcloud
-    // video, which itself carries both sub & dub audio tracks).
     const seen = {};
     const embeds = [];
     servers.forEach((s) => {
-      const m = (s.dataLink || "").match(/\/e\/([A-Za-z0-9]+)/);
-      if (!m) return;
-      const aid = m[1];
-      const label = s.serverName || "HD";
-      if (seen[aid]) return;
-      seen[aid] = true;
-      embeds.push({ aid: aid, label: label });
+      const link = s.dataLink || "";
+      if (!link || seen[link] || !/\/e\//.test(link)) return;
+      seen[link] = true;
+      embeds.push({ link: link, label: s.serverName || "HD" });
     });
 
+    // Resolve every server in parallel — each does the full decrypt pipeline.
+    const resolved = await Promise.all(
+      embeds.map((emb) => this.resolveEmbed(emb.link, audioPref).catch(() => null))
+    );
+
     const streams = [];
-    for (const emb of embeds) {
-      try {
-        const resolved = await this.resolveEmbed(emb.aid);
-        if (!resolved || !resolved.url) continue;
-        streams.push({
-          url: resolved.url,
-          originalUrl: resolved.url,
-          quality: emb.label + " · ReAnime",
-          headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/", "Origin": EMBED_HOST },
-          subtitles: resolved.subtitles,
-        });
-      } catch (e) { /* skip this embed */ }
-    }
+    resolved.forEach((r, i) => {
+      if (!r || !r.url) return;
+      streams.push({
+        url: r.url,
+        originalUrl: r.url,
+        quality: embeds[i].label + " · ReAnime",
+        headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/" },
+        subtitles: r.subtitles,
+      });
+    });
+
+    _vlCache[cacheKey] = streams;
+    _vlCacheTs[cacheKey] = Date.now();
     return streams;
   }
 
-  // Resolve a flixcloud embed id into a playable HLS master URL + subtitles.
-  // See memory/reanime-extension.md for the full scheme.
-  async resolveEmbed(aid) {
-    const pageRes = await this.client.get(EMBED_HOST + "/e/" + aid, this.embedHeaders);
+  // Resolve a flixcloud embed into a directly playable, self-contained HLS
+  // master (data: URI) plus subtitles.  See memory/reanime-extension.md.
+  async resolveEmbed(embedUrl, audioPref) {
+    const pageRes = await this.client.get(embedUrl, this.embedHeaders);
     if (pageRes.statusCode !== 200 || !pageRes.body) return null;
     const html = pageRes.body;
 
@@ -732,34 +772,135 @@ class DefaultExtension extends MProvider {
     const fragTB64 = tk[tKey];
     if (!cipherB64 || !fragTB64) return null;
 
-    // 1) WASM cipher → 32 raw key bytes (E).
+    // WASM module: _r derives the manifest-URL key (E); _c derives the 32-byte
+    // key that XOR-decrypts the playlists themselves.
+    const wasm = wasmModule(b64ToBytes(wPayload));
     const frag1 = b64ToBytes(frag1B64);
     const keyFrag2 = b64ToBytes(keyFrag2B64);
     const fragT = b64ToBytes(fragTB64);
-    const g0 = parseInt(seed.slice(0, 8), 16) >>> 0;
-
-    const wasm = wasmModule(b64ToBytes(wPayload));
     const k = frag1.length;
     const pA = 1000, pB = pA + k, pC = pB + k, pOut = pC + k;
     wasm.memory.set(frag1, pA);
     wasm.memory.set(keyFrag2, pB);
     wasm.memory.set(fragT, pC);
-    wasm.call("_s", [g0]);
+    wasm.call("_s", [parseInt(seed.slice(0, 8), 16) >>> 0]);
     wasm.call("_r", [pA, pB, pC, pOut, k]);
     const E = wasm.memory.slice(pOut, pOut + k);
+    const pkPtr = wasm.call("_c", []);
+    const pk = wasm.memory.slice(pkPtr, pkPtr + 32);
 
-    // 2) PBKDF2 + seed-xor + SHA-256 → AES-256 key.
-    const seedBytes = utf8(seed);
-    const dk = pbkdf2(E, seedBytes, 1000, 32);
+    // PBKDF2 + seed-xor + SHA-256 → AES-256 key → decrypt the manifest URL.
+    const dk = pbkdf2(E, utf8(seed), 1000, 32);
     for (let i = 0; i < 32; i++) dk[i] ^= seed.charCodeAt(i % seed.length);
     const aesKey = sha256(dk);
+    const masterUrl = utf8Decode(aesCbcDecrypt(aesKey, b64ToBytes(ivB64), b64ToBytes(cipherB64))).trim();
+    if (!/^https?:\/\//.test(masterUrl)) return null;
 
-    // 3) AES-256-CBC decrypt → the HLS master URL.
-    const plain = aesCbcDecrypt(aesKey, b64ToBytes(ivB64), b64ToBytes(cipherB64));
-    const m3u8 = utf8Decode(plain).trim();
-    if (!/^https?:\/\//.test(m3u8)) return null;
+    // The HLS playlists at masterUrl are base64+XOR(pk) encrypted, so a normal
+    // player can't read them.  Decrypt the whole playlist tree and inline it as
+    // a self-contained data: URI master (segments themselves are plain TS).
+    const playable = await this.buildPlayableM3u8(masterUrl, pk, audioPref);
+    if (!playable) return null;
 
-    return { url: m3u8, subtitles: this.parseSubtitles(html) };
+    return { url: playable, subtitles: this.parseSubtitles(html) };
+  }
+
+  // ── HLS playlist decryption / rewrite ──────────────────────────────────────
+
+  baseOf(u) { return u.slice(0, u.lastIndexOf("/") + 1); }
+  absUrl(uri, base) { return /^https?:\/\//.test(uri) ? uri : base + uri; }
+  toDataUri(text) { return "data:application/vnd.apple.mpegurl;base64," + bytesToB64(utf8(text)); }
+
+  // A playlist is served either plain (#EXTM3U…) or base64(plaintext XOR pk).
+  decryptPlaylist(body, pk) {
+    const t = (body || "").trim();
+    if (t.indexOf("#EXTM3U") === 0) return t;
+    const raw = b64ToBytes(t);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw[i] ^ pk[i % pk.length];
+    return utf8Decode(out);
+  }
+
+  async fetchPlaylist(u, pk) {
+    const res = await this.client.get(u, this.cdnHeaders);
+    if (res.statusCode !== 200 || !res.body) throw new Error("playlist HTTP " + res.statusCode);
+    return this.decryptPlaylist(res.body, pk);
+  }
+
+  // Rewrite every segment/URI line to an absolute URL.
+  absolutizePlaylist(text, base) {
+    return text.split("\n").map((line) => {
+      const t = line.trim();
+      if (!t || t.charAt(0) === "#") return line;
+      return this.absUrl(t, base);
+    }).join("\n");
+  }
+
+  async buildPlayableM3u8(masterUrl, pk, audioPref) {
+    const masterBase = this.baseOf(masterUrl);
+    const master = await this.fetchPlaylist(masterUrl, pk);
+
+    // No variants → it's already a media playlist (muxed); just absolutize.
+    if (master.indexOf("#EXT-X-STREAM-INF") < 0) {
+      return this.toDataUri(this.absolutizePlaylist(master, masterBase));
+    }
+
+    // Parse audio renditions and video variants.
+    const lines = master.split("\n");
+    const audios = [];   // { line, uri, lang, name }
+    const variants = []; // { inf, uri }
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i].trim();
+      if (l.indexOf("#EXT-X-MEDIA:") === 0 && l.indexOf("TYPE=AUDIO") >= 0) {
+        const uri = (l.match(/URI="([^"]+)"/) || [])[1];
+        if (uri) audios.push({
+          line: l, uri: uri,
+          lang: (l.match(/LANGUAGE="([^"]+)"/) || [])[1] || "",
+          name: (l.match(/NAME="([^"]+)"/) || [])[1] || "",
+        });
+      } else if (l.indexOf("#EXT-X-STREAM-INF") === 0) {
+        const next = (lines[i + 1] || "").trim();
+        if (next && next.charAt(0) !== "#") variants.push({ inf: l, uri: next });
+      }
+    }
+    if (variants.length === 0) return null;
+
+    // Fetch + decrypt + absolutize every referenced media playlist in parallel.
+    const audioData = await Promise.all(audios.map((a) => {
+      const u = this.absUrl(a.uri, masterBase);
+      return this.fetchPlaylist(u, pk).then((t) => this.absolutizePlaylist(t, this.baseOf(u)));
+    }));
+    const variantData = await Promise.all(variants.map((v) => {
+      const u = this.absUrl(v.uri, masterBase);
+      return this.fetchPlaylist(u, pk).then((t) => this.absolutizePlaylist(t, this.baseOf(u)));
+    }));
+
+    // Choose the default audio track from the sub/dub preference.
+    // "dub" = an English/dub rendition; "sub" = the original (everything else).
+    let dubIdx = -1;
+    for (let i = 0; i < audios.length; i++) {
+      if (/eng/i.test(audios[i].lang) || /english|dub/i.test(audios[i].name)) { dubIdx = i; break; }
+    }
+    let defIdx = 0;
+    if (audioPref === "dub") {
+      defIdx = dubIdx >= 0 ? dubIdx : 0;
+    } else if (dubIdx >= 0) {
+      defIdx = dubIdx === 0 && audios.length > 1 ? 1 : 0; // first non-dub track
+    }
+
+    let nm = "#EXTM3U\n#EXT-X-VERSION:3\n";
+    audios.forEach((a, idx) => {
+      const def = idx === defIdx ? "YES" : "NO";
+      let line = a.line.replace(/URI="[^"]*"/, 'URI="' + this.toDataUri(audioData[idx]) + '"');
+      line = /DEFAULT=(YES|NO)/.test(line)
+        ? line.replace(/DEFAULT=(YES|NO)/, "DEFAULT=" + def)
+        : line + ",DEFAULT=" + def;
+      nm += line + "\n";
+    });
+    variants.forEach((v, idx) => {
+      nm += v.inf + "\n" + this.toDataUri(variantData[idx]) + "\n";
+    });
+    return this.toDataUri(nm);
   }
 
   matchOne(str, rx) {
@@ -859,6 +1000,16 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Romaji", "English", "Native"],
           entryValues: ["romaji", "english", "native"],
+        },
+      },
+      {
+        key: "reanime_audio_pref",
+        listPreference: {
+          title: "Preferred audio",
+          summary: "Default audio track when both are available. You can still switch in the player.",
+          valueIndex: 0,
+          entries: ["Sub (original audio)", "Dub (English audio)"],
+          entryValues: ["sub", "dub"],
         },
       },
     ];
