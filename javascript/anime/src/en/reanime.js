@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.5",
+    "version": "0.0.6",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -502,10 +502,10 @@ class DefaultExtension extends MProvider {
 
   titleByPref(title) {
     if (!title) return "";
-    const pref = this.getPreference("reanime_title_lang") || "romaji";
-    if (pref === "english") return title.english || title.romaji || title.user_preferred || title.native || "";
+    const pref = this.getPreference("reanime_title_lang") || "english";
+    if (pref === "romaji") return title.romaji || title.english || title.user_preferred || title.native || "";
     if (pref === "native") return title.native || title.romaji || title.english || "";
-    return title.romaji || title.english || title.user_preferred || title.native || "";
+    return title.english || title.romaji || title.user_preferred || title.native || "";
   }
 
   posterOf(item) {
@@ -625,6 +625,9 @@ class DefaultExtension extends MProvider {
     const status = this.statusCode(info.status);
     const anilistId = info.anilist_id;
     const isMovie = (info.format || "").toUpperCase() === "MOVIE";
+    // reanime has no per-episode thumbnails for ongoing/recent anime; fall back
+    // to the show's banner (then cover) so episodes aren't blank.
+    const thumbFallback = info.banner_image || imageUrl || cover.large || "";
 
     const chapters = [];
     if (anilistId) {
@@ -640,7 +643,7 @@ class DefaultExtension extends MProvider {
           // "<anilistId>|<epNumber>" — getVideoList resolves the stream from these.
           url: anilistId + "|" + num,
           dateUpload: isNaN(aired) ? null : "" + aired,
-          thumbnailUrl: ep.thumbnail || null,
+          thumbnailUrl: ep.thumbnail || thumbFallback || null,
           scanlator: ep.is_filler ? "Filler" : null,
           description: this.episodeDescription(ep),
         });
@@ -676,19 +679,12 @@ class DefaultExtension extends MProvider {
     return all;
   }
 
-  // reanime never fills in episode synopses, so compose a useful info line from
-  // the metadata it does return (alternate title, runtime, filler/recap).
+  // reanime usually leaves episode synopses empty, so compose a useful info
+  // line from the metadata it does return (runtime, filler/recap). The
+  // Japanese/romaji alternate titles are intentionally left out.
   episodeDescription(ep) {
     const base = (ep.description || "").replace(/<[^>]*>/g, "").trim();
-    const title = ep.title || "";
     const parts = [];
-
-    const jp = (ep.title_japanese || "").trim();
-    const ro = (ep.title_romanji || "").trim();
-    let alt = "";
-    if (jp && jp.toLowerCase() !== title.toLowerCase()) alt = jp;
-    else if (ro && ro.toLowerCase() !== title.toLowerCase() && !/^episode\s*\d+$/i.test(ro)) alt = ro;
-    if (alt) parts.push(alt);
 
     const dur = ep.duration;
     if (typeof dur === "number" && dur > 0) {
@@ -1032,7 +1028,7 @@ class DefaultExtension extends MProvider {
         listPreference: {
           title: "Preferred title language",
           summary: "",
-          valueIndex: 0,
+          valueIndex: 1,
           entries: ["Romaji", "English", "Native"],
           entryValues: ["romaji", "english", "native"],
         },
