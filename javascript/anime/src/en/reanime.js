@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -411,6 +411,12 @@ function wasmModule(bytes) {
 const PAGE_SIZE = 30;
 const EMBED_HOST = "https://flixcloud.cc";
 
+// The "latest aired" feed paginates by opaque cursor, while Mangayomi requests
+// pages by number.  Mangayomi asks for pages sequentially as the user scrolls,
+// so we remember the cursor that fetches each page.  page -> cursor ("" / null
+// means "no cursor", i.e. the first page).
+var _latestAiredCursors = {};
+
 class DefaultExtension extends MProvider {
   constructor() {
     super();
@@ -502,9 +508,31 @@ class DefaultExtension extends MProvider {
     return await this.searchAPI("", page);
   }
 
+  async fetchLatestAired(cursor) {
+    const url = this.apiUrl + "/api/v1/home/latest-aired?limit=" + PAGE_SIZE +
+      (cursor ? "&cursor=" + encodeURIComponent(cursor) : "");
+    return await this.getJSON(url);
+  }
+
   async getLatestUpdates(page) {
-    // Currently-airing titles act as the "latest" feed.
-    return await this.searchAPI("&status=Releasing", page);
+    page = page || 1;
+    // Resolve the cursor for this page.  Normally page N's cursor was cached when
+    // page N-1 was fetched; for a cold deep-page request we walk forward from the
+    // deepest page we already know.
+    if (page > 1 && _latestAiredCursors[page] === undefined) {
+      let p = 1;
+      while (_latestAiredCursors[p + 1] !== undefined) p++;
+      for (; p < page; p++) {
+        const prev = await this.fetchLatestAired(p === 1 ? null : _latestAiredCursors[p]);
+        _latestAiredCursors[p + 1] = prev.has_more ? (prev.next_cursor || null) : null;
+        if (!prev.has_more) break;
+      }
+    }
+    if (page > 1 && !_latestAiredCursors[page]) return { list: [], hasNextPage: false };
+
+    const data = await this.fetchLatestAired(page === 1 ? null : _latestAiredCursors[page]);
+    _latestAiredCursors[page + 1] = data.has_more ? (data.next_cursor || null) : null;
+    return { list: this.mapResults(data.data), hasNextPage: !!data.has_more };
   }
 
   async search(query, page, filters) {
