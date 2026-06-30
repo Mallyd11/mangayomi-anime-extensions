@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.7",
+    "version": "0.0.8",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -734,7 +734,7 @@ class DefaultExtension extends MProvider {
     }
 
     // Each server is an alternate CDN (HD-1/HD-2) for the same dual-audio video;
-    // dedupe by full embed link so we offer one stream per server.
+    // dedupe by full embed link.
     const servers = (flix && flix.servers) || [];
     const seen = {};
     const embeds = [];
@@ -745,20 +745,23 @@ class DefaultExtension extends MProvider {
       embeds.push({ link: link, label: s.serverName || "HD" });
     });
 
-    // Resolve servers one at a time — Mangayomi's bridged HTTP client is not
-    // reliably concurrency-safe, so we avoid Promise.all here.
+    // Resolve only the first server. Each resolution is several sequential,
+    // Cloudflare-fronted HTTP requests (embed page, token, master + media
+    // playlists); resolving more than one server risks exceeding the app's
+    // isolate response timeout for a single getVideoList() call.
     const streams = [];
-    for (const emb of embeds) {
+    if (embeds.length > 0) {
       let r = null;
-      try { r = await this.resolveEmbed(emb.link, audioPref); } catch (e) { r = null; }
-      if (!r || !r.variants) continue;
-      for (const vrt of r.variants) {
-        streams.push({
-          url: vrt.url,
-          originalUrl: vrt.url,
-          quality: emb.label + " · " + vrt.label,
-          headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/" },
-          subtitles: r.subtitles,
+      try { r = await this.resolveEmbed(embeds[0].link, audioPref); } catch (e) { r = null; }
+      if (r && r.variants) {
+        r.variants.forEach((vrt) => {
+          streams.push({
+            url: vrt.url,
+            originalUrl: vrt.url,
+            quality: embeds[0].label + " · " + vrt.label,
+            headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/" },
+            subtitles: r.subtitles,
+          });
         });
       }
     }
@@ -768,8 +771,9 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  // Resolve a flixcloud embed into a directly playable, self-contained HLS
-  // master (data: URI) plus subtitles.  See memory/reanime-extension.md.
+  // Resolve a flixcloud embed into one or more directly playable, self-
+  // contained HLS masters (data: URIs) plus subtitles. See
+  // memory/reanime-extension.md.
   async resolveEmbed(embedUrl, audioPref) {
     const pageRes = await this.client.get(embedUrl, this.embedHeaders);
     if (pageRes.statusCode !== 200 || !pageRes.body) return null;
@@ -826,45 +830,10 @@ class DefaultExtension extends MProvider {
     const masterUrl = utf8Decode(aesCbcDecrypt(aesKey, b64ToBytes(ivB64), b64ToBytes(cipherB64))).trim();
     if (!/^https?:\/\//.test(masterUrl)) return null;
 
-    // The HLS playlists at masterUrl are base64+XOR(pk) encrypted, so a normal
-    // player can't read them.  Decrypt the playlist tree and inline it.
-    //
-    // DIAGNOSTIC (v0.0.7): offer two variants so we can tell whether the player
-    // can load a data: URI at all — "video-only" is a single, non-nested media
-    // playlist (no audio); "full" is the nested master with audio renditions.
-    const variants = [];
-    let videoOnly = null;
-    try { videoOnly = await this.buildVideoOnlyM3u8(masterUrl, pk); } catch (e) { videoOnly = null; }
-    if (videoOnly) variants.push({ label: "TEST-A video-only", url: videoOnly });
-
-    let full = null;
-    try { full = await this.buildPlayableM3u8(masterUrl, pk, audioPref); } catch (e) { full = null; }
-    if (full) variants.push({ label: "TEST-B full-audio", url: full });
-
+    let variants = [];
+    try { variants = await this.buildVariants(masterUrl, pk, audioPref); } catch (e) { variants = []; }
     if (variants.length === 0) return null;
     return { variants: variants, subtitles: this.parseSubtitles(html) };
-  }
-
-  // Single, non-nested video media playlist (no audio) as a data: URI — used to
-  // probe whether the player supports data: URI HLS at all.
-  async buildVideoOnlyM3u8(masterUrl, pk) {
-    const masterBase = this.baseOf(masterUrl);
-    const master = await this.fetchPlaylist(masterUrl, pk);
-    if (master.indexOf("#EXT-X-STREAM-INF") < 0) {
-      return this.toDataUri(this.absolutizePlaylist(master, masterBase));
-    }
-    const lines = master.split("\n");
-    let videoUri = null;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].trim().indexOf("#EXT-X-STREAM-INF") === 0) {
-        const next = (lines[i + 1] || "").trim();
-        if (next && next.charAt(0) !== "#") { videoUri = next; break; }
-      }
-    }
-    if (!videoUri) return null;
-    const u = this.absUrl(videoUri, masterBase);
-    const pl = this.absolutizePlaylist(await this.fetchPlaylist(u, pk), this.baseOf(u));
-    return this.toDataUri(pl);
   }
 
   // ── HLS playlist decryption / rewrite ──────────────────────────────────────
@@ -898,19 +867,26 @@ class DefaultExtension extends MProvider {
     }).join("\n");
   }
 
-  async buildPlayableM3u8(masterUrl, pk, audioPref) {
+  // Fetches the master playlist and, if it references separate audio/video
+  // renditions, the single video playlist — exactly once each — then derives
+  // both a video-only and a full-audio data: URI from that shared data.
+  //
+  // DIAGNOSTIC (v0.0.7+): two variants let us tell whether the player can load
+  // a data: URI HLS source at all ("TEST-A video-only", silent) versus one
+  // with nested data: URI audio renditions ("TEST-B full-audio").
+  async buildVariants(masterUrl, pk, audioPref) {
     const masterBase = this.baseOf(masterUrl);
     const master = await this.fetchPlaylist(masterUrl, pk);
 
-    // No variants → it's already a media playlist (muxed); just absolutize.
+    // No variants → already a flat, muxed media playlist.
     if (master.indexOf("#EXT-X-STREAM-INF") < 0) {
-      return this.toDataUri(this.absolutizePlaylist(master, masterBase));
+      return [{ label: "Stream", url: this.toDataUri(this.absolutizePlaylist(master, masterBase)) }];
     }
 
-    // Parse audio renditions and video variants.
+    // Parse audio renditions and the (single) video variant.
     const lines = master.split("\n");
-    const audios = [];   // { line, uri, lang, name }
-    const variants = []; // { inf, uri }
+    const audios = []; // { line, uri, lang, name }
+    let videoUri = null, streamInf = null;
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i].trim();
       if (l.indexOf("#EXT-X-MEDIA:") === 0 && l.indexOf("TYPE=AUDIO") >= 0) {
@@ -922,22 +898,24 @@ class DefaultExtension extends MProvider {
         });
       } else if (l.indexOf("#EXT-X-STREAM-INF") === 0) {
         const next = (lines[i + 1] || "").trim();
-        if (next && next.charAt(0) !== "#") variants.push({ inf: l, uri: next });
+        if (next && next.charAt(0) !== "#") { videoUri = next; streamInf = l; }
       }
     }
-    if (variants.length === 0) return null;
+    if (!videoUri) return [];
 
-    // Fetch + decrypt + absolutize every referenced media playlist, one at a
-    // time (the bridged HTTP client is not reliably concurrency-safe).
+    const vUrl = this.absUrl(videoUri, masterBase);
+    const videoPl = this.absolutizePlaylist(await this.fetchPlaylist(vUrl, pk), this.baseOf(vUrl));
+    const videoOnlyDataUri = this.toDataUri(videoPl);
+
+    const out = [{ label: "TEST-A video-only", url: videoOnlyDataUri }];
+    if (audios.length === 0) return out;
+
+    // Fetch + decrypt + absolutize each audio playlist, one at a time (the
+    // bridged HTTP client is not reliably concurrency-safe).
     const audioData = [];
     for (const a of audios) {
       const u = this.absUrl(a.uri, masterBase);
       audioData.push(this.absolutizePlaylist(await this.fetchPlaylist(u, pk), this.baseOf(u)));
-    }
-    const variantData = [];
-    for (const v of variants) {
-      const u = this.absUrl(v.uri, masterBase);
-      variantData.push(this.absolutizePlaylist(await this.fetchPlaylist(u, pk), this.baseOf(u)));
     }
 
     // Choose the default audio track from the sub/dub preference.
@@ -962,10 +940,9 @@ class DefaultExtension extends MProvider {
         : line + ",DEFAULT=" + def;
       nm += line + "\n";
     });
-    variants.forEach((v, idx) => {
-      nm += v.inf + "\n" + this.toDataUri(variantData[idx]) + "\n";
-    });
-    return this.toDataUri(nm);
+    nm += streamInf + "\n" + videoOnlyDataUri + "\n";
+    out.push({ label: "TEST-B full-audio", url: this.toDataUri(nm) });
+    return out;
   }
 
   matchOne(str, rx) {
