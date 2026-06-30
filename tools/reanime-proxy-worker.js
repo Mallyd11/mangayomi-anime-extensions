@@ -16,9 +16,15 @@
 //  extension's getVideoList() call (which only needs one fast request to this
 //  worker), eliminating the "isolate response timeout" failure mode too.
 //
-//  Workers run on V8 with native WebAssembly + crypto.subtle, so this code is
-//  far simpler than the extension's QuickJS-compatible version (which had to
-//  hand-roll SHA-256/AES/PBKDF2/a WASM interpreter — QuickJS has neither).
+//  Workers run on V8 with native crypto.subtle, so the AES/PBKDF2/SHA-256
+//  here are just WebCrypto calls. WebAssembly.instantiate() on raw bytes is
+//  NOT used, despite Workers nominally supporting WebAssembly — dynamic WASM
+//  compilation from a byte buffer fetched at request time is blocked by the
+//  Workers runtime ("Wasm code generation disallowed by embedder", since the
+//  module isn't a static binding known at deploy time, which it can't be:
+//  flixcloud randomizes the module's bytes on every single request). A tiny
+//  hand-rolled interpreter for the module's two exports runs the same bytes
+//  as plain JS instead — validated byte-for-byte against the real engine.
 //
 //  DEPLOY (free, ~2 minutes, no command line needed):
 //    1. https://dash.cloudflare.com → sign up free if you don't have an account
@@ -87,6 +93,153 @@ async function sha256Hex(str) {
 function baseOf(u) { return u.slice(0, u.lastIndexOf("/") + 1); }
 function absUrl(u, base) { return /^https?:\/\//.test(u) ? u : base + u; }
 
+// ── Minimal WASM interpreter ────────────────────────────────────────────────
+//
+// flixcloud ships a tiny (~400-byte) WebAssembly module with each embed and
+// randomizes its constants per request, so it can't be precompiled as a
+// static binding (the only kind of WASM module the Workers runtime allows).
+// This executes the module's exported _s / _r / _c functions directly as
+// plain JS. Validated against the native WebAssembly engine over many random
+// payloads + inputs (see memory/reanime-extension.md).
+
+function wasmModule(bytes) {
+  const u8 = bytes;
+  let pos = 0;
+  const leb = () => { let r = 0, s = 0, b; do { b = u8[pos++]; r |= (b & 0x7f) << s; s += 7; } while (b & 0x80); return r >>> 0; };
+  const sleb = () => { let r = 0, s = 0, b; do { b = u8[pos++]; r |= (b & 0x7f) << s; s += 7; } while (b & 0x80); if (s < 32 && (b & 0x40)) r |= (-1 << s); return r | 0; };
+
+  const types = [], funcs = [], exports = {}, code = [], data = [];
+  let mem = { min: 1 };
+  pos = 8; // skip magic + version
+  while (pos < u8.length) {
+    const id = u8[pos++], size = leb(), secEnd = pos + size;
+    if (id === 1) {
+      const n = leb();
+      for (let i = 0; i < n; i++) {
+        pos++; // 0x60
+        const np = leb(); const params = [];
+        for (let j = 0; j < np; j++) params.push(u8[pos++]);
+        const nr = leb(); const res = [];
+        for (let j = 0; j < nr; j++) res.push(u8[pos++]);
+        types.push({ params, res });
+      }
+    } else if (id === 3) {
+      const n = leb();
+      for (let i = 0; i < n; i++) funcs.push(leb());
+    } else if (id === 5) {
+      const n = leb();
+      for (let i = 0; i < n; i++) { const fl = u8[pos++]; const mn = leb(); let mx = null; if (fl) mx = leb(); mem = { min: mn, max: mx }; }
+    } else if (id === 6) {
+      const n = leb();
+      for (let i = 0; i < n; i++) { pos++; pos++; const op = u8[pos++]; if (op === 0x41) sleb(); pos++; }
+    } else if (id === 7) {
+      const n = leb();
+      for (let i = 0; i < n; i++) {
+        const nl = leb(); let nm = "";
+        for (let j = 0; j < nl; j++) nm += String.fromCharCode(u8[pos++]);
+        const kind = u8[pos++], idx = leb();
+        exports[nm] = { kind, idx };
+      }
+    } else if (id === 10) {
+      const n = leb();
+      for (let i = 0; i < n; i++) {
+        const cs = leb(), cend = pos + cs;
+        const nl = leb(); let lc = 0;
+        for (let j = 0; j < nl; j++) { const cnt = leb(); u8[pos++]; lc += cnt; }
+        code.push({ localsCount: lc, bodyStart: pos, bodyEnd: cend });
+        pos = cend;
+      }
+    } else if (id === 11) {
+      const n = leb();
+      for (let i = 0; i < n; i++) {
+        leb(); // flag
+        let off = 0; const op = u8[pos++]; if (op === 0x41) off = sleb(); pos++;
+        const dl = leb(); const bb = u8.slice(pos, pos + dl); pos += dl;
+        data.push({ off, bytes: bb });
+      }
+    }
+    pos = secEnd;
+  }
+
+  const globals = [0];
+  const M = new Uint8Array(Math.max(mem.min, 1) * 65536);
+  data.forEach((d) => M.set(d.bytes, d.off));
+
+  const skip = (p) => {
+    const op = u8[p++];
+    if (op === 0x02 || op === 0x03 || op === 0x04) return p + 1;
+    if (op === 0x0c || op === 0x0d || op === 0x10 || (op >= 0x20 && op <= 0x24)) { const sv = pos; pos = p; leb(); const np = pos; pos = sv; return np; }
+    if (op === 0x41) { const sv = pos; pos = p; sleb(); const np = pos; pos = sv; return np; }
+    if (op >= 0x28 && op <= 0x3e) { const sv = pos; pos = p; leb(); leb(); const np = pos; pos = sv; return np; }
+    return p;
+  };
+  const matchEnd = (p) => {
+    let depth = 0, q = p;
+    while (q < u8.length) {
+      const op = u8[q];
+      if (op === 0x02 || op === 0x03 || op === 0x04) depth++;
+      else if (op === 0x0b) { if (depth === 0) return q; depth--; }
+      q = skip(q);
+    }
+    return u8.length;
+  };
+
+  function run(fidx, args) {
+    const fn = code[fidx], ty = types[funcs[fidx]];
+    const np = ty.params.length;
+    const loc = new Int32Array(np + fn.localsCount);
+    for (let i = 0; i < np; i++) loc[i] = args[i] | 0;
+    const st = [], ctrl = [];
+    let ip = fn.bodyStart;
+    const END = fn.bodyEnd;
+    const rdLeb = () => { let r = 0, s = 0, b; do { b = u8[ip++]; r |= (b & 0x7f) << s; s += 7; } while (b & 0x80); return r >>> 0; };
+    const rdSleb = () => { let r = 0, s = 0, b; do { b = u8[ip++]; r |= (b & 0x7f) << s; s += 7; } while (b & 0x80); if (s < 32 && (b & 0x40)) r |= (-1 << s); return r | 0; };
+    const branch = (k) => {
+      const idx = ctrl.length - 1 - k, f = ctrl[idx];
+      if (f.kind === 3) { ctrl.length = idx + 1; ip = f.start; }
+      else { ctrl.length = idx; ip = f.end + 1; }
+    };
+    while (ip < END) {
+      const op = u8[ip++];
+      if (op === 0x02) { ip++; ctrl.push({ kind: 2, end: matchEnd(ip) }); }
+      else if (op === 0x03) { ip++; ctrl.push({ kind: 3, start: ip, end: matchEnd(ip) }); }
+      else if (op === 0x0b) { if (ctrl.length === 0) break; ctrl.pop(); }
+      else if (op === 0x0c) { branch(rdLeb()); }
+      else if (op === 0x0d) { const k = rdLeb(); if (st.pop()) branch(k); }
+      else if (op === 0x0f) { break; }
+      else if (op === 0x20) { st.push(loc[rdLeb()]); }
+      else if (op === 0x21) { loc[rdLeb()] = st.pop(); }
+      else if (op === 0x22) { loc[rdLeb()] = st[st.length - 1]; }
+      else if (op === 0x23) { st.push(globals[rdLeb()]); }
+      else if (op === 0x24) { globals[rdLeb()] = st.pop(); }
+      else if (op === 0x41) { st.push(rdSleb()); }
+      else if (op === 0x2d) { rdLeb(); const off = rdLeb(); const a = st.pop(); st.push(M[(a >>> 0) + off]); }
+      else if (op === 0x3a) { rdLeb(); const off = rdLeb(); const v = st.pop(); const a = st.pop(); M[(a >>> 0) + off] = v & 0xff; }
+      else if (op === 0x6a) { const b = st.pop(), a = st.pop(); st.push((a + b) | 0); }
+      else if (op === 0x6b) { const b = st.pop(), a = st.pop(); st.push((a - b) | 0); }
+      else if (op === 0x6c) { const b = st.pop(), a = st.pop(); st.push(Math.imul(a, b)); }
+      else if (op === 0x71) { const b = st.pop(), a = st.pop(); st.push(a & b); }
+      else if (op === 0x72) { const b = st.pop(), a = st.pop(); st.push(a | b); }
+      else if (op === 0x73) { const b = st.pop(), a = st.pop(); st.push(a ^ b); }
+      else if (op === 0x74) { const b = st.pop(), a = st.pop(); st.push((a << (b & 31)) | 0); }
+      else if (op === 0x76) { const b = st.pop(), a = st.pop(); st.push((a >>> (b & 31)) | 0); }
+      else if (op === 0x75) { const b = st.pop(), a = st.pop(); st.push((a >> (b & 31)) | 0); }
+      else if (op === 0x4f) { const b = st.pop(), a = st.pop(); st.push((a >>> 0) >= (b >>> 0) ? 1 : 0); }
+      else if (op === 0x49) { const b = st.pop(), a = st.pop(); st.push((a >>> 0) < (b >>> 0) ? 1 : 0); }
+      else if (op === 0x48) { const b = st.pop(), a = st.pop(); st.push((a | 0) < (b | 0) ? 1 : 0); }
+      else if (op === 0x46) { const b = st.pop(), a = st.pop(); st.push(a === b ? 1 : 0); }
+      else if (op === 0x45) { const a = st.pop(); st.push(a === 0 ? 1 : 0); }
+      else throw new Error("unsupported wasm opcode 0x" + op.toString(16));
+    }
+    return st.pop();
+  }
+
+  return {
+    memory: M,
+    call: (name, args) => run(exports[name].idx, args),
+  };
+}
+
 // A playlist is served either plain (#EXTM3U…) or base64(plaintext XOR pk).
 function decryptPlaylist(body, pk) {
   const t = (body || "").trim();
@@ -142,25 +295,24 @@ async function handleMaster(url, request) {
   if (!cipherB64 || !fragTB64) return new Response("token response missing fields", { status: 502, headers: CORS });
 
   // WASM module: _r derives the manifest-URL key (E); _c derives the 32-byte
-  // key that XOR-decrypts the playlists themselves. Real WebAssembly here —
-  // no interpreter needed, unlike the QuickJS extension.
-  const { instance } = await WebAssembly.instantiate(b64ToBytes(wPayloadB64), {});
-  const wasm = instance.exports;
-  if (wasm.memory.buffer.byteLength === 0) wasm.memory.grow(1);
+  // key that XOR-decrypts the playlists themselves. Run via the hand-rolled
+  // interpreter above (see the comment block at the top of this file for why
+  // native WebAssembly.instantiate() can't be used here).
+  const wasm = wasmModule(b64ToBytes(wPayloadB64));
 
   const frag1 = b64ToBytes(frag1B64);
   const keyFrag2 = b64ToBytes(keyFrag2B64);
   const fragT = b64ToBytes(fragTB64);
   const k = frag1.length;
   const pA = 1000, pB = pA + k, pC = pB + k, pOut = pC + k;
-  new Uint8Array(wasm.memory.buffer).set(frag1, pA);
-  new Uint8Array(wasm.memory.buffer).set(keyFrag2, pB);
-  new Uint8Array(wasm.memory.buffer).set(fragT, pC);
-  wasm._s(parseInt(seed.slice(0, 8), 16) >>> 0);
-  wasm._r(pA, pB, pC, pOut, k);
-  const E = new Uint8Array(wasm.memory.buffer).slice(pOut, pOut + k);
-  const pkPtr = wasm._c();
-  const pk = new Uint8Array(wasm.memory.buffer).slice(pkPtr, pkPtr + 32);
+  wasm.memory.set(frag1, pA);
+  wasm.memory.set(keyFrag2, pB);
+  wasm.memory.set(fragT, pC);
+  wasm.call("_s", [parseInt(seed.slice(0, 8), 16) >>> 0]);
+  wasm.call("_r", [pA, pB, pC, pOut, k]);
+  const E = wasm.memory.slice(pOut, pOut + k);
+  const pkPtr = wasm.call("_c", []);
+  const pk = wasm.memory.slice(pkPtr, pkPtr + 32);
 
   // PBKDF2 + seed-xor + SHA-256 → AES-256 key → decrypt the manifest URL.
   const dkBits = await crypto.subtle.deriveBits(
