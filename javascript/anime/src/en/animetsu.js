@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.4.8",
+    "version": "1.4.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -362,14 +362,14 @@ class DefaultExtension extends MProvider {
                 var nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
                 if (!nextLine) continue;
                 var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
-                var stream = {
+                result.push({
                   url: variantUrl,
                   originalUrl: variantUrl, // no extension — libmpv via content-type, not M3u8Downloader
                   quality: this.streamNamer(resolution, audioLabel, serverName),
                   headers: hdr,
-                };
-                if (!parsed) { stream.subtitles = subtitles; parsed = true; }
-                result.push(stream);
+                  subtitles: subtitles,
+                });
+                parsed = true;
               }
             }
           }
@@ -378,15 +378,21 @@ class DefaultExtension extends MProvider {
 
       // Direct playlist (old_hls == true) or master parse failed — pass through like Pahe.
       if (!parsed) {
-        var stream = {
+        result.push({
           url: masterUrl,
           originalUrl: masterUrl,
           quality: this.streamNamer(item.quality || "auto", audioLabel, serverName),
           headers: hdr,
-        };
-        if (result.length === 0) stream.subtitles = subtitles;
-        result.push(stream);
+          subtitles: subtitles,
+        });
       }
+
+      // Highest resolution first so the player auto-selects best quality.
+      result.sort((a, b) => {
+        var hA = parseInt((a.quality.match(/\d+[xX](\d+)/) || [0, 0])[1]) || 0;
+        var hB = parseInt((b.quality.match(/\d+[xX](\d+)/) || [0, 0])[1]) || 0;
+        return hB - hA;
+      });
 
       return result;
     }));
