@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.8",
+    "version": "0.0.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -745,25 +745,26 @@ class DefaultExtension extends MProvider {
       embeds.push({ link: link, label: s.serverName || "HD" });
     });
 
-    // Resolve only the first server. Each resolution is several sequential,
-    // Cloudflare-fronted HTTP requests (embed page, token, master + media
-    // playlists); resolving more than one server risks exceeding the app's
-    // isolate response timeout for a single getVideoList() call.
+    // Try every server. The CDN that serves the playlists intermittently
+    // blocks requests (Cloudflare bot management); resolving only one server
+    // means a single blocked attempt yields no streams at all, so we keep
+    // trying the rest even after a failure. Each resolution fetches its
+    // master + media playlists exactly once (shared across the two
+    // diagnostic variants) to stay well under the isolate response timeout.
     const streams = [];
-    if (embeds.length > 0) {
+    for (const emb of embeds) {
       let r = null;
-      try { r = await this.resolveEmbed(embeds[0].link, audioPref); } catch (e) { r = null; }
-      if (r && r.variants) {
-        r.variants.forEach((vrt) => {
-          streams.push({
-            url: vrt.url,
-            originalUrl: vrt.url,
-            quality: embeds[0].label + " · " + vrt.label,
-            headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/" },
-            subtitles: r.subtitles,
-          });
+      try { r = await this.resolveEmbed(emb.link, audioPref); } catch (e) { r = null; }
+      if (!r || !r.variants) continue;
+      r.variants.forEach((vrt) => {
+        streams.push({
+          url: vrt.url,
+          originalUrl: vrt.url,
+          quality: emb.label + " · " + vrt.label,
+          headers: { "User-Agent": this.ua, "Referer": EMBED_HOST + "/" },
+          subtitles: r.subtitles,
         });
-      }
+      });
     }
 
     _vlCache[cacheKey] = streams;
