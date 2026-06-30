@@ -24,8 +24,8 @@ This repository contains the available javascript extension catalogues for the M
 | Anidap | 1.5.26 | No | Sub+Dub | 2026/06/15 |
 | AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/06/15 |
 | AnimeParadise | 0.3.3 | No | Sub Only | 2026/06/15 |
-| Animetsu | 1.4.8 | No | Sub+Dub | 2026/06/17 |
-| HiAnime | 0.3.0 | Yes | Sub+Dub | 2026/06/30 |
+| Animetsu | 1.4.9 | No | Sub+Dub | 2026/06/30 |
+| HiAnime | 0.3.6 | Yes | Sub+Dub | 2026/06/30 |
 | JustAnime | 0.1.4 | Yes | Sub+Dub | 2026/06/15 |
 | Miruro | 4.12.0 | Yes | Sub+Dub | 2026/06/15 |
 | MyroniX | 0.1.8 | Yes | Sub+Dub | 2026/06/15 |
