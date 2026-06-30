@@ -28,9 +28,9 @@
     "anime": {
         "HiAnime": {
             "name": "HiAnime",
-            "version": "0.3.6",
+            "version": "0.3.0",
             "langs": "en",
-            "lastUpd": 1782845578.258685
+            "lastUpd": 1782845593.862396
         },
         "ReAnime": {
             "name": "ReAnime",
