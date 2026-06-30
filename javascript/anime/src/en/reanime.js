@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.9",
+    "version": "0.0.10",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -713,7 +713,8 @@ class DefaultExtension extends MProvider {
     if (!anilistId || !epNum) return [];
 
     const audioPref = this.getPreference("reanime_audio_pref") || "sub";
-    const cacheKey = url + "|" + audioPref;
+    const proxyUrl = (this.getPreference("reanime_proxy_url") || "").trim().replace(/\/$/, "");
+    const cacheKey = url + "|" + audioPref + "|" + proxyUrl;
     const now = Date.now();
     if (_vlCache[cacheKey] && now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
       return _vlCache[cacheKey];
@@ -745,12 +746,48 @@ class DefaultExtension extends MProvider {
       embeds.push({ link: link, label: s.serverName || "HD" });
     });
 
-    // Try every server. The CDN that serves the playlists intermittently
-    // blocks requests (Cloudflare bot management); resolving only one server
-    // means a single blocked attempt yields no streams at all, so we keep
-    // trying the rest even after a failure. Each resolution fetches its
-    // master + media playlists exactly once (shared across the two
-    // diagnostic variants) to stay well under the isolate response timeout.
+    const streams = proxyUrl
+      ? await this.getVideoListViaProxy(embeds, proxyUrl, audioPref)
+      : await this.getVideoListDirect(embeds, audioPref);
+
+    _vlCache[cacheKey] = streams;
+    _vlCacheTs[cacheKey] = Date.now();
+    return streams;
+  }
+
+  // Stream via a user-deployed Cloudflare Worker proxy (see
+  // tools/reanime-proxy-worker.js). flixcloud's playlist/segment CDN
+  // (fetch.flixcloud.cc, *.stronghole.site) sits behind Cloudflare bot
+  // management that intermittently or consistently blocks non-browser HTTP
+  // clients — including Mangayomi's bridged client, which is the actual
+  // cause of "isolate response timeout" / empty stream lists, not anything
+  // fixable purely by rearranging requests in the extension. The worker
+  // resolves + decrypts everything server-side and returns a normal HLS URL,
+  // so getVideoList() here only needs one fast call per server (the slow,
+  // Cloudflare-fronted work happens later, lazily, as the player streams).
+  async getVideoListViaProxy(embeds, proxyUrl, audioPref) {
+    const streams = [];
+    for (const emb of embeds) {
+      const masterUrl = proxyUrl + "/master.m3u8?embed=" + encodeURIComponent(emb.link) + "&audio=" + audioPref;
+      let subtitles = [];
+      try {
+        const pageRes = await this.client.get(emb.link, this.embedHeaders);
+        if (pageRes.statusCode === 200 && pageRes.body) subtitles = this.parseSubtitles(pageRes.body);
+      } catch (e) { /* subtitles are best-effort */ }
+      streams.push({
+        url: masterUrl,
+        originalUrl: masterUrl,
+        quality: emb.label + " · ReAnime (proxy)",
+        headers: { "User-Agent": this.ua },
+        subtitles: subtitles,
+      });
+    }
+    return streams;
+  }
+
+  // Decrypt and build the stream client-side, no proxy. Works when flixcloud's
+  // CDN cooperates; the proxy path above is more reliable when it doesn't.
+  async getVideoListDirect(embeds, audioPref) {
     const streams = [];
     for (const emb of embeds) {
       let r = null;
@@ -766,15 +803,12 @@ class DefaultExtension extends MProvider {
         });
       });
     }
-
-    _vlCache[cacheKey] = streams;
-    _vlCacheTs[cacheKey] = Date.now();
     return streams;
   }
 
   // Resolve a flixcloud embed into one or more directly playable, self-
-  // contained HLS masters (data: URIs) plus subtitles. See
-  // memory/reanime-extension.md.
+  // contained HLS masters (data: URIs) plus subtitles — used when no proxy is
+  // configured. See memory/reanime-extension.md.
   async resolveEmbed(embedUrl, audioPref) {
     const pageRes = await this.client.get(embedUrl, this.embedHeaders);
     if (pageRes.statusCode !== 200 || !pageRes.body) return null;
@@ -1053,6 +1087,19 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub (original audio)", "Dub (English audio)"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "reanime_proxy_url",
+        editTextPreference: {
+          title: "Stream proxy URL (optional)",
+          summary: "Fixes playback if it buffers/times out/comes back empty. flixcloud's CDN " +
+            "intermittently blocks the app's network client; a small free Cloudflare Worker " +
+            "fetches + decrypts the stream instead. Deploy: see tools/reanime-proxy-worker.js " +
+            "in the repo, then paste the worker's URL here.",
+          value: "",
+          dialogTitle: "Stream proxy URL",
+          dialogMessage: "Paste your deployed Worker URL, e.g. https://reanime-proxy.you.workers.dev",
         },
       },
     ];
