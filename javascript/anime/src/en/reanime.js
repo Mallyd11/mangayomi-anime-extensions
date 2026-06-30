@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.10",
+    "version": "0.0.11",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -714,7 +714,8 @@ class DefaultExtension extends MProvider {
 
     const audioPref = this.getPreference("reanime_audio_pref") || "sub";
     const proxyUrl = (this.getPreference("reanime_proxy_url") || "").trim().replace(/\/$/, "");
-    const cacheKey = url + "|" + audioPref + "|" + proxyUrl;
+    const relayUrl = (this.getPreference("reanime_relay_url") || "").trim().replace(/\/$/, "");
+    const cacheKey = url + "|" + audioPref + "|" + proxyUrl + "|" + relayUrl;
     const now = Date.now();
     if (_vlCache[cacheKey] && now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
       return _vlCache[cacheKey];
@@ -746,13 +747,186 @@ class DefaultExtension extends MProvider {
       embeds.push({ link: link, label: s.serverName || "HD" });
     });
 
-    const streams = proxyUrl
-      ? await this.getVideoListViaProxy(embeds, proxyUrl, audioPref)
-      : await this.getVideoListDirect(embeds, audioPref);
+    let streams;
+    if (relayUrl) {
+      streams = await this.getVideoListViaRelay(embeds, relayUrl);
+    } else if (proxyUrl) {
+      streams = await this.getVideoListViaProxy(embeds, proxyUrl, audioPref);
+    } else {
+      streams = await this.getVideoListDirect(embeds, audioPref);
+    }
 
     _vlCache[cacheKey] = streams;
     _vlCacheTs[cacheKey] = Date.now();
     return streams;
+  }
+
+  // EXPERIMENTAL proof-of-concept: relay through an on-device WebView instead
+  // of any cloud-hosted proxy. flixcloud's CDN blocks by IP/ASN — confirmed
+  // even from Cloudflare's own Workers and its real-Chromium Browser
+  // Rendering product, so no cloud-hosted compute can ever fetch this content
+  // (see tools/reanime-proxy-worker.js header + memory/reanime-extension.md).
+  // Mangayomi exposes evaluateJavascriptViaWebview(url, headers, scripts),
+  // which runs a script inside a real, hidden native WebView on the device's
+  // own IP with a genuine browser fingerprint — the one thing that's worked
+  // throughout this whole investigation. See tools/reanime-relay-worker.js.
+  //
+  // Hard constraint: the JS-exposed bridge caps the WebView's lifetime at 30
+  // seconds (the Dart-side function accepts a longer `time`, but the 3-arg
+  // JS wrapper never passes it). A full episode (100+ segments) can't be
+  // fetched in one call, so THIS FIRST VERSION deliberately relays only the
+  // first ~8 video segments (no audio) as a proof of concept — roughly 30-50
+  // seconds of silent video. If that plays, the full multi-batch version is
+  // next; if it doesn't, this confirms the on-device path is a dead end too.
+  async getVideoListViaRelay(embeds) {
+    const relayUrl = (this.getPreference("reanime_relay_url") || "").trim().replace(/\/$/, "");
+    if (embeds.length === 0 || !relayUrl) return [];
+    const emb = embeds[0];
+    const jobId = "j" + Date.now() + Math.floor(Math.random() * 1e6);
+    const script = this.buildRelayProofScript(relayUrl, jobId, 8);
+
+    try {
+      // The return value/exception here is unreliable (a known cast bug in
+      // Mangayomi's bridge for non-boolean setResponse payloads) -- the real
+      // signal is whether the relay worker received the data, checked below.
+      await evaluateJavascriptViaWebview(emb.link, this.embedHeaders, [script]);
+    } catch (e) { /* ignore; check relay status independently */ }
+
+    let ready = false;
+    for (let i = 0; i < 6 && !ready; i++) {
+      try {
+        const res = await this.client.get(relayUrl + "/relay/status?job=" + jobId, {});
+        if (res.statusCode === 200) {
+          const st = JSON.parse(res.body);
+          if (st.ready) ready = true;
+        }
+      } catch (e) { /* keep polling */ }
+    }
+    if (!ready) return [];
+
+    const masterUrl = relayUrl + "/relay/master.m3u8?job=" + jobId;
+    return [{
+      url: masterUrl,
+      originalUrl: masterUrl,
+      quality: emb.label + " · On-device relay [TEST: ~30s, silent]",
+      headers: {},
+      subtitles: [],
+    }];
+  }
+
+  // Builds the in-page script run inside the real WebView. Does the full
+  // resolve+decrypt (same scheme as resolveEmbed, using the browser's native
+  // WebAssembly/crypto.subtle instead of the QuickJS-compatible pure-JS
+  // versions), fetches the first `segLimit` video segments from a context
+  // that passes flixcloud's CDN checks, and uploads them to the relay worker.
+  buildRelayProofScript(relayUrl, jobId, segLimit) {
+    return [
+      "(async () => {",
+      '  function lt(t) { const e = atob(t), s = new Uint8Array(e.length); for (let i = 0; i < e.length; i++) s[i] = e.charCodeAt(i); return s; }',
+      '  async function sha256Hex(s) { const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join(""); }',
+      '  function matchOne(str, rx) { const m = str.match(rx); return m ? m[1] : null; }',
+      '  function fieldRx(field) { const esc = field.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&"); return new RegExp(\'"?\' + esc + \'"?\\\\s*:\\\\s*"([^"]+)"\'); }',
+      '  function baseOf(u) { return u.slice(0, u.lastIndexOf("/") + 1); }',
+      '  function absUrl(u, base) { return /^https?:\\/\\//.test(u) ? u : base + u; }',
+      '  function deXor(buf, pk) { const txt = new TextDecoder().decode(buf).trim(); if (txt.indexOf("#EXTM3U") === 0) return txt; const raw = lt(txt); const out = new Uint8Array(raw.length); for (let i = 0; i < raw.length; i++) out[i] = raw[i] ^ pk[i % pk.length]; return new TextDecoder().decode(out); }',
+      '  async function setResponse(s) { try { await window.flutter_inappwebview.callHandler("setResponse", s); } catch (e) {} }',
+      "  try {",
+      '    const html = await fetch(location.href, { cache: "no-store" }).then((r) => r.text());',
+      '    const seed = matchOne(html, /obfuscation_seed:"([0-9a-f]+)"/);',
+      '    const wPayloadB64 = matchOne(html, /w_payload:"([A-Za-z0-9+\\/=]+)"/);',
+      '    const frag1B64 = matchOne(html, /kf_[0-9a-f]+:"([^"]+)"/);',
+      '    const ivB64 = matchOne(html, /ivf_[0-9a-f]+:"([^"]+)"/);',
+      '    if (!seed || !wPayloadB64 || !frag1B64 || !ivB64) { await setResponse("error:fields"); return; }',
+      "    let e = seed; for (let i = 0; i < 3; i++) e = await sha256Hex(e + i);",
+      "    let s = e; for (let i = 0; i < 3; i++) s = await sha256Hex(s + i);",
+      '    const keyFrag2Field = s.slice(0, 16) + "_" + s.slice(16, 24);',
+      '    const tokenField = e.slice(48, 64) + "_" + e.slice(56, 64);',
+      "    const keyFrag2B64 = matchOne(html, fieldRx(keyFrag2Field));",
+      "    const token = matchOne(html, fieldRx(tokenField));",
+      '    if (!keyFrag2B64 || !token) { await setResponse("error:token"); return; }',
+      '    const tk = await fetch("/api/m3u8/" + token).then((r) => r.json());',
+      '    const vKey = (await sha256Hex(token + "vid")).slice(0, 10);',
+      '    const tKey = (await sha256Hex(token + "key")).slice(0, 10);',
+      "    const cipherB64 = tk[vKey], fragTB64 = tk[tKey];",
+      '    if (!cipherB64 || !fragTB64) { await setResponse("error:tokenfields"); return; }',
+      "    const { instance } = await WebAssembly.instantiate(lt(wPayloadB64), {});",
+      "    const wasm = instance.exports;",
+      "    if (wasm.memory.buffer.byteLength === 0) wasm.memory.grow(1);",
+      "    const frag1 = lt(frag1B64), keyFrag2 = lt(keyFrag2B64), fragT = lt(fragTB64);",
+      "    const k = frag1.length, pA = 1000, pB = pA + k, pC = pB + k, pOut = pC + k;",
+      "    new Uint8Array(wasm.memory.buffer).set(frag1, pA);",
+      "    new Uint8Array(wasm.memory.buffer).set(keyFrag2, pB);",
+      "    new Uint8Array(wasm.memory.buffer).set(fragT, pC);",
+      "    wasm._s(parseInt(seed.slice(0, 8), 16) >>> 0);",
+      "    wasm._r(pA, pB, pC, pOut, k);",
+      "    const E = new Uint8Array(wasm.memory.buffer).slice(pOut, pOut + k);",
+      "    const pkPtr = wasm._c();",
+      "    const pk = new Uint8Array(wasm.memory.buffer).slice(pkPtr, pkPtr + 32);",
+      "    const dkBits = await crypto.subtle.deriveBits(",
+      '      { name: "PBKDF2", salt: new TextEncoder().encode(seed), iterations: 1000, hash: "SHA-256" },',
+      '      await crypto.subtle.importKey("raw", E, { name: "PBKDF2" }, false, ["deriveBits"]),',
+      "      256",
+      "    );",
+      "    const dk = new Uint8Array(dkBits);",
+      "    for (let i = 0; i < 32; i++) dk[i] ^= seed.charCodeAt(i % seed.length);",
+      '    const aesKeyBytes = new Uint8Array(await crypto.subtle.digest("SHA-256", dk));',
+      '    const aesKey = await crypto.subtle.importKey("raw", aesKeyBytes, { name: "AES-CBC" }, false, ["decrypt"]);',
+      '    const plainBuf = await crypto.subtle.decrypt({ name: "AES-CBC", iv: lt(ivB64) }, aesKey, lt(cipherB64));',
+      "    const masterUrl = new TextDecoder().decode(plainBuf).trim();",
+      '    if (!/^https?:\\/\\//.test(masterUrl)) { await setResponse("error:masterurl"); return; }',
+      '    const cdnHeaders = { Referer: "https://flixcloud.cc/", Origin: "https://flixcloud.cc" };',
+      "    const masterBuf = new Uint8Array(await fetch(masterUrl, { headers: cdnHeaders }).then((r) => r.arrayBuffer()));",
+      "    const master = deXor(masterBuf, pk);",
+      "    const masterBase = baseOf(masterUrl);",
+      "    let videoUri = null;",
+      '    const lines = master.split("\\n");',
+      "    for (let i = 0; i < lines.length; i++) {",
+      '      if (lines[i].trim().indexOf("#EXT-X-STREAM-INF") === 0) {',
+      '        const next = (lines[i + 1] || "").trim();',
+      '        if (next && next[0] !== "#") { videoUri = next; break; }',
+      "      }",
+      "    }",
+      '    if (!videoUri) { await setResponse("error:novideo"); return; }',
+      "    const vUrl = absUrl(videoUri, masterBase);",
+      "    const vBuf = new Uint8Array(await fetch(vUrl, { headers: cdnHeaders }).then((r) => r.arrayBuffer()));",
+      "    const vpl = deXor(vBuf, pk);",
+      "    const vBase = baseOf(vUrl);",
+      '    const vlines = vpl.split("\\n");',
+      "    const segs = [];",
+      "    let curDur = null;",
+      "    for (const l of vlines) {",
+      "      const t = l.trim();",
+      '      if (t.indexOf("#EXTINF:") === 0) { curDur = t.slice(8).split(",")[0]; }',
+      '      else if (t && t[0] !== "#") { segs.push({ dur: curDur || "6.0", url: absUrl(t, vBase) }); curDur = null; }',
+      "    }",
+      '    if (segs.length === 0) { await setResponse("error:nosegs"); return; }',
+      "    const RELAY = " + JSON.stringify(relayUrl) + ";",
+      "    const JOB = " + JSON.stringify(jobId) + ";",
+      "    const take = segs.slice(0, " + segLimit + ");",
+      "    let idx = 0;",
+      "    async function fetchWorker() {",
+      "      while (idx < take.length) {",
+      "        const myIdx = idx++;",
+      "        const seg = take[myIdx];",
+      "        const buf = await fetch(seg.url, { headers: cdnHeaders }).then((r) => r.arrayBuffer());",
+      '        await fetch(RELAY + "/relay/segment?job=" + JOB + "&rid=video&idx=" + myIdx, { method: "POST", body: buf });',
+      "      }",
+      "    }",
+      "    await Promise.all(Array.from({ length: 4 }, fetchWorker));",
+      '    let pl = "#EXTM3U\\n#EXT-X-VERSION:3\\n#EXT-X-TARGETDURATION:10\\n#EXT-X-PLAYLIST-TYPE:VOD\\n";',
+      "    take.forEach((seg, i) => {",
+      '      pl += "#EXTINF:" + seg.dur + ",\\n" + RELAY + "/relay/segment?job=" + JOB + "&rid=video&idx=" + i + "\\n";',
+      "    });",
+      '    pl += "#EXT-X-ENDLIST\\n";',
+      '    await fetch(RELAY + "/relay/playlist?job=" + JOB + "&rid=video", { method: "POST", body: pl });',
+      '    const master2 = "#EXTM3U\\n#EXT-X-STREAM-INF:BANDWIDTH=2000000\\n" + RELAY + "/relay/playlist?job=" + JOB + "&rid=video\\n";',
+      '    await fetch(RELAY + "/relay/master?job=" + JOB, { method: "POST", body: master2 });',
+      '    await setResponse("done");',
+      "  } catch (err) {",
+      '    await setResponse("error:" + (err && err.message));',
+      "  }",
+      "})();",
+    ].join("\n");
   }
 
   // Stream via a user-deployed Cloudflare Worker proxy (see
@@ -1092,14 +1266,27 @@ class DefaultExtension extends MProvider {
       {
         key: "reanime_proxy_url",
         editTextPreference: {
-          title: "Stream proxy URL (optional)",
-          summary: "Fixes playback if it buffers/times out/comes back empty. flixcloud's CDN " +
-            "intermittently blocks the app's network client; a small free Cloudflare Worker " +
-            "fetches + decrypts the stream instead. Deploy: see tools/reanime-proxy-worker.js " +
-            "in the repo, then paste the worker's URL here.",
+          title: "Stream proxy URL (deprecated — does not work)",
+          summary: "Confirmed non-functional: flixcloud's CDN blocks by IP/ASN, which blocks " +
+            "any cloud-hosted proxy too (tested against Cloudflare Workers and Cloudflare's own " +
+            "real-Chromium Browser Rendering — both blocked). Left in for reference only; leave empty. " +
+            "See tools/reanime-proxy-worker.js for the full writeup.",
           value: "",
-          dialogTitle: "Stream proxy URL",
-          dialogMessage: "Paste your deployed Worker URL, e.g. https://reanime-proxy.you.workers.dev",
+          dialogTitle: "Stream proxy URL (does not work)",
+          dialogMessage: "",
+        },
+      },
+      {
+        key: "reanime_relay_url",
+        editTextPreference: {
+          title: "On-device relay URL (experimental)",
+          summary: "EXPERIMENTAL proof of concept: relays ~30-50s of silent video through a " +
+            "real on-device WebView instead of a cloud proxy (the only thing that's passed " +
+            "flixcloud's IP-based block so far). Pre-filled with a working test deployment. " +
+            "See tools/reanime-relay-worker.js.",
+          value: "https://reanime-relay.futurefoundation77.workers.dev",
+          dialogTitle: "On-device relay URL",
+          dialogMessage: "",
         },
       },
     ];
