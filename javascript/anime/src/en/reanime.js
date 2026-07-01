@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.13",
+    "version": "0.0.14",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -780,10 +780,11 @@ class DefaultExtension extends MProvider {
   // one non-crashing stream entry PER stage, so every stage is visible in the
   // app's quality picker list without any single line getting cut off.
   diagStub(trace) {
-    const stub = this.toDataUri("#EXTM3U\n#EXT-X-ENDLIST\n");
+    // Each entry's url must be unique — Mangayomi appears to dedupe the
+    // quality list by url, so a shared stub collapses every entry to one.
     return trace.map((line, i) => ({
-      url: stub,
-      originalUrl: "",
+      url: this.toDataUri("#EXTM3U\n#EXT-X-ENDLIST\n# entry " + i + "\n"),
+      originalUrl: "#" + i,
       quality: "DIAG " + (i + 1) + "/" + trace.length + " " + line,
       headers: {},
       subtitles: [],
