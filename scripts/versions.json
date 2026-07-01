@@ -28,9 +28,9 @@
     "anime": {
         "HiAnime": {
             "name": "HiAnime",
-            "version": "0.3.6",
+            "version": "0.3.0",
             "langs": "en",
-            "lastUpd": 1782916725.290656
+            "lastUpd": 1782918870.443618
         },
         "Animetsu": {
             "name": "Animetsu",
