@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.11",
+    "version": "0.0.12",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -721,6 +721,15 @@ class DefaultExtension extends MProvider {
       return _vlCache[cacheKey];
     }
 
+    // DIAGNOSTIC (temporary): collects one short string per pipeline stage so
+    // that if playback still fails, the exact failing stage is visible to the
+    // user via the quality label in Mangayomi's picker UI, instead of the
+    // whole request silently collapsing to "video list empty" with no clue
+    // which of several possible causes (CF bypass, embed fetch, crypto,
+    // CDN block) was responsible. Remove once native playback is confirmed
+    // working end-to-end on a real device.
+    const trace = [];
+
     // The flix route lives on the Cloudflare-protected frontend host.  With
     // hasCloudflare=true Mangayomi solves the challenge in a WebView once and
     // reuses the cf_clearance cookie.  No custom User-Agent here: the cookie is
@@ -729,10 +738,12 @@ class DefaultExtension extends MProvider {
     let flix;
     try {
       const res = await this.client.get(flixUrl, { "Referer": this.getBaseUrl() + "/" });
-      if (res.statusCode !== 200 || !res.body) return [];
+      trace.push("flix:HTTP" + res.statusCode + " len=" + (res.body || "").length);
+      if (res.statusCode !== 200 || !res.body) return this.diagStub(trace);
       flix = JSON.parse(res.body);
     } catch (e) {
-      return [];
+      trace.push("flix:EXC " + (e && e.message));
+      return this.diagStub(trace);
     }
 
     // Each server is an alternate CDN (HD-1/HD-2) for the same dual-audio video;
@@ -746,6 +757,8 @@ class DefaultExtension extends MProvider {
       seen[link] = true;
       embeds.push({ link: link, label: s.serverName || "HD" });
     });
+    trace.push("servers=" + servers.length + " embeds=" + embeds.length);
+    if (embeds.length === 0) return this.diagStub(trace);
 
     let streams;
     if (relayUrl) {
@@ -753,12 +766,28 @@ class DefaultExtension extends MProvider {
     } else if (proxyUrl) {
       streams = await this.getVideoListViaProxy(embeds, proxyUrl, audioPref);
     } else {
-      streams = await this.getVideoListDirect(embeds, audioPref);
+      streams = await this.getVideoListDirect(embeds, audioPref, trace);
     }
+
+    if (!streams || streams.length === 0) return this.diagStub(trace);
 
     _vlCache[cacheKey] = streams;
     _vlCacheTs[cacheKey] = Date.now();
     return streams;
+  }
+
+  // DIAGNOSTIC (temporary, see getVideoList): surfaces the failure trace as a
+  // single non-crashing stream entry so it's visible in the app's quality
+  // picker even though the list would otherwise be empty.
+  diagStub(trace) {
+    const text = "DIAG " + trace.join(" | ");
+    return [{
+      url: this.toDataUri("#EXTM3U\n#EXT-X-ENDLIST\n"),
+      originalUrl: "",
+      quality: text.slice(0, 300),
+      headers: {},
+      subtitles: [],
+    }];
   }
 
   // EXPERIMENTAL proof-of-concept: relay through an on-device WebView instead
@@ -961,11 +990,16 @@ class DefaultExtension extends MProvider {
 
   // Decrypt and build the stream client-side, no proxy. Works when flixcloud's
   // CDN cooperates; the proxy path above is more reliable when it doesn't.
-  async getVideoListDirect(embeds, audioPref) {
+  async getVideoListDirect(embeds, audioPref, trace) {
     const streams = [];
     for (const emb of embeds) {
       let r = null;
-      try { r = await this.resolveEmbed(emb.link, audioPref); } catch (e) { r = null; }
+      try {
+        r = await this.resolveEmbed(emb.link, audioPref, trace);
+      } catch (e) {
+        if (trace) trace.push(emb.label + ":EXC " + (e && e.message));
+        r = null;
+      }
       if (!r || !r.variants) continue;
       r.variants.forEach((vrt) => {
         streams.push({
@@ -983,8 +1017,9 @@ class DefaultExtension extends MProvider {
   // Resolve a flixcloud embed into one or more directly playable, self-
   // contained HLS masters (data: URIs) plus subtitles — used when no proxy is
   // configured. See memory/reanime-extension.md.
-  async resolveEmbed(embedUrl, audioPref) {
+  async resolveEmbed(embedUrl, audioPref, trace) {
     const pageRes = await this.client.get(embedUrl, this.embedHeaders);
+    if (trace) trace.push("embed:HTTP" + pageRes.statusCode + " len=" + (pageRes.body || "").length);
     if (pageRes.statusCode !== 200 || !pageRes.body) return null;
     const html = pageRes.body;
 
@@ -992,7 +1027,10 @@ class DefaultExtension extends MProvider {
     const wPayload = this.matchOne(html, /w_payload:"([A-Za-z0-9+/=]+)"/);
     const frag1B64 = this.matchOne(html, /kf_[0-9a-f]+:"([^"]+)"/);
     const ivB64 = this.matchOne(html, /ivf_[0-9a-f]+:"([^"]+)"/);
-    if (!seed || !wPayload || !frag1B64 || !ivB64) return null;
+    if (!seed || !wPayload || !frag1B64 || !ivB64) {
+      if (trace) trace.push("embed:fields seed=" + !!seed + " w=" + !!wPayload + " kf=" + !!frag1B64 + " iv=" + !!ivB64);
+      return null;
+    }
 
     // Field-name map derived from the seed (6 chained SHA-256 rounds).
     let e = seed;
@@ -1004,16 +1042,28 @@ class DefaultExtension extends MProvider {
 
     const keyFrag2B64 = this.matchOne(html, this.fieldRx(keyFrag2Field));
     const token = this.matchOne(html, this.fieldRx(tokenField));
-    if (!keyFrag2B64 || !token) return null;
+    if (!keyFrag2B64 || !token) {
+      if (trace) trace.push("embed:token-fields kf2=" + !!keyFrag2B64 + " tok=" + !!token);
+      return null;
+    }
 
     // The encrypted manifest + a key fragment arrive via a single-use, IP-bound
     // token endpoint.
-    const tk = await this.getJSON(EMBED_HOST + "/api/m3u8/" + token, this.embedHeaders);
+    let tk;
+    try {
+      tk = await this.getJSON(EMBED_HOST + "/api/m3u8/" + token, this.embedHeaders);
+    } catch (e2) {
+      if (trace) trace.push("m3u8api:EXC " + (e2 && e2.message));
+      return null;
+    }
     const vKey = sha256Hex(token + "vid").slice(0, 10);
     const tKey = sha256Hex(token + "key").slice(0, 10);
     const cipherB64 = tk[vKey];
     const fragTB64 = tk[tKey];
-    if (!cipherB64 || !fragTB64) return null;
+    if (!cipherB64 || !fragTB64) {
+      if (trace) trace.push("m3u8api:missing-fields");
+      return null;
+    }
 
     // WASM module: _r derives the manifest-URL key (E); _c derives the 32-byte
     // key that XOR-decrypts the playlists themselves.
@@ -1037,11 +1087,23 @@ class DefaultExtension extends MProvider {
     for (let i = 0; i < 32; i++) dk[i] ^= seed.charCodeAt(i % seed.length);
     const aesKey = sha256(dk);
     const masterUrl = utf8Decode(aesCbcDecrypt(aesKey, b64ToBytes(ivB64), b64ToBytes(cipherB64))).trim();
-    if (!/^https?:\/\//.test(masterUrl)) return null;
+    if (!/^https?:\/\//.test(masterUrl)) {
+      if (trace) trace.push("decrypt:bad-masterurl len=" + masterUrl.length);
+      return null;
+    }
 
     let variants = [];
-    try { variants = await this.buildVariants(masterUrl, pk, audioPref); } catch (e) { variants = []; }
-    if (variants.length === 0) return null;
+    try {
+      variants = await this.buildVariants(masterUrl, pk, audioPref);
+    } catch (e3) {
+      if (trace) trace.push("variants:EXC " + (e3 && e3.message));
+      variants = [];
+    }
+    if (variants.length === 0) {
+      if (trace) trace.push("variants:empty");
+      return null;
+    }
+    if (trace) trace.push("variants:ok=" + variants.length);
     return { variants: variants, subtitles: this.parseSubtitles(html) };
   }
 
