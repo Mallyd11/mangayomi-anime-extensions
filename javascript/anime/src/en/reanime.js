@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://api.reanime.to",
-    "version": "0.0.12",
+    "version": "0.0.13",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -776,18 +776,18 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  // DIAGNOSTIC (temporary, see getVideoList): surfaces the failure trace as a
-  // single non-crashing stream entry so it's visible in the app's quality
-  // picker even though the list would otherwise be empty.
+  // DIAGNOSTIC (temporary, see getVideoList): surfaces the failure trace as
+  // one non-crashing stream entry PER stage, so every stage is visible in the
+  // app's quality picker list without any single line getting cut off.
   diagStub(trace) {
-    const text = "DIAG " + trace.join(" | ");
-    return [{
-      url: this.toDataUri("#EXTM3U\n#EXT-X-ENDLIST\n"),
+    const stub = this.toDataUri("#EXTM3U\n#EXT-X-ENDLIST\n");
+    return trace.map((line, i) => ({
+      url: stub,
       originalUrl: "",
-      quality: text.slice(0, 300),
+      quality: "DIAG " + (i + 1) + "/" + trace.length + " " + line,
       headers: {},
       subtitles: [],
-    }];
+    }));
   }
 
   // EXPERIMENTAL proof-of-concept: relay through an on-device WebView instead
