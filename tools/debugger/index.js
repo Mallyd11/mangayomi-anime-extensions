@@ -78,7 +78,6 @@ const EXTENSION_MAP = {
   animetsu:        'anime/src/en/animetsu.js',
   myronix:         'anime/src/en/myronix.js',
   anidap:          'anime/src/en/anidap.js',
-  reanime:         'anime/src/en/reanime.js',
   mangapark:       'manga/src/en/mangapark.js',
   mangapill:       'manga/src/en/mangapill.js',
   weebcentral:     'manga/src/en/weebcentral.js',
