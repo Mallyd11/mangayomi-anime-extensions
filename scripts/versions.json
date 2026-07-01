@@ -26,17 +26,17 @@
         }
     },
     "anime": {
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.3.0",
-            "langs": "en",
-            "lastUpd": 1782915241.913689
-        },
         "ReAnime": {
             "name": "ReAnime",
-            "version": "0.0.13",
+            "version": "0.0.14",
             "langs": "en",
-            "lastUpd": 1782915224.04669
+            "lastUpd": 1782915481.115237
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.3.6",
+            "langs": "en",
+            "lastUpd": 1782915481.115237
         },
         "Animetsu": {
             "name": "Animetsu",
