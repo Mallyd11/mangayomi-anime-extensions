@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.12.0",
+    "version": "4.13.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -248,19 +248,16 @@ class DefaultExtension extends MProvider {
   // ── AniList ───────────────────────────────────────────────────────────────
 
   async gql(query, vars) {
-    var res = await this.client.post(
-      "https://graphql.anilist.co",
-      { "Content-Type": "application/json", "Accept": "application/json" },
-      { query: query, variables: vars }
-    );
-    if (!res || res.statusCode !== 200) {
-      throw new Error("AniList HTTP " + (res ? res.statusCode : "no response"));
-    }
-    var parsed = JSON.parse(res.body);
-    if (parsed.errors && parsed.errors.length) {
-      throw new Error(parsed.errors[0].message);
-    }
-    return parsed.data || {};
+    try {
+      var res = await this.client.post(
+        "https://graphql.anilist.co",
+        { "Content-Type": "application/json", "Accept": "application/json" },
+        { query: query, variables: vars }
+      );
+      if (!res || res.statusCode !== 200) return {};
+      var parsed = JSON.parse(res.body);
+      return (parsed && parsed.data) ? parsed.data : {};
+    } catch (e) { return {}; }
   }
 
   title(t) {
@@ -281,17 +278,23 @@ class DefaultExtension extends MProvider {
   // ── Browse ────────────────────────────────────────────────────────────────
 
   async getPopular(page) {
-    var q = "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(sort:[TRENDING_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
-    var d = await this.gql(q, { p: page, n: 20 });
-    var pg = (d && d.Page) ? d.Page : {};
-    return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+    try {
+      var n = page || 1;
+      var q = "{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[TRENDING_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
+      var d = await this.gql(q, {});
+      var pg = (d && d.Page) ? d.Page : {};
+      return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+    } catch (e) { return { list: [], hasNextPage: false }; }
   }
 
   async getLatestUpdates(page) {
-    var q = "query($p:Int,$n:Int){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
-    var d = await this.gql(q, { p: page, n: 20 });
-    var pg = (d && d.Page) ? d.Page : {};
-    return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+    try {
+      var n = page || 1;
+      var q = "{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
+      var d = await this.gql(q, {});
+      var pg = (d && d.Page) ? d.Page : {};
+      return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+    } catch (e) { return { list: [], hasNextPage: false }; }
   }
 
   async search(query, page, filters) {
