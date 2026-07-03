@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.13.0",
+    "version": "4.14.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -330,11 +330,12 @@ class DefaultExtension extends MProvider {
     var id = parseInt(url, 10);
     if (!id) throw new Error("bad id");
 
-    var q = "query($id:Int){Media(id:$id,type:ANIME){id title{romaji english native}coverImage{large extraLarge}description status genres}}";
-    var d = await this.gql(q, { id: id });
-    var m = d.Media;
+    // Inline id to avoid variable serialization issues in QuickJS
+    var q = "{Media(id:" + id + ",type:ANIME){id title{romaji english native}coverImage{large extraLarge}description status genres}}";
+    var d = await this.gql(q, {});
+    var m = (d && d.Media) ? d.Media : null;
     var sm = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
-    var status = sm[m.status] !== undefined ? sm[m.status] : 5;
+    var status = (m && sm[m.status] !== undefined) ? sm[m.status] : 5;
 
     var epMap = {}, pipeErr = null;
     try {
@@ -379,10 +380,10 @@ class DefaultExtension extends MProvider {
 
     chapters.reverse();
     return {
-      name:        this.title(m.title),
-      imageUrl:    (m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "",
-      description: (m.description || "").replace(/<[^>]+>/g, ""),
-      genre:       m.genres || [],
+      name:        m ? this.title(m.title) : "Anime " + id,
+      imageUrl:    (m && m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "",
+      description: (m && m.description) ? m.description.replace(/<[^>]+>/g, "") : "",
+      genre:       (m && m.genres) ? m.genres : [],
       status:      status,
       link:        "https://www.miruro.to/info/" + id,
       chapters:    chapters,
