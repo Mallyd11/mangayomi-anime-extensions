@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.15.0",
+    "version": "4.16.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -270,7 +270,7 @@ class DefaultExtension extends MProvider {
     var out = [];
     for (var i = 0; i < media.length; i++) {
       var m = media[i];
-      out.push({ name: this.title(m.title), link: String(m.id), imageUrl: (m.coverImage && m.coverImage.large) || "" });
+      out.push({ name: this.title(m.title), link: "https://www.miruro.to/info/" + String(m.id), imageUrl: (m.coverImage && m.coverImage.large) || "" });
     }
     return out;
   }
@@ -328,6 +328,10 @@ class DefaultExtension extends MProvider {
 
   async getDetail(url) {
     var id = parseInt(url, 10);
+    if (!id) {
+      var m2 = url.match(/\/(\d+)/);
+      id = m2 ? parseInt(m2[1], 10) : 0;
+    }
     if (!id) throw new Error("bad id");
 
     var q = "{Media(id:" + id + ",type:ANIME){id title{romaji english native}coverImage{large extraLarge}description status genres}}";
