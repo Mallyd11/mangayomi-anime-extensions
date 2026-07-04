@@ -12,10 +12,10 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.18.0",
+    "version": "4.19.0",
     "isManga": false,
     "itemType": 1,
-    "isFullData": true,
+    "isFullData": false,
     "appMinVerReq": "0.5.0",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
@@ -87,43 +87,40 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
+  // Chunked String.fromCharCode.apply to avoid O(n²) string concat in QuickJS
   bytesToStr(bytes) {
-    var out = "", i = 0;
+    var parts = [], i = 0, CHUNK = 2048;
     while (i < bytes.length) {
-      var b = bytes[i++];
-      if (b < 0x80) {
-        out += String.fromCharCode(b);
-      } else if ((b & 0xE0) === 0xC0) {
-        out += String.fromCharCode(((b & 0x1F) << 6) | (bytes[i++] & 0x3F));
-      } else if ((b & 0xF0) === 0xE0) {
-        var b2 = bytes[i++], b3 = bytes[i++];
-        out += String.fromCharCode(((b & 0xF) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
-      } else {
-        var b2 = bytes[i++], b3 = bytes[i++], b4 = bytes[i++];
-        var cp = ((b & 7) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F) - 0x10000;
-        out += String.fromCharCode(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF));
+      var chunk = [];
+      var end = i + CHUNK < bytes.length ? i + CHUNK : bytes.length;
+      while (i < end) {
+        var b = bytes[i++];
+        if (b < 0x80) {
+          chunk.push(b);
+        } else if ((b & 0xE0) === 0xC0) {
+          chunk.push(((b & 0x1F) << 6) | (bytes[i++] & 0x3F));
+        } else if ((b & 0xF0) === 0xE0) {
+          var b2 = bytes[i++], b3 = bytes[i++];
+          chunk.push(((b & 0xF) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
+        } else {
+          var b2 = bytes[i++], b3 = bytes[i++], b4 = bytes[i++];
+          var cp = (((b & 7) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)) - 0x10000;
+          chunk.push(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF));
+        }
       }
+      parts.push(String.fromCharCode.apply(null, chunk));
     }
-    return out;
+    return parts.join("");
   }
 
-  // Re-encodes a decoded episode ID as base64url (for sources requests)
   encodeId(str) {
     return this.b64enc(this.strToBytes(str));
   }
 
-  // Decodes a base64url episode ID; if the decoded string contains ':' return it
-  decodeId(id) {
-    try {
-      var s = this.bytesToStr(this.b64dec(id));
-      if (s.indexOf(":") >= 0) return s;
-    } catch (e) {}
-    return id;
-  }
-
   // ── gzip inflate (RFC 1951/1952) — QuickJS safe ───────────────────────────
+  // maxOut: optional byte limit — stop early (for partial JSON extraction via regex)
 
-  inflate(data) {
+  inflate(data, maxOut) {
     if (data[0] !== 0x1F || data[1] !== 0x8B) throw new Error("not gzip");
     var flg = data[3], pos = 10;
     if (flg & 4)  { var xl = data[pos] | (data[pos+1] << 8); pos += 2 + xl; }
@@ -169,8 +166,10 @@ class DefaultExtension extends MProvider {
     var DB=[1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
     var DE=[0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
 
+    var done = false;
     function block(lt, dt) {
       while (true) {
+        if (maxOut && out.length >= maxOut) { done = true; return; }
         var s = sym(lt);
         if (s < 256) { out.push(s); }
         else if (s === 256) { break; }
@@ -183,13 +182,15 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    var done = false;
     while (!done) {
       var fin = bit(), type = bits(2);
       if (type === 0) {
         bl = 0;
         var ln = data[bp] | (data[bp+1] << 8); bp += 4;
-        for (var i = 0; i < ln; i++) out.push(data[bp++]);
+        for (var i = 0; i < ln; i++) {
+          if (maxOut && out.length >= maxOut) { done = true; break; }
+          out.push(data[bp++]);
+        }
       } else if (type === 1) {
         var ll = []; for (var i=0;i<=143;i++) ll.push(8); for(var i=144;i<=255;i++) ll.push(9); for(var i=256;i<=279;i++) ll.push(7); for(var i=280;i<=287;i++) ll.push(8);
         var dl = []; for (var i=0;i<30;i++) dl.push(5);
@@ -217,13 +218,11 @@ class DefaultExtension extends MProvider {
   // ── Miruro pipe ───────────────────────────────────────────────────────────
   // GET /api/secure/pipe?e={base64url(JSON)} → x-obfuscated:2 → base64url(XOR(key,gzip(JSON)))
   // Key from PIPE_OBF_KEY in miruro.tv/env2.js — stored as user preference for easy rotation.
-  // Tries miruro.to → miruro.tv → miruro.bz
 
   async pipe(path, query) {
     var req = JSON.stringify({ path: path, method: "GET", query: query, body: null, version: "0.2.0" });
     var e = this.b64enc(this.strToBytes(req));
     var hosts = ["https://www.miruro.to", "https://www.miruro.tv", "https://www.miruro.bz"];
-    // XOR key: hex string from env2.js PIPE_OBF_KEY, parsed to bytes, cycles over response
     var keyHex = this.pref("miruro_obf_key") || "71951034f8fbcf53d89db52ceb3dc22c";
     var obfKey = [];
     for (var ki = 0; ki < keyHex.length; ki += 2) {
@@ -243,7 +242,6 @@ class DefaultExtension extends MProvider {
         body = body.replace(/[^A-Za-z0-9+\/=\-_]/g, "");
         if (body.length < 4) { lastErr = "body too short"; continue; }
         var bytes = this.b64dec(body);
-        // Decrypt: XOR each byte with the cycling obfuscation key
         for (var xi = 0; xi < bytes.length; xi++) {
           bytes[xi] = bytes[xi] ^ obfKey[xi % obfKey.length];
         }
@@ -254,6 +252,49 @@ class DefaultExtension extends MProvider {
       }
     }
     throw new Error(lastErr);
+  }
+
+  // Fetch only ~800KB of the episodes pipe to extract provider anime IDs via regex.
+  // ally episode IDs follow allmanga:{allyId}:{episodeNumber} — constructable without full inflate.
+  async getMappings(anilistId) {
+    var req = JSON.stringify({ path: "episodes", method: "GET", query: { anilistId: anilistId }, body: null, version: "0.2.0" });
+    var e = this.b64enc(this.strToBytes(req));
+    var hosts = ["https://www.miruro.to", "https://www.miruro.tv", "https://www.miruro.bz"];
+    var keyHex = this.pref("miruro_obf_key") || "71951034f8fbcf53d89db52ceb3dc22c";
+    var obfKey = [];
+    for (var ki = 0; ki < keyHex.length; ki += 2) {
+      obfKey.push(parseInt(keyHex.slice(ki, ki + 2), 16));
+    }
+    for (var hi = 0; hi < hosts.length; hi++) {
+      try {
+        var url = hosts[hi] + "/api/secure/pipe?e=" + e;
+        var res = await this.client.get(url, {
+          "User-Agent": this.ua,
+          "Referer": "https://www.miruro.to/",
+          "Accept": "*/*",
+        });
+        if (!res || !res.body) continue;
+        var body = typeof res.body === "string" ? res.body : String(res.body);
+        body = body.replace(/[^A-Za-z0-9+\/=\-_]/g, "");
+        if (body.length < 4) continue;
+        var bytes = this.b64dec(body);
+        for (var xi = 0; xi < bytes.length; xi++) {
+          bytes[xi] = bytes[xi] ^ obfKey[xi % obfKey.length];
+        }
+        // Inflate only 900KB — enough to reach mappings.providers (ally ID) without full 8.6MB
+        var partial = this.inflate(bytes, 900000);
+        var partialJson = this.bytesToStr(partial);
+
+        var allyId = null, mooSlug = null;
+        var am = partialJson.match(/"ally":\{[^}]*"provider_id":\["([A-Za-z0-9_-]+)"\][^}]*\}/);
+        if (am) allyId = am[1];
+        var mm = partialJson.match(/"moo":\{[^}]*"provider_id":\["([^"]+)"\][^}]*\}/);
+        if (mm) mooSlug = mm[1];
+
+        if (allyId || mooSlug) return { allyId: allyId, mooSlug: mooSlug };
+      } catch (ex) {}
+    }
+    return { allyId: null, mooSlug: null };
   }
 
   // ── AniList ───────────────────────────────────────────────────────────────
@@ -336,6 +377,8 @@ class DefaultExtension extends MProvider {
   }
 
   // ── Detail ────────────────────────────────────────────────────────────────
+  // Episode list is built from AniList episode count — no pipe call here.
+  // Provider-specific IDs are fetched in getVideoList when the user plays an episode.
 
   async getDetail(url) {
     var id = parseInt(url, 10);
@@ -345,51 +388,32 @@ class DefaultExtension extends MProvider {
     }
     if (!id) throw new Error("bad id");
 
-    var q = "{Media(id:" + id + ",type:ANIME){id title{romaji english native}coverImage{large extraLarge}description status genres}}";
+    var q = "{Media(id:" + id + ",type:ANIME){id title{romaji english native}coverImage{large extraLarge}description status episodes nextAiringEpisode{episode}genres}}";
     var d = await this.gql(q, {});
     var m = (d && d.Media) ? d.Media : null;
     var sm = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
     var status = (m && sm[m.status] !== undefined) ? sm[m.status] : 5;
 
-    var epMap = {}, pipeErr = null;
-    try {
-      var pd = await this.pipe("episodes", { anilistId: id });
-      var provs = pd.providers || {};
-      var pk = Object.keys(provs);
-      for (var pi = 0; pi < pk.length; pi++) {
-        var prov = pk[pi];
-        var cats = provs[prov].episodes || {};
-        var ck = Object.keys(cats);
-        for (var ci = 0; ci < ck.length; ci++) {
-          var cat = ck[ci];
-          var eps = cats[cat] || [];
-          for (var ei = 0; ei < eps.length; ei++) {
-            var ep = eps[ei];
-            var num = ep.number || (ei + 1);
-            var epid = this.decodeId(ep.id || String(num));
-            if (!epMap[num]) {
-              epMap[num] = { animeId: id, num: num, title: ep.title || "", filler: !!ep.filler, ids: {} };
-            }
-            if (!epMap[num].ids[prov]) epMap[num].ids[prov] = {};
-            epMap[num].ids[prov][cat] = epid;
-          }
-        }
+    var epCount = 0;
+    if (m) {
+      if (m.episodes) {
+        epCount = m.episodes;
+      } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
+        epCount = m.nextAiringEpisode.episode - 1;
       }
-    } catch (ex) { pipeErr = String(ex); }
+    }
 
     var chapters = [];
-    var nums = Object.keys(epMap).map(Number).sort(function(a, b) { return a - b; });
-    for (var ni = 0; ni < nums.length; ni++) {
-      var ep = epMap[nums[ni]];
+    for (var ni = 1; ni <= epCount; ni++) {
       chapters.push({
-        name: ep.title ? ("Episode " + ep.num + ": " + ep.title) : ("Episode " + ep.num),
-        url: JSON.stringify(ep),
-        isFiller: ep.filler,
+        name: "Episode " + ni,
+        url: JSON.stringify({ animeId: id, num: ni }),
+        isFiller: false,
       });
     }
 
     if (chapters.length === 0) {
-      chapters.push({ name: pipeErr ? ("Error: " + pipeErr) : "No episodes found", url: "n/a", isFiller: false });
+      chapters.push({ name: "No episodes found", url: "n/a", isFiller: false });
     }
 
     chapters.reverse();
@@ -412,21 +436,28 @@ class DefaultExtension extends MProvider {
     try { info = JSON.parse(url); } catch (e) { return []; }
 
     var id = info.animeId;
-    var ids = info.ids || {};
+    var num = info.num;
 
     var provP = this.pref("miruro_providers") || [];
     if (!provP || provP.length === 0) provP = ["ally"];
-
     var audioP = this.pref("miruro_audio") || [];
     if (!audioP || audioP.length === 0) audioP = ["sub"];
+
+    // Get provider anime IDs via partial inflate of episodes pipe
+    var maps;
+    try { maps = await this.getMappings(id); } catch (e) { maps = { allyId: null, mooSlug: null }; }
 
     var combinations = [];
     for (var pi = 0; pi < provP.length; pi++) {
       for (var ai = 0; ai < audioP.length; ai++) {
         var prov = provP[pi], cat = audioP[ai];
-        if (ids[prov] && ids[prov][cat]) {
-          combinations.push({ prov: prov, cat: cat });
+        var epid = null;
+        if (prov === "ally" && maps.allyId) {
+          epid = this.encodeId("allmanga:" + maps.allyId + ":" + num);
+        } else if (prov === "moo" && maps.mooSlug) {
+          epid = this.encodeId("animegg:" + maps.mooSlug + ":" + num);
         }
+        if (epid) combinations.push({ prov: prov, cat: cat, epid: epid });
       }
     }
 
@@ -434,7 +465,7 @@ class DefaultExtension extends MProvider {
     var results = await Promise.all(
       combinations.map(function(combo) {
         return self.pipe("sources", {
-          episodeId: self.encodeId(ids[combo.prov][combo.cat]),
+          episodeId: combo.epid,
           provider:  combo.prov,
           category:  combo.cat,
           anilistId: id,
@@ -453,7 +484,7 @@ class DefaultExtension extends MProvider {
             if (src.isActive === false) continue;
             var su = src.url || src.file;
             if (!su || su.length < 10) continue;
-            // Skip ally MP4 tokens that have expired (pipe caches them, often stale)
+            // Skip ally MP4 tokens that have expired
             if (src.type === "mp4") {
               var expiryMatch = su.match(/Authorization=[^_]+_[^_]+_[^_]+_[^_]+_(\d{14})_/);
               if (expiryMatch) {
@@ -539,8 +570,8 @@ class DefaultExtension extends MProvider {
           title: "Providers",
           summary: "Only selected providers are used. Fewer = faster load.",
           values:      ["ally"],
-          entries:     ["Ally (HLS streaming)", "Kiwi (multi-quality HLS)"],
-          entryValues: ["ally", "kiwi"],
+          entries:     ["Ally (HLS streaming)", "Moo (HLS streaming)"],
+          entryValues: ["ally", "moo"],
         },
       },
       {
@@ -557,7 +588,7 @@ class DefaultExtension extends MProvider {
         key: "miruro_obf_key",
         editTextPreference: {
           title: "Pipe obfuscation key",
-          summary: "Hex key from PIPE_OBF_KEY in miruro.tv/env2.js — update here if episodes stop loading after a site update",
+          summary: "Hex key from PIPE_OBF_KEY in miruro.tv/env2.js — update here if streams stop loading after a site update",
           value: "71951034f8fbcf53d89db52ceb3dc22c",
           dialogTitle: "Pipe obfuscation key",
           dialogMessage: "32-character hex string from PIPE_OBF_KEY in https://www.miruro.tv/env2.js",
