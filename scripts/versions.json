@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "Miruro": {
+            "name": "Miruro",
+            "version": "4.17.0",
+            "langs": "en",
+            "lastUpd": 1783187426.404658
+        },
         "MyroniX": {
             "name": "MyroniX",
             "version": "0.1.8",
@@ -49,12 +55,6 @@
             "version": "0.2.3",
             "langs": "en",
             "lastUpd": 1783172237.446817
-        },
-        "Miruro": {
-            "name": "Miruro",
-            "version": "4.16.0",
-            "langs": "en",
-            "lastUpd": 1783172217.719496
         },
         "AnimeParadise": {
             "name": "AnimeParadise",
