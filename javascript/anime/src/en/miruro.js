@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.19.0",
+    "version": "4.19.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -281,8 +281,8 @@ class DefaultExtension extends MProvider {
         for (var xi = 0; xi < bytes.length; xi++) {
           bytes[xi] = bytes[xi] ^ obfKey[xi % obfKey.length];
         }
-        // Inflate only 900KB — enough to reach mappings.providers (ally ID) without full 8.6MB
-        var partial = this.inflate(bytes, 900000);
+        // Inflate only 320KB — ally provider_id appears at ~285KB in the JSON (One Piece worst case)
+        var partial = this.inflate(bytes, 320000);
         var partialJson = this.bytesToStr(partial);
 
         var allyId = null, mooSlug = null;
