@@ -10,33 +10,30 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| Weeb Central | 0.1.1 | en | 2026/05/21 |
-| ReadComicOnline | 0.3.1 | en | 2026/05/21 |
-| Mangapill | 1.0.4 | en | 2026/05/21 |
-| WeLoMa | 1.0.0 | ja | 2026/05/21 |
+| Weeb Central | 0.1.1 | en | 2026/07/04 |
+| ReadComicOnline | 0.3.1 | en | 2026/07/04 |
+| WeLoMa | 1.0.0 | ja | 2025/10/29 |
+| Mangapill | 1.0.4 | en | 2025/09/16 |
 
 ## Anime
 
 | Name | Version | Downloads | Sub/Dub | Last Updated |
 |------|---------|-----------|---------|--------------|
-| AniCove | 0.2.3 | No | Sub+Dub | 2026/06/15 |
-| AniKoto | 0.3.6 | Yes | Sub+Dub | 2026/06/15 |
-| Anidap | 1.5.26 | No | Sub+Dub | 2026/06/15 |
-| AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/06/15 |
-| AnimeParadise | 0.3.3 | No | Sub Only | 2026/06/15 |
-| Animetsu | 1.4.9 | No | Sub+Dub | 2026/06/30 |
-| HiAnime | 0.3.6 | Yes | Sub+Dub | 2026/07/03 |
-| JustAnime | 0.1.4 | Yes | Sub+Dub | 2026/06/15 |
-| Miruro | 4.14.0 | Yes | Sub+Dub | 2026/07/03 |
-| MyroniX | 0.1.8 | Yes | Sub+Dub | 2026/06/15 |
+| AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/07/04 |
+| AnimeKai | 1.1.18 | Yes | Sub+Dub | 2026/07/04 |
+| AnimeParadise | 0.3.3 | No | Sub Only | 2026/07/04 |
+| Animetsu | 1.4.9 | No | Sub+Dub | 2026/07/04 |
+| HiAnime | 0.3.6 | Yes | Sub+Dub | 2026/07/04 |
+| JustAnime | 0.1.4 | Yes | Sub+Dub | 2026/07/04 |
+| Miruro | 4.15.0 | Yes | Sub+Dub | 2026/07/04 |
 
 ## Novel
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| NovelFire | 0.0.1 | en | 2026/05/21 |
-| Novelbuddy | 0.0.9 | en | 2026/05/21 |
-| bookReadFree | 0.0.1 | en | 2026/05/21 |
+| NovelFire | 0.0.1 | en | 2026/04/04 |
+| bookReadFree | 0.0.1 | en | 2026/03/09 |
+| Novelbuddy | 0.0.9 | en | 2025/06/09 |
 
 </details>
 

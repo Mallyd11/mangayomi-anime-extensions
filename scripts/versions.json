@@ -4,87 +4,69 @@
             "name": "Weeb Central",
             "version": "0.1.1",
             "langs": "en",
-            "lastUpd": 1779415180.160092
+            "lastUpd": 1783170750.960963
         },
         "ReadComicOnline": {
             "name": "ReadComicOnline",
             "version": "0.3.1",
             "langs": "en",
-            "lastUpd": 1779415180.160092
-        },
-        "Mangapill": {
-            "name": "Mangapill",
-            "version": "1.0.4",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
+            "lastUpd": 1783170750.960963
         },
         "WeLoMa": {
             "name": "WeLoMa",
             "version": "1.0.0",
             "langs": "ja",
-            "lastUpd": 1779410651.044824
+            "lastUpd": 1761760611.599596
+        },
+        "Mangapill": {
+            "name": "Mangapill",
+            "version": "1.0.4",
+            "langs": "en",
+            "lastUpd": 1758079504.835998
         }
     },
     "anime": {
-        "Miruro": {
-            "name": "Miruro",
-            "version": "4.14.0",
-            "langs": "en",
-            "lastUpd": 1783085044.461996
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.3.6",
-            "langs": "en",
-            "lastUpd": 1783085044.461996
-        },
         "Animetsu": {
             "name": "Animetsu",
             "version": "1.4.9",
             "langs": "en",
-            "lastUpd": 1782852957.80685
-        },
-        "MyroniX": {
-            "name": "MyroniX",
-            "version": "0.1.8",
-            "langs": "en",
-            "lastUpd": 1781556784.385987
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.26",
-            "langs": "en",
-            "lastUpd": 1781556784.385987
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.3.6",
-            "langs": "en",
-            "lastUpd": 1781556784.385987
-        },
-        "AnimeParadise": {
-            "name": "AnimeParadise",
-            "version": "0.3.3",
-            "langs": "en",
-            "lastUpd": 1781556784.385987
-        },
-        "JustAnime": {
-            "name": "JustAnime",
-            "version": "0.1.4",
-            "langs": "en",
-            "lastUpd": 1781556784.385987
+            "lastUpd": 1783170750.960963
         },
         "AnimeHeaven": {
             "name": "AnimeHeaven",
             "version": "0.0.7",
             "langs": "en",
-            "lastUpd": 1781556784.385987
+            "lastUpd": 1783170750.960963
         },
-        "AniCove": {
-            "name": "AniCove",
-            "version": "0.2.3",
+        "AnimeParadise": {
+            "name": "AnimeParadise",
+            "version": "0.3.3",
             "langs": "en",
-            "lastUpd": 1781556784.385987
+            "lastUpd": 1783170750.960963
+        },
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.1.4",
+            "langs": "en",
+            "lastUpd": 1783170750.960963
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.3.6",
+            "langs": "en",
+            "lastUpd": 1783170750.960963
+        },
+        "AnimeKai": {
+            "name": "AnimeKai",
+            "version": "1.1.18",
+            "langs": "en",
+            "lastUpd": 1783170750.960963
+        },
+        "Miruro": {
+            "name": "Miruro",
+            "version": "4.15.0",
+            "langs": "en",
+            "lastUpd": 1783170648.007981
         }
     },
     "novel": {
@@ -92,19 +74,19 @@
             "name": "NovelFire",
             "version": "0.0.1",
             "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
-        "Novelbuddy": {
-            "name": "Novelbuddy",
-            "version": "0.0.9",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
+            "lastUpd": 1775284920.190297
         },
         "bookReadFree": {
             "name": "bookReadFree",
             "version": "0.0.1",
             "langs": "en",
-            "lastUpd": 1779410651.044824
+            "lastUpd": 1773069753.928136
+        },
+        "Novelbuddy": {
+            "name": "Novelbuddy",
+            "version": "0.0.9",
+            "langs": "en",
+            "lastUpd": 1749491688.879926
         }
     }
 }

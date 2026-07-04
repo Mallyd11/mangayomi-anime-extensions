@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.14.0",
+    "version": "4.15.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -219,7 +219,7 @@ class DefaultExtension extends MProvider {
   // Tries miruro.to → miruro.tv → miruro.bz
 
   async pipe(path, query) {
-    var req = JSON.stringify({ path: path, method: "GET", query: query, body: null, version: "0.1.0" });
+    var req = JSON.stringify({ path: path, method: "GET", query: query, body: null, version: "0.2.0" });
     var e = this.b64enc(this.strToBytes(req));
     var hosts = ["https://www.miruro.to", "https://www.miruro.tv", "https://www.miruro.bz"];
     var lastErr = "no response";
@@ -330,7 +330,6 @@ class DefaultExtension extends MProvider {
     var id = parseInt(url, 10);
     if (!id) throw new Error("bad id");
 
-    // Inline id to avoid variable serialization issues in QuickJS
     var q = "{Media(id:" + id + ",type:ANIME){id title{romaji english native}coverImage{large extraLarge}description status genres}}";
     var d = await this.gql(q, {});
     var m = (d && d.Media) ? d.Media : null;
@@ -400,14 +399,12 @@ class DefaultExtension extends MProvider {
     var id = info.animeId;
     var ids = info.ids || {};
 
-    // Read exactly what the user selected — no auto-fallback to other providers
     var provP = this.pref("miruro_providers") || [];
     if (!provP || provP.length === 0) provP = ["ally"];
 
     var audioP = this.pref("miruro_audio") || [];
     if (!audioP || audioP.length === 0) audioP = ["sub"];
 
-    // Build (provider, category) combinations from selected prefs only
     var combinations = [];
     for (var pi = 0; pi < provP.length; pi++) {
       for (var ai = 0; ai < audioP.length; ai++) {
@@ -418,7 +415,6 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    // Fire all selected combinations in parallel (mirrors Animetsu's Promise.all)
     var self = this;
     var results = await Promise.all(
       combinations.map(function(combo) {
@@ -438,15 +434,11 @@ class DefaultExtension extends MProvider {
           var out = [];
           for (var si = 0; si < srcs.length; si++) {
             var src = srcs[si];
-            // Skip embed streams (kwik.cx, vibeplayer embeds etc.) — not playable in Mangayomi
             if (src.type === "embed") continue;
-            // Skip streams marked inactive by the Miruro backend
             if (src.isActive === false) continue;
             var su = src.url || src.file;
-            // Skip empty URLs
             if (!su || su.length < 10) continue;
-            // Skip ally MP4 tokens that have expired (pipe caches them for 3 days, often stale)
-            // Token format: Authorization=3_CREATED_HASH_000_YYYYMMDDHHMMSS_0040_dnld
+            // Skip ally MP4 tokens that have expired (pipe caches them, often stale)
             if (src.type === "mp4") {
               var expiryMatch = su.match(/Authorization=[^_]+_[^_]+_[^_]+_[^_]+_(\d{14})_/);
               if (expiryMatch) {
@@ -455,10 +447,9 @@ class DefaultExtension extends MProvider {
                   parseInt(exp.slice(0,4)), parseInt(exp.slice(4,6))-1, parseInt(exp.slice(6,8)),
                   parseInt(exp.slice(8,10)), parseInt(exp.slice(10,12)), parseInt(exp.slice(12,14))
                 );
-                if (Date.now() > expMs) continue; // expired — skip
+                if (Date.now() > expMs) continue;
               }
             }
-            // Use the stream's own referer field — each CDN checks this and rejects wrong origins
             var referer = src.referer || "https://www.miruro.to/";
             var server = src.server ? (" " + src.server) : "";
             var entry = {
@@ -474,7 +465,6 @@ class DefaultExtension extends MProvider {
       })
     );
 
-    // Flatten results from all parallel requests
     var streams = [];
     for (var ri = 0; ri < results.length; ri++) {
       var r = results[ri];
