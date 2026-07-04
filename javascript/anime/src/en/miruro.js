@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.17.0",
+    "version": "4.18.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": true,
@@ -215,13 +215,20 @@ class DefaultExtension extends MProvider {
   }
 
   // ── Miruro pipe ───────────────────────────────────────────────────────────
-  // GET /api/secure/pipe?e={base64url(JSON)} → x-obfuscated:1 → base64url(gzip(JSON))
+  // GET /api/secure/pipe?e={base64url(JSON)} → x-obfuscated:2 → base64url(XOR(key,gzip(JSON)))
+  // Key from PIPE_OBF_KEY in miruro.tv/env2.js — stored as user preference for easy rotation.
   // Tries miruro.to → miruro.tv → miruro.bz
 
   async pipe(path, query) {
     var req = JSON.stringify({ path: path, method: "GET", query: query, body: null, version: "0.2.0" });
     var e = this.b64enc(this.strToBytes(req));
     var hosts = ["https://www.miruro.to", "https://www.miruro.tv", "https://www.miruro.bz"];
+    // XOR key: hex string from env2.js PIPE_OBF_KEY, parsed to bytes, cycles over response
+    var keyHex = this.pref("miruro_obf_key") || "71951034f8fbcf53d89db52ceb3dc22c";
+    var obfKey = [];
+    for (var ki = 0; ki < keyHex.length; ki += 2) {
+      obfKey.push(parseInt(keyHex.slice(ki, ki + 2), 16));
+    }
     var lastErr = "no response";
     for (var hi = 0; hi < hosts.length; hi++) {
       try {
@@ -236,6 +243,10 @@ class DefaultExtension extends MProvider {
         body = body.replace(/[^A-Za-z0-9+\/=\-_]/g, "");
         if (body.length < 4) { lastErr = "body too short"; continue; }
         var bytes = this.b64dec(body);
+        // Decrypt: XOR each byte with the cycling obfuscation key
+        for (var xi = 0; xi < bytes.length; xi++) {
+          bytes[xi] = bytes[xi] ^ obfKey[xi % obfKey.length];
+        }
         var raw = this.inflate(bytes);
         return JSON.parse(this.bytesToStr(raw));
       } catch (ex) {
@@ -540,6 +551,16 @@ class DefaultExtension extends MProvider {
           values:      ["sub"],
           entries:     ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "miruro_obf_key",
+        editTextPreference: {
+          title: "Pipe obfuscation key",
+          summary: "Hex key from PIPE_OBF_KEY in miruro.tv/env2.js — update here if episodes stop loading after a site update",
+          value: "71951034f8fbcf53d89db52ceb3dc22c",
+          dialogTitle: "Pipe obfuscation key",
+          dialogMessage: "32-character hex string from PIPE_OBF_KEY in https://www.miruro.tv/env2.js",
         },
       },
     ];
