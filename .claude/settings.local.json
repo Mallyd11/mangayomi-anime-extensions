@@ -413,7 +413,14 @@
       "Bash(python hi_latest_check.py)",
       "Bash(python hi_pages.py)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\loving-nash-25c52e\" -Recurse -Name)",
-      "Bash(Select-Object -First 50)"
+      "Bash(Select-Object -First 50)",
+      "PowerShell($n=\\(Get-Command node -ErrorAction SilentlyContinue\\); if\\($n\\){node --version}else{\"no node\"})",
+      "mcp__f4ca91ac-08c9-4fa9-a819-512e0584499b__search",
+      "PowerShell(Get-Command node -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command npm -ErrorAction SilentlyContinue)",
+      "PowerShell(node --version 2>&1)",
+      "mcp__f4ca91ac-08c9-4fa9-a819-512e0584499b__execute",
+      "mcp__f4ca91ac-08c9-4fa9-a819-512e0584499b__docs"
     ]
   }
 }
