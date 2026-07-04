@@ -26,35 +26,35 @@
         }
     },
     "anime": {
+        "Miruro": {
+            "name": "Miruro",
+            "version": "4.17.0",
+            "langs": "en",
+            "lastUpd": 1783187426.404658
+        },
         "MyroniX": {
             "name": "MyroniX",
             "version": "0.1.8",
             "langs": "en",
-            "lastUpd": 1783170803.895316
+            "lastUpd": 1783172237.446817
         },
         "Anidap": {
             "name": "Anidap",
             "version": "1.5.26",
             "langs": "en",
-            "lastUpd": 1783170803.895316
+            "lastUpd": 1783172237.446817
         },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.3.6",
             "langs": "en",
-            "lastUpd": 1783170803.895316
+            "lastUpd": 1783172237.446817
         },
         "AniCove": {
             "name": "AniCove",
             "version": "0.2.3",
             "langs": "en",
-            "lastUpd": 1783170803.895316
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.3.0",
-            "langs": "en",
-            "lastUpd": 1783170803.895316
+            "lastUpd": 1783172237.446817
         },
         "AnimeParadise": {
             "name": "AnimeParadise",
@@ -80,11 +80,11 @@
             "langs": "en",
             "lastUpd": 1783170750.960963
         },
-        "Miruro": {
-            "name": "Miruro",
-            "version": "4.15.0",
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.3.6",
             "langs": "en",
-            "lastUpd": 1783170648.007981
+            "lastUpd": 1783170750.960963
         }
     },
     "novel": {
