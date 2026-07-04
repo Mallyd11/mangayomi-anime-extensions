@@ -26,17 +26,17 @@
         }
     },
     "anime": {
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.3.0",
-            "langs": "en",
-            "lastUpd": 1783187446.548084
-        },
         "Miruro": {
             "name": "Miruro",
             "version": "4.18.0",
             "langs": "en",
             "lastUpd": 1783188712.081568
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.3.0",
+            "langs": "en",
+            "lastUpd": 1783187446.548084
         },
         "MyroniX": {
             "name": "MyroniX",
