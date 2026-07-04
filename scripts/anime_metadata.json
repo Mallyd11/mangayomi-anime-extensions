@@ -1,0 +1,46 @@
+{
+    "AniCove": {
+        "downloads": "No",
+        "subDub": "Sub+Dub"
+    },
+    "Anidap": {
+        "downloads": "No",
+        "subDub": "Sub+Dub"
+    },
+    "AniKoto": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    },
+    "AnimeHeaven": {
+        "downloads": "Yes",
+        "subDub": "Sub Only"
+    },
+    "AnimeKai": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    },
+    "AnimeParadise": {
+        "downloads": "No",
+        "subDub": "Sub Only"
+    },
+    "Animetsu": {
+        "downloads": "No",
+        "subDub": "Sub+Dub"
+    },
+    "HiAnime": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    },
+    "JustAnime": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    },
+    "MyroniX": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    },
+    "Miruro": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    }
+}

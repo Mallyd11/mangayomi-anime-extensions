@@ -1,4 +1,4 @@
-# Mangayomi Mally Extensions
+# Mangayomi Swak Extensions
 
 This repository contains the available javascript extension catalogues for the Mangayomi app.
 
@@ -6,36 +6,86 @@ This repository contains the available javascript extension catalogues for the M
 <details>
 <summary><span style="font-size:1.7em; font-weight:bold;">Expand list</span></summary>
 
+## Manga
+
+| Name | Version | Language | Last Updated |
+|------|---------|----------|---------------|
+| WeLoMa | 1.0.0 | ja | 2025/10/29 23:26 IST |
+| Mangapill | 1.0.4 | en | 2025/09/17 08:55 IST |
+| Mangapark | 1.0.1 | en | 2025/09/17 08:55 IST |
+| ReadComicOnline | 0.3.0 | en | 2025/07/26 16:15 IST |
+| Weeb Central | 0.1.0 | en | 2025/03/15 03:44 IST |
+
 ## Anime
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| Animetsu | 1.0.2 | all | 2026/04/22 |
-| AnimeParadise | 0.2.0 | en | 2026/04/23 |
-| AnimeKai | 1.0.0 | en | 2026/04/24 |
+| Miruro | 4.15.0 | en | 2026/07/04 18:40 IST |
+| Animetsu | 1.0.9 | en | 2026/07/04 18:40 IST |
+| AnimeHeaven | 0.0.4 | en | 2026/07/04 18:40 IST |
+| AnimeParadise | 0.3.0 | en | 2026/07/04 18:40 IST |
+| JustAnime | 0.0.7 | en | 2026/07/04 18:40 IST |
+| HiAnime | 0.1.2 | en | 2026/07/04 18:40 IST |
+| AnimeKai | 1.0.3 | en | 2026/07/04 18:40 IST |
+
+## Novel
+
+| Name | Version | Language | Last Updated |
+|------|---------|----------|---------------|
+| NovelFire | 0.0.1 | en | 2026/04/04 12:12 IST |
+| bookReadFree | 0.0.1 | en | 2026/03/09 20:52 IST |
+| Novelbuddy | 0.0.9 | en | 2025/06/09 23:24 IST |
 
 </details>
 
 ## How to add the extensions
 
-Click on one of the buttons below to add the anime repository:
+Click on one of the buttons below to add the corresponding repository/repositories:
 
-<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=Mangayomi%20Mally%20extensions%26repo_url=https://github.com/Mallyd11/mangayomi-anime-extensions%26anime_url=https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/main/anime_index.json"><img alt="Add anime repository" src="images/add-anime-repository.png" height="35"></a>
+<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=Mangayomi Swak Extensions%26repo_url=https://github.com/Swakshan/mangayomi-swak-extensions%26manga_url=https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/index.json%26anime_url=https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/anime_index.json"><img alt="Add all repositories" src="images/add-all-repositories.png" height="35"></a>
 
-If you installed the app via Live Container, then use the following button instead:
+<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=Mangayomi Swak Extensions%26repo_url=https://github.com/Swakshan/mangayomi-swak-extensions%26manga_url=https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/index.json"><img alt="Add manga repository" src="images/add-manga-repository.png" height="35"></a>
 
-<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSUyME1hbGx5JTIwZXh0ZW5zaW9ucyZyZXBvX3VybD1odHRwczovL2dpdGh1Yi5jb20vTWFsbHlkMTEvbWFuZ2F5b21pLWFuaW1lLWV4dGVuc2lvbnMmYW5pbWVfdXJsPWh0dHBzOi8vcmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbS9NYWxseWQxMS9tYW5nYXlvbWktYW5pbWUtZXh0ZW5zaW9ucy9tYWluL2FuaW1lX2luZGV4Lmpzb24="><img alt="Add anime repository" src="images/add-anime-repository-livecontainer.png" height="35"></a>
+<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=Mangayomi Swak Extensions%26repo_url=https://github.com/Swakshan/mangayomi-swak-extensions%26anime_url=https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/anime_index.json"><img alt="Add anime repository" src="images/add-anime-repository.png" height="35"></a>
 
-Or add it manually in the app (More -> Settings -> Browse):
+<a href="https://intradeus.github.io/http-protocol-redirector?r=mangayomi://add-repo?repo_name=Mangayomi Swak Extensions%26repo_url=https://github.com/Swakshan/mangayomi-swak-extensions%26novel_url=https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/novel_index.json"><img alt="Add novel repository" src="images/add-novel-repository.png" height="35"></a>
 
-anime repo
+If you installed the app via Live Container, then use the following buttons instead:
+
+<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBTd2FrIEV4dGVuc2lvbnMlMjZyZXBvX3VybD1odHRwczovL2dpdGh1Yi5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucyUyNm1hbmdhX3VybD1odHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucy9yZWZzL2hlYWRzL21haW4vaW5kZXguanNvbiUyNmFuaW1lX3VybD1odHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucy9yZWZzL2hlYWRzL21haW4vYW5pbWVfaW5kZXguanNvbg=="><img alt="Add all repositories" src="images/add-all-repositories-livecontainer.png" height="35"></a>
+
+<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBTd2FrIEV4dGVuc2lvbnMlMjZyZXBvX3VybD1odHRwczovL2dpdGh1Yi5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucyUyNm1hbmdhX3VybD1odHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucy9yZWZzL2hlYWRzL21haW4vaW5kZXguanNvbg=="><img alt="Add manga repository" src="images/add-manga-repository-livecontainer.png" height="35"></a>
+
+<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBTd2FrIEV4dGVuc2lvbnMlMjZyZXBvX3VybD1odHRwczovL2dpdGh1Yi5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucyUyNmFuaW1lX3VybD1odHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucy9yZWZzL2hlYWRzL21haW4vYW5pbWVfaW5kZXguanNvbg=="><img alt="Add anime repository" src="images/add-anime-repository-livecontainer.png" height="35"></a>
+
+<a href="https://intradeus.github.io/http-protocol-redirector?r=livecontainer://open-url?url=bWFuZ2F5b21pOi8vYWRkLXJlcG8/cmVwb19uYW1lPU1hbmdheW9taSBTd2FrIEV4dGVuc2lvbnMlMjZyZXBvX3VybD1odHRwczovL2dpdGh1Yi5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucyUyNm5vdmVsX3VybD1odHRwczovL3Jhdy5naXRodWJ1c2VyY29udGVudC5jb20vU3dha3NoYW4vbWFuZ2F5b21pLXN3YWstZXh0ZW5zaW9ucy9yZWZzL2hlYWRzL21haW4vbm92ZWxfaW5kZXguanNvbg=="><img alt="Add novel repository" src="images/add-novel-repository-livecontainer.png" height="35"></a>
+
+Or add them manually in the app (More -> Settings -> Browse):
+
+manga repo
 ```
-https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/main/anime_index.json
+https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/index.json
 ```
+
+anime repo 
+```
+https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/anime_index.json
+```
+
+novel repo 
+```
+https://raw.githubusercontent.com/Swakshan/mangayomi-swak-extensions/refs/heads/main/novel_index.json
+```
+
+# Contributing
+
+Contributions are welcome!
+
+To get started with development, see [CONTRIBUTING-DART.md](./CONTRIBUTING-DART.md) for create sources in Dart or [CONTRIBUTING-JS.md](./CONTRIBUTING-JS.md) for create sources in JavaScript.
 
 ## License
 
-    Copyright 2024 Mallyd11
+    Copyright 2023 Moustapha Kodjo Amadou
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -48,6 +98,8 @@ https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/main/anime
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
     See the License for the specific language governing permissions and
     limitations under the License.
+
+
 
 ## Disclaimer
 

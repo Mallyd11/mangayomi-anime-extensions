@@ -32,77 +32,47 @@
         }
     },
     "anime": {
+        "Miruro": {
+            "name": "Miruro",
+            "version": "4.15.0",
+            "langs": "en",
+            "lastUpd": 1783170648.007981
+        },
         "Animetsu": {
             "name": "Animetsu",
-            "version": "1.0.2",
-            "langs": "all",
-            "lastUpd": 1776848096.576288
-        },
-        "Sudatchi": {
-            "name": "Sudatchi",
-            "version": "2.0.1",
+            "version": "1.0.9",
             "langs": "en",
-            "lastUpd": 1776836230.987179
+            "lastUpd": 1783170648.007981
         },
-        "Animeonsen": {
-            "name": "Animeonsen",
-            "version": "1.0.5",
-            "langs": "en, ja",
-            "lastUpd": 1776836230.987179
-        },
-        "Moviesda": {
-            "name": "Moviesda",
-            "version": "1.2.2",
-            "langs": "ta",
-            "lastUpd": 1764609098.718991
-        },
-        "Kaido": {
-            "name": "Kaido",
-            "version": "1.0.2",
+        "AnimeHeaven": {
+            "name": "AnimeHeaven",
+            "version": "0.0.4",
             "langs": "en",
-            "lastUpd": 1758797366.64915
-        },
-        "KickAssAnime": {
-            "name": "KickAssAnime",
-            "version": "1.2.5",
-            "langs": "en",
-            "lastUpd": 1757857275.260451
-        },
-        "SubsPlease": {
-            "name": "SubsPlease",
-            "version": "0.0.5",
-            "langs": "en",
-            "lastUpd": 1753293069.296975
+            "lastUpd": 1783170648.007981
         },
         "AnimeParadise": {
             "name": "AnimeParadise",
-            "version": "0.1.0",
+            "version": "0.3.0",
             "langs": "en",
-            "lastUpd": 1750509383.278437
+            "lastUpd": 1783170648.007981
         },
-        "AnimeZZ": {
-            "name": "AnimeZZ",
-            "version": "1.1.1",
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.0.7",
             "langs": "en",
-            "lastUpd": 1750504671.044623
+            "lastUpd": 1783170648.007981
         },
-        "Autoembed": {
-            "name": "Autoembed",
-            "version": "1.3.3",
-            "langs": "all",
-            "lastUpd": 1748094760.694626
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.1.2",
+            "langs": "en",
+            "lastUpd": 1783170648.007981
         },
-        "AnimeGG": {
-            "name": "AnimeGG",
+        "AnimeKai": {
+            "name": "AnimeKai",
             "version": "1.0.3",
             "langs": "en",
-            "lastUpd": 1747738043.896285
-        },
-        "KissKH": {
-            "name": "KissKH",
-            "version": "0.1.6",
-            "langs": "all",
-            "lastUpd": 1746206220
+            "lastUpd": 1783170648.007981
         }
     },
     "novel": {
