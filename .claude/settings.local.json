@@ -416,7 +416,10 @@
       "Bash(Select-Object -First 50)",
       "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 30)",
       "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; git checkout --theirs index.json 2>&1; git add index.json 2>&1; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 20)",
-      "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; git add -A; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 20)"
+      "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; git add -A; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 20)",
+      "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; git checkout --theirs README.md anime_index.json javascript/anime/src/en/miruro.js scripts/anime_metadata.json scripts/versions.json 2>&1; git add README.md anime_index.json javascript/anime/src/en/miruro.js scripts/anime_metadata.json scripts/versions.json 2>&1; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 20)",
+      "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 20)",
+      "PowerShell(cd \"C:\\\\Users\\\\malik\\\\OneDrive\\\\Documents\\\\GitHub\\\\mangayomi-anime-extensions\\\\.claude\\\\worktrees\\\\kind-spence-65c7d3\"; git add -A 2>&1; $env:GIT_EDITOR=\"true\"; git rebase --continue 2>&1 | Select-Object -Last 25)"
     ]
   }
 }
