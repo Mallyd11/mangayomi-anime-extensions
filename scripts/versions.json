@@ -28,9 +28,15 @@
     "anime": {
         "Miruro": {
             "name": "Miruro",
-            "version": "4.18.0",
+            "version": "4.19.0",
             "langs": "en",
-            "lastUpd": 1783188712.081568
+            "lastUpd": 1783190494.62302
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.3.6",
+            "langs": "en",
+            "lastUpd": 1783190494.62302
         },
         "HiAnime": {
             "name": "HiAnime",
