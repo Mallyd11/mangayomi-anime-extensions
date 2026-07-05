@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.20.0",
+    "version": "4.21.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -353,7 +353,9 @@ class DefaultExtension extends MProvider {
 
     var epCount = 0;
     if (m) {
-      if (m.episodes) {
+      if (m.status === "RELEASING" && m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
+        epCount = m.nextAiringEpisode.episode - 1;
+      } else if (m.episodes) {
         epCount = m.episodes;
       } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
         epCount = m.nextAiringEpisode.episode - 1;
@@ -394,30 +396,28 @@ class DefaultExtension extends MProvider {
 
     var id = info.animeId;
     var num = info.num;
-    var malId = info.malId || 0;
 
     var provP = this.pref("miruro_providers") || [];
     if (!provP || provP.length === 0) provP = ["ally"];
     var audioP = this.pref("miruro_audio") || [];
     if (!audioP || audioP.length === 0) audioP = ["sub"];
 
-    // Use AllAnime API to look up ally anime ID — tiny response, no inflate needed
-    var allyId = null;
-    if (malId) {
-      try {
-        var aq = "{shows(search:{allowAdult:true,allowUnknown:true,malId:" + parseInt(malId) + "},limit:1){edges{_id}}}";
-        var aRes = await this.client.get(
-          "https://api.allanime.day/api?variables={}&query=" + encodeURIComponent(aq),
-          { "User-Agent": this.ua, "Referer": "https://allanime.to/" }
-        );
-        if (aRes && aRes.body) {
-          var aData = JSON.parse(typeof aRes.body === "string" ? aRes.body : String(aRes.body));
-          var edges = aData.data && aData.data.shows && aData.data.shows.edges;
-          if (edges && edges.length > 0 && edges[0]._id) allyId = edges[0]._id;
+    // Use miruro info pipe to look up provider IDs — avoids dead/Cloudflare-blocked external APIs
+    var allyId = null, mooSlug = null;
+    try {
+      var t = Math.floor(Date.now() / (600 * 1e3)) * (600 * 1e3);
+      var infoData = await this.pipe("info/" + id, { live: "true", _t: String(t) });
+      var providers = infoData && infoData.mappings && infoData.mappings.providers;
+      if (providers) {
+        if (providers.ally && providers.ally.provider_id && providers.ally.provider_id[0]) {
+          allyId = providers.ally.provider_id[0];
         }
-      } catch (e) {}
-    }
-    var maps = { allyId: allyId, mooSlug: null };
+        if (providers.moo && providers.moo.provider_id && providers.moo.provider_id[0]) {
+          mooSlug = providers.moo.provider_id[0];
+        }
+      }
+    } catch (e) {}
+    var maps = { allyId: allyId, mooSlug: mooSlug };
 
     var combinations = [];
     for (var pi = 0; pi < provP.length; pi++) {
