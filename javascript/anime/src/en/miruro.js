@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.19.1",
+    "version": "4.20.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -254,49 +254,6 @@ class DefaultExtension extends MProvider {
     throw new Error(lastErr);
   }
 
-  // Fetch only ~800KB of the episodes pipe to extract provider anime IDs via regex.
-  // ally episode IDs follow allmanga:{allyId}:{episodeNumber} — constructable without full inflate.
-  async getMappings(anilistId) {
-    var req = JSON.stringify({ path: "episodes", method: "GET", query: { anilistId: anilistId }, body: null, version: "0.2.0" });
-    var e = this.b64enc(this.strToBytes(req));
-    var hosts = ["https://www.miruro.to", "https://www.miruro.tv", "https://www.miruro.bz"];
-    var keyHex = this.pref("miruro_obf_key") || "71951034f8fbcf53d89db52ceb3dc22c";
-    var obfKey = [];
-    for (var ki = 0; ki < keyHex.length; ki += 2) {
-      obfKey.push(parseInt(keyHex.slice(ki, ki + 2), 16));
-    }
-    for (var hi = 0; hi < hosts.length; hi++) {
-      try {
-        var url = hosts[hi] + "/api/secure/pipe?e=" + e;
-        var res = await this.client.get(url, {
-          "User-Agent": this.ua,
-          "Referer": "https://www.miruro.to/",
-          "Accept": "*/*",
-        });
-        if (!res || !res.body) continue;
-        var body = typeof res.body === "string" ? res.body : String(res.body);
-        body = body.replace(/[^A-Za-z0-9+\/=\-_]/g, "");
-        if (body.length < 4) continue;
-        var bytes = this.b64dec(body);
-        for (var xi = 0; xi < bytes.length; xi++) {
-          bytes[xi] = bytes[xi] ^ obfKey[xi % obfKey.length];
-        }
-        // Inflate only 320KB — ally provider_id appears at ~285KB in the JSON (One Piece worst case)
-        var partial = this.inflate(bytes, 320000);
-        var partialJson = this.bytesToStr(partial);
-
-        var allyId = null, mooSlug = null;
-        var am = partialJson.match(/"ally":\{[^}]*"provider_id":\["([A-Za-z0-9_-]+)"\][^}]*\}/);
-        if (am) allyId = am[1];
-        var mm = partialJson.match(/"moo":\{[^}]*"provider_id":\["([^"]+)"\][^}]*\}/);
-        if (mm) mooSlug = mm[1];
-
-        if (allyId || mooSlug) return { allyId: allyId, mooSlug: mooSlug };
-      } catch (ex) {}
-    }
-    return { allyId: null, mooSlug: null };
-  }
-
   // ── AniList ───────────────────────────────────────────────────────────────
 
   async gql(query, vars) {
@@ -388,7 +345,7 @@ class DefaultExtension extends MProvider {
     }
     if (!id) throw new Error("bad id");
 
-    var q = "{Media(id:" + id + ",type:ANIME){id title{romaji english native}coverImage{large extraLarge}description status episodes nextAiringEpisode{episode}genres}}";
+    var q = "{Media(id:" + id + ",type:ANIME){id idMal title{romaji english native}coverImage{large extraLarge}description status episodes nextAiringEpisode{episode}genres}}";
     var d = await this.gql(q, {});
     var m = (d && d.Media) ? d.Media : null;
     var sm = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
@@ -407,7 +364,7 @@ class DefaultExtension extends MProvider {
     for (var ni = 1; ni <= epCount; ni++) {
       chapters.push({
         name: "Episode " + ni,
-        url: JSON.stringify({ animeId: id, num: ni }),
+        url: JSON.stringify({ animeId: id, num: ni, malId: (m && m.idMal) ? m.idMal : 0 }),
         isFiller: false,
       });
     }
@@ -437,15 +394,30 @@ class DefaultExtension extends MProvider {
 
     var id = info.animeId;
     var num = info.num;
+    var malId = info.malId || 0;
 
     var provP = this.pref("miruro_providers") || [];
     if (!provP || provP.length === 0) provP = ["ally"];
     var audioP = this.pref("miruro_audio") || [];
     if (!audioP || audioP.length === 0) audioP = ["sub"];
 
-    // Get provider anime IDs via partial inflate of episodes pipe
-    var maps;
-    try { maps = await this.getMappings(id); } catch (e) { maps = { allyId: null, mooSlug: null }; }
+    // Use AllAnime API to look up ally anime ID — tiny response, no inflate needed
+    var allyId = null;
+    if (malId) {
+      try {
+        var aq = "{shows(search:{allowAdult:true,allowUnknown:true,malId:" + parseInt(malId) + "},limit:1){edges{_id}}}";
+        var aRes = await this.client.get(
+          "https://api.allanime.day/api?variables={}&query=" + encodeURIComponent(aq),
+          { "User-Agent": this.ua, "Referer": "https://allanime.to/" }
+        );
+        if (aRes && aRes.body) {
+          var aData = JSON.parse(typeof aRes.body === "string" ? aRes.body : String(aRes.body));
+          var edges = aData.data && aData.data.shows && aData.data.shows.edges;
+          if (edges && edges.length > 0 && edges[0]._id) allyId = edges[0]._id;
+        }
+      } catch (e) {}
+    }
+    var maps = { allyId: allyId, mooSlug: null };
 
     var combinations = [];
     for (var pi = 0; pi < provP.length; pi++) {
