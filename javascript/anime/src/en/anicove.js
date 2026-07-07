@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.3",
+    "version": "0.2.5",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -265,51 +265,70 @@ class DefaultExtension extends MProvider {
       if (pref && pref.length > 0) langs = pref;
     } catch (e) {}
 
+    // The site now delivers streams via /api/watch/sources (POST) rather than
+    // embedding videoLink in the page HTML. Try all three providers for each
+    // selected language and collect every available stream.
+    var providers = ["zenith", "zoro", "anixtv"];
+
+    var apiHeaders = {
+      "Content-Type": "application/json",
+      "User-Agent": this.ua,
+      "Referer": this.source.baseUrl + "/watch/" + animeId + "/ep-" + epNum,
+      "Origin": this.source.baseUrl,
+    };
     var streamHeaders = { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" };
     var streams = [];
 
-    // Fetch streams for each selected language sequentially.
     for (var li = 0; li < langs.length; li++) {
       var lang = langs[li];
 
-      var watchHeaders = {
-        "User-Agent": this.ua,
-        "Referer": this.source.baseUrl + "/",
-        "Cookie": "preferred_language=" + lang,
-      };
-      var res = await this.client.get(
-        this.source.baseUrl + "/watch/" + animeId + "/ep-" + epNum,
-        watchHeaders
-      );
-      var html = (res && res.body) || "";
+      for (var pi = 0; pi < providers.length; pi++) {
+        var provider = providers[pi];
+        try {
+          var res = await this.client.post(
+            this.source.baseUrl + "/api/watch/sources",
+            apiHeaders,
+            JSON.stringify({
+              anime_id: animeId,
+              episode_number: parseInt(epNum),
+              language: lang,
+              provider: provider,
+            })
+          );
 
-      var videoLinkM = html.match(/videoLink:\s*'([^']*)'/);
-      var sourceTypeM = html.match(/sourceType:\s*'([^']*)'/);
+          var data = JSON.parse(res.body || "{}");
+          if (!data.available) continue;
 
-      var videoLink = videoLinkM ? videoLinkM[1] : "";
-      var sourceType = sourceTypeM ? sourceTypeM[1] : "hls";
+          // hls_sources — each entry is a string URL or {file, url, quality}
+          var hlsSources = data.hls_sources || [];
+          for (var hi = 0; hi < hlsSources.length; hi++) {
+            var hs = hlsSources[hi];
+            var hsUrl = (typeof hs === "string") ? hs : (hs.file || hs.url || "");
+            if (!hsUrl) continue;
+            var hsQ = (hs.quality || provider) + " [" + lang.toUpperCase() + "]";
+            streams.push({ url: hsUrl, originalUrl: hsUrl, quality: hsQ, headers: streamHeaders, subtitles: [] });
+          }
 
-      if (!videoLink) continue;
+          // video_sources — MP4
+          var mp4Sources = data.video_sources || [];
+          for (var mi = 0; mi < mp4Sources.length; mi++) {
+            var ms = mp4Sources[mi];
+            var msUrl = (typeof ms === "string") ? ms : (ms.file || ms.url || "");
+            if (!msUrl) continue;
+            var msQ = (ms.quality || provider) + " MP4 [" + lang.toUpperCase() + "]";
+            streams.push({ url: msUrl, originalUrl: msUrl, quality: msQ, headers: streamHeaders, subtitles: [] });
+          }
 
-      // The site's downloadUrl points to pahe.win (a JS-gated link shortener)
-      // which cannot be resolved without a real browser, so we only expose the
-      // HLS stream. Mangayomi's native download system can download it directly.
-      if (sourceType === "hls") {
-        streams.push({
-          url: videoLink,
-          originalUrl: videoLink,
-          quality: "HLS [" + lang.toUpperCase() + "]",
-          headers: streamHeaders,
-          subtitles: [],
-        });
-      } else {
-        streams.push({
-          url: videoLink,
-          originalUrl: videoLink,
-          quality: "Embed [" + lang.toUpperCase() + "]",
-          headers: { "User-Agent": this.ua },
-          subtitles: [],
-        });
+          // embed_sources — iframe/player URLs
+          var embedSources = data.embed_sources || [];
+          for (var ei = 0; ei < embedSources.length; ei++) {
+            var es = embedSources[ei];
+            var esUrl = es.url || "";
+            if (!esUrl) continue;
+            var esQ = (es.name || provider) + " [" + lang.toUpperCase() + "]";
+            streams.push({ url: esUrl, originalUrl: esUrl, quality: esQ, headers: { "User-Agent": this.ua }, subtitles: [] });
+          }
+        } catch (ex) {}
       }
     }
 
