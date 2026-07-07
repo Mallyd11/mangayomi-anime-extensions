@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -165,63 +165,57 @@ class DefaultExtension extends MProvider {
     // Fetch episode list from the site's AllAnime API.
     // Chapter URL = "{showId}|{epNum}" — pipe-separated, no URL-scheme prefix.
     // AllAnime maps multiple internal show records to the same AniList ID.
-    // Strategy: group episodes by showId, pick the single best record
-    // (most titled episodes; tiebreak: most episodes), and use only that one.
-    // A single record has no duplicates by construction.
+    // The record that appears FIRST in the API response is the primary streaming
+    // record (has Default/Wix CDN sources). Later records may have episode titles
+    // but different CDN arrangements that don't work for us.
+    // Strategy:
+    //   1. Use the FIRST showId seen for chapter URLs (guarantees streaming works).
+    //   2. Build a titleMap across ALL records so we still get episode titles
+    //      even when the primary record has none.
     var chapters = [];
     try {
       if (epRes && epRes.statusCode === 200) {
         var epJson = JSON.parse(epRes.body);
         var episodes = (epJson.data && epJson.data.episodes) || [];
 
-        // Group by showId
-        var showGroups = {};
+        var primaryShowId = null;   // first showId encountered = streaming record
+        var primaryEps    = [];     // episodes belonging to the primary show
+        var titleMap      = {};     // epNum → best title from any show record
+
         for (var i = 0; i < episodes.length; i++) {
-          var ep = episodes[i];
+          var ep    = episodes[i];
           var rawId = ep.episodeId || "";
-          var c1 = rawId.indexOf(":");
-          var c2 = rawId.indexOf(":", c1 + 1);
+          var c1    = rawId.indexOf(":");
+          var c2    = rawId.indexOf(":", c1 + 1);
           if (c1 < 0 || c2 < 0) continue;
-          var sid = rawId.substring(c1 + 1, c2);
-          if (!showGroups[sid]) showGroups[sid] = [];
-          showGroups[sid].push(ep);
+          var sid   = rawId.substring(c1 + 1, c2);
+          var epNum = rawId.substring(c2 + 1);
+
+          if (!primaryShowId) primaryShowId = sid;
+          if (sid === primaryShowId) primaryEps.push(ep);
+
+          var t = (ep.title || "").trim();
+          if (t && !titleMap[epNum]) titleMap[epNum] = t;
         }
 
-        // Pick the showId with the most titled episodes (tiebreak: most episodes)
-        var bestShowId = null;
-        var bestScore  = -1;
-        var showIds = Object.keys(showGroups);
-        for (var si = 0; si < showIds.length; si++) {
-          var sid  = showIds[si];
-          var seps = showGroups[sid];
-          var titled = 0;
-          for (var ti = 0; ti < seps.length; ti++) {
-            if (seps[ti].title && seps[ti].title.trim()) titled++;
-          }
-          var score = titled * 100000 + seps.length;
-          if (score > bestScore) { bestScore = score; bestShowId = sid; }
-        }
-
-        var bestEps = (bestShowId && showGroups[bestShowId]) || [];
-        // Sort ascending by episode number
-        bestEps.sort(function(a, b) {
+        primaryEps.sort(function(a, b) {
           return (parseFloat(a.number) || 0) - (parseFloat(b.number) || 0);
         });
 
-        for (var ei = 0; ei < bestEps.length; ei++) {
-          var ep     = bestEps[ei];
-          var rawId  = ep.episodeId || "";
-          var c1     = rawId.indexOf(":");
-          var c2     = rawId.indexOf(":", c1 + 1);
+        for (var ei = 0; ei < primaryEps.length; ei++) {
+          var ep    = primaryEps[ei];
+          var rawId = ep.episodeId || "";
+          var c1    = rawId.indexOf(":");
+          var c2    = rawId.indexOf(":", c1 + 1);
           if (c1 < 0 || c2 < 0) continue;
           var epNum    = rawId.substring(c2 + 1);
           var numStr   = (ep.number !== undefined && ep.number !== null)
             ? String(ep.number) : epNum;
-          var epTitle  = (ep.title || "").trim();
+          var epTitle  = titleMap[epNum] || "";
           var fallback = "Episode " + numStr;
           var label    = (epTitle && epTitle !== fallback)
             ? "E" + numStr + ": " + epTitle : fallback;
-          chapters.push({ name: label, url: bestShowId + "|" + epNum });
+          chapters.push({ name: label, url: primaryShowId + "|" + epNum });
         }
       }
     } catch (e) { /* fall through */ }
