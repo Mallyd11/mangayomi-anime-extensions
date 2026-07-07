@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.6",
+    "version": "0.2.7",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -58,10 +58,57 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Parse anime cards from a server-rendered AniCove page.
-  // Uses .anime-card (class only) — Mangayomi's DOM API does not support
-  // compound element+class selectors like a.anime-card.
-  parseCards(doc) {
+  // Extract home-row-card entries from a named section of the /home page HTML.
+  // Uses pure string scanning — no DOM — to avoid Mangayomi selector limitations.
+  extractSectionCards(html, sectionTitle) {
+    var list = [];
+    var titleStr = sectionTitle + "</h2>";
+    var sectionStart = html.indexOf(titleStr);
+    if (sectionStart < 0) return list;
+
+    var chunk = html.slice(sectionStart + titleStr.length);
+    // Stop at the next section heading so we don't bleed into other sections.
+    var nextH2 = chunk.indexOf("<h2 class=\"home-section-title\">");
+    if (nextH2 > 0) chunk = chunk.slice(0, nextH2);
+
+    var pos = 0;
+    while (pos < chunk.length) {
+      var cardIdx = chunk.indexOf("home-row-card\"", pos);
+      if (cardIdx < 0) break;
+
+      // href is an attribute on the same <a> tag, before the class attribute.
+      var hrefStart = chunk.lastIndexOf("href=\"", cardIdx);
+      if (hrefStart < 0) { pos = cardIdx + 1; continue; }
+      var hrefEnd = chunk.indexOf("\"", hrefStart + 6);
+      var href = chunk.slice(hrefStart + 6, hrefEnd);
+
+      // img tag follows in the card body.
+      var imgIdx = chunk.indexOf("<img ", cardIdx);
+      if (imgIdx < 0) { pos = cardIdx + 1; continue; }
+      var imgClose = chunk.indexOf(">", imgIdx);
+      var imgTag = chunk.slice(imgIdx, imgClose);
+
+      var srcIdx = imgTag.indexOf("src=\"");
+      var src = "";
+      if (srcIdx >= 0) { var srcEnd = imgTag.indexOf("\"", srcIdx + 5); src = imgTag.slice(srcIdx + 5, srcEnd); }
+
+      var altIdx = imgTag.indexOf("alt=\"");
+      var alt = "";
+      if (altIdx >= 0) { var altEnd = imgTag.indexOf("\"", altIdx + 5); alt = imgTag.slice(altIdx + 5, altEnd); }
+
+      // Derive anime detail URL from /watch/{id} → /anime/{id}
+      var watchIdx = href.indexOf("/watch/");
+      if (watchIdx >= 0 && alt) {
+        var animeId = href.slice(watchIdx + 7);
+        list.push({ name: alt, imageUrl: src, link: this.source.baseUrl + "/anime/" + animeId });
+      }
+      pos = cardIdx + 1;
+    }
+    return list;
+  }
+
+  // Parse search results — the search page still uses .anime-card.
+  parseSearchCards(doc) {
     var cards = doc.select(".anime-card");
     var list = [];
     for (var i = 0; i < cards.length; i++) {
@@ -81,21 +128,26 @@ class DefaultExtension extends MProvider {
   }
 
   async getPopular(page) {
-    var res = await this.client.get(
-      this.source.baseUrl + "/category/trending",
-      this.headers
-    );
-    var doc = new Document(res.body || "");
-    return { list: this.parseCards(doc), hasNextPage: false };
+    try {
+      var res = await this.client.get(this.source.baseUrl + "/home", this.headers);
+      var html = (res && res.body) || "";
+      var list = this.extractSectionCards(html, "Trending Now");
+      if (list.length === 0) list = this.extractSectionCards(html, "Popular This Season");
+      return { list: list, hasNextPage: false };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   async getLatestUpdates(page) {
-    var res = await this.client.get(
-      this.source.baseUrl + "/category/recently-updated",
-      this.headers
-    );
-    var doc = new Document(res.body || "");
-    return { list: this.parseCards(doc), hasNextPage: false };
+    try {
+      var res = await this.client.get(this.source.baseUrl + "/home", this.headers);
+      var html = (res && res.body) || "";
+      var list = this.extractSectionCards(html, "Recent Updates");
+      return { list: list, hasNextPage: false };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   async search(query, page, filters) {
@@ -105,7 +157,7 @@ class DefaultExtension extends MProvider {
         this.headers
       );
       var doc = new Document(res.body || "");
-      return { list: this.parseCards(doc), hasNextPage: false };
+      return { list: this.parseSearchCards(doc), hasNextPage: false };
     } catch (e) {
       return { list: [], hasNextPage: false };
     }
