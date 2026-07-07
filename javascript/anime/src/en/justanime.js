@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -286,6 +286,7 @@ class DefaultExtension extends MProvider {
             };
             if (type === "dub") dubVideos.push(entry);
             else subVideos.push(entry);
+          }
         }
       } catch (e) {}
     }
