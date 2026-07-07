@@ -54,7 +54,13 @@
             "name": "AniKoto",
             "version": "0.3.7",
             "langs": "en",
-            "lastUpd": 1783435173.364786
+            "lastUpd": 1783435706.510533
+        },
+        "AniCove": {
+            "name": "AniCove",
+            "version": "0.2.6",
+            "langs": "en",
+            "lastUpd": 1783435706.510533
         },
         "Animetsu": {
             "name": "Animetsu",
