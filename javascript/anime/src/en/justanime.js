@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -165,6 +165,41 @@ class DefaultExtension extends MProvider {
     };
   }
 
+  // ── HLS helpers ───────────────────────────────────────────────────────────
+
+  // Fetch a master HLS playlist and return absolute variant URLs with quality.
+  // Returns [] if the URL is already a flat playlist (no #EXT-X-STREAM-INF).
+  async resolveMasterPlaylist(masterUrl, headers) {
+    try {
+      var res = await new Client().get(masterUrl, headers);
+      var body = res.body || "";
+      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return [];
+
+      var base = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+      var variants = [];
+      var lines = body.split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf("#EXT-X-STREAM-INF") !== 0) continue;
+        var resMatch = line.match(/RESOLUTION=\d+x(\d+)/);
+        var quality = resMatch ? resMatch[1] + "p" : "auto";
+        for (var j = i + 1; j < lines.length; j++) {
+          var u = lines[j].trim();
+          if (!u || u.charAt(0) === "#") continue;
+          variants.push({ url: u.indexOf("http") === 0 ? u : base + u, quality: quality });
+          break;
+        }
+      }
+      // Sort highest resolution first
+      variants.sort(function(a, b) {
+        return (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0);
+      });
+      return variants;
+    } catch (e) {
+      return [];
+    }
+  }
+
   // ── Video sources ─────────────────────────────────────────────────────────
 
   async getVideoList(url) {
@@ -216,10 +251,32 @@ class DefaultExtension extends MProvider {
             var streamUrl = s.url || s.file;
             if (!streamUrl) continue;
 
-            // Normalise quality label — API sometimes already includes "p"
+            // For master HLS playlists resolve to absolute variant URLs so
+            // Mangayomi's player gets direct variant URLs. This avoids the
+            // cross-domain Referer propagation issue (mewstream → ovexa).
+            if (s.isM3U8 || streamUrl.indexOf(".m3u8") >= 0) {
+              var variants = await this.resolveMasterPlaylist(streamUrl, streamHeaders);
+              if (variants.length > 0) {
+                for (var vi = 0; vi < variants.length; vi++) {
+                  var v = variants[vi];
+                  var entry = {
+                    url: v.url,
+                    originalUrl: streamUrl,
+                    quality: provider + " " + type.toUpperCase() + " [" + v.quality + "]",
+                    headers: streamHeaders,
+                    subtitles: subtitles,
+                  };
+                  if (type === "dub") dubVideos.push(entry);
+                  else subVideos.push(entry);
+                }
+                continue;
+              }
+              // Already a flat playlist — fall through and use as-is
+            }
+
+            // Non-HLS or flat playlist
             var qual = (s.quality || "auto");
             if (qual !== "auto" && !/p$/i.test(qual)) qual += "p";
-
             var entry = {
               url: streamUrl,
               originalUrl: streamUrl,
@@ -227,12 +284,8 @@ class DefaultExtension extends MProvider {
               headers: streamHeaders,
               subtitles: subtitles,
             };
-            if (type === "dub") {
-              dubVideos.push(entry);
-            } else {
-              subVideos.push(entry);
-            }
-          }
+            if (type === "dub") dubVideos.push(entry);
+            else subVideos.push(entry);
         }
       } catch (e) {}
     }
