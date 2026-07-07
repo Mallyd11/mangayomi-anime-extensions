@@ -30,13 +30,19 @@
             "name": "HiAnime",
             "version": "0.3.1",
             "langs": "en",
-            "lastUpd": 1783434758.384928
+            "lastUpd": 1783434931.286425
         },
         "Miruro": {
             "name": "Miruro",
             "version": "4.21.0",
             "langs": "en",
-            "lastUpd": 1783349739.491114
+            "lastUpd": 1783434785.927577
+        },
+        "AniCove": {
+            "name": "AniCove",
+            "version": "0.2.5",
+            "langs": "en",
+            "lastUpd": 1783434785.927577
         },
         "Animetsu": {
             "name": "Animetsu",
@@ -59,12 +65,6 @@
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.3.6",
-            "langs": "en",
-            "lastUpd": 1783172237.446817
-        },
-        "AniCove": {
-            "name": "AniCove",
-            "version": "0.2.3",
             "langs": "en",
             "lastUpd": 1783172237.446817
         },
