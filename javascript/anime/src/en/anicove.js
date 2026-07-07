@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.5",
+    "version": "0.2.6",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -143,7 +143,7 @@ class DefaultExtension extends MProvider {
       var alRes = await this.client.post(
         "https://graphql.anilist.co",
         this.alHeaders,
-        JSON.stringify({ query: alQuery, variables: { id: parseInt(animeId) } })
+        { query: alQuery, variables: { id: parseInt(animeId) } }
       );
       var alJson = JSON.parse(alRes.body);
       if (alJson && alJson.data && alJson.data.Media) {
@@ -288,16 +288,24 @@ class DefaultExtension extends MProvider {
           var res = await this.client.post(
             this.source.baseUrl + "/api/watch/sources",
             apiHeaders,
-            JSON.stringify({
+            {
               anime_id: animeId,
               episode_number: parseInt(epNum),
               language: lang,
               provider: provider,
-            })
+            }
           );
 
           var data = JSON.parse(res.body || "{}");
           if (!data.available) continue;
+
+          // Top-level video_link — proxied m3u8 (anixtv puts the stream here, not in hls_sources)
+          var topLink = (typeof data.video_link === "string") ? data.video_link : "";
+          if (topLink) {
+            streams.push({ url: topLink, originalUrl: topLink,
+              quality: provider + " [" + lang.toUpperCase() + "]",
+              headers: streamHeaders, subtitles: [] });
+          }
 
           // hls_sources — each entry is a string URL or {file, url, quality}
           var hlsSources = data.hls_sources || [];
@@ -305,7 +313,7 @@ class DefaultExtension extends MProvider {
             var hs = hlsSources[hi];
             var hsUrl = (typeof hs === "string") ? hs : (hs.file || hs.url || "");
             if (!hsUrl) continue;
-            var hsQ = (hs.quality || provider) + " [" + lang.toUpperCase() + "]";
+            var hsQ = (hs.quality || provider) + " HLS [" + lang.toUpperCase() + "]";
             streams.push({ url: hsUrl, originalUrl: hsUrl, quality: hsQ, headers: streamHeaders, subtitles: [] });
           }
 
@@ -325,7 +333,7 @@ class DefaultExtension extends MProvider {
             var es = embedSources[ei];
             var esUrl = es.url || "";
             if (!esUrl) continue;
-            var esQ = (es.name || provider) + " [" + lang.toUpperCase() + "]";
+            var esQ = (es.name || provider) + " Embed [" + lang.toUpperCase() + "]";
             streams.push({ url: esUrl, originalUrl: esUrl, quality: esQ, headers: { "User-Agent": this.ua }, subtitles: [] });
           }
         } catch (ex) {}
