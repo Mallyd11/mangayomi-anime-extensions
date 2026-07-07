@@ -26,23 +26,23 @@
         }
     },
     "anime": {
+        "AniCove": {
+            "name": "AniCove",
+            "version": "0.2.7",
+            "langs": "en",
+            "lastUpd": 1783438156.885163
+        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.3.1",
             "langs": "en",
-            "lastUpd": 1783438129.20833
+            "lastUpd": 1783438156.885163
         },
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.1.7",
             "langs": "en",
-            "lastUpd": 1783438087.443849
-        },
-        "MyroniX": {
-            "name": "MyroniX",
-            "version": "0.2.0",
-            "langs": "en",
-            "lastUpd": 1783435706.510533
+            "lastUpd": 1783438120.641454
         },
         "AniKoto": {
             "name": "AniKoto",
@@ -50,11 +50,11 @@
             "langs": "en",
             "lastUpd": 1783435706.510533
         },
-        "AniCove": {
-            "name": "AniCove",
-            "version": "0.2.6",
+        "MyroniX": {
+            "name": "MyroniX",
+            "version": "0.2.0",
             "langs": "en",
-            "lastUpd": 1783435706.510533
+            "lastUpd": 1783435624.636687
         },
         "Miruro": {
             "name": "Miruro",
