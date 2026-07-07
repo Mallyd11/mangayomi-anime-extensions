@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -177,41 +177,67 @@ class DefaultExtension extends MProvider {
     var dubVideos = [];
     var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
 
-    try {
-      var data = await this.apiGet("/watch/" + animeId + "/episode/" + epNum + "/animepahe");
+    // animepahe/animegg endpoints currently hang — skip them
+    var providers = ["megaplay", "miruro"];
 
-      // API returns {"error":"..."} with HTTP 200 for bad episodes
-      if (data.error || (!data.sub && !data.dub)) {
-        throw new Error(data.error || "No sources");
-      }
+    for (var pi = 0; pi < providers.length; pi++) {
+      var provider = providers[pi];
+      try {
+        var data = await this.apiGet("/watch/" + animeId + "/episode/" + epNum + "/" + provider);
+        if (data.error || (!data.sub && !data.dub)) continue;
 
-      var types = ["sub", "dub"];
-      for (var ti = 0; ti < types.length; ti++) {
-        var type = types[ti];
-        var typeData = data[type];
-        if (!typeData || !typeData.sources) continue;
-        var sources = typeData.sources;
-        for (var si = 0; si < sources.length; si++) {
-          var s = sources[si];
-          var streamUrl = s.url || s.file;
-          if (!streamUrl) continue;
-          var entry = {
-            url: streamUrl,
-            originalUrl: streamUrl,
-            quality: type.toUpperCase() + " [" + (s.quality || "auto") + "p]",
-            headers: { "Referer": "https://kwik.cx/", "User-Agent": ua },
-            subtitles: [],
+        var types = ["sub", "dub"];
+        for (var ti = 0; ti < types.length; ti++) {
+          var type = types[ti];
+          var typeData = data[type];
+          if (!typeData || !typeData.sources) continue;
+
+          // Use headers the API tells us to use; fall back to safe defaults
+          var apiHeaders = typeData.headers || {};
+          var streamHeaders = {
+            "User-Agent": ua,
+            "Referer": apiHeaders["Referer"] || "https://justanime.to/",
           };
-          if (type === "dub") {
-            dubVideos.push(entry);
-          } else {
-            subVideos.push(entry);
+          if (apiHeaders["Origin"]) streamHeaders["Origin"] = apiHeaders["Origin"];
+
+          // Collect subtitles
+          var subtitles = [];
+          var tracks = typeData.subtitles || typeData.tracks || [];
+          for (var sti = 0; sti < tracks.length; sti++) {
+            var track = tracks[sti];
+            if (track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
+              subtitles.push({ url: track.file, label: track.label || "Unknown" });
+            }
+          }
+
+          var sources = typeData.sources;
+          for (var si = 0; si < sources.length; si++) {
+            var s = sources[si];
+            var streamUrl = s.url || s.file;
+            if (!streamUrl) continue;
+
+            // Normalise quality label — API sometimes already includes "p"
+            var qual = (s.quality || "auto");
+            if (qual !== "auto" && !/p$/i.test(qual)) qual += "p";
+
+            var entry = {
+              url: streamUrl,
+              originalUrl: streamUrl,
+              quality: provider + " " + type.toUpperCase() + " [" + qual + "]",
+              headers: streamHeaders,
+              subtitles: subtitles,
+            };
+            if (type === "dub") {
+              dubVideos.push(entry);
+            } else {
+              subVideos.push(entry);
+            }
           }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
-    // Sort each group highest quality first (1080p before 720p before 360p)
+    // Sort highest quality first (1080p → 720p → 360p → auto)
     function sortByQuality(arr) {
       return arr.sort(function(a, b) {
         var qa = parseInt((a.quality.match(/\[(\d+)p\]/) || [0, 0])[1], 10) || 0;
