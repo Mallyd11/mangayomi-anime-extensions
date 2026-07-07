@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.9",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -296,19 +296,33 @@ class DefaultExtension extends MProvider {
 
     // Fetch sub and dub sources in parallel — cuts load time roughly in half
     // compared to sequential awaits.
+    var SERVERS = ["Default", "Luf-mp4", "Mp4"];
     var self = this;
-    var fetchCategory = function(category) {
+
+    var fetchServer = function(category, server) {
       var apiUrl = self.source.baseUrl + "/api/v2/allanime/episode/sources" +
         "?animeEpisodeId=" + encodeURIComponent(episodeId) +
-        "&server=Default" +
+        "&server=" + encodeURIComponent(server) +
         "&category=" + category;
       return self.client.get(apiUrl, self.getHeaders)
         .then(function(res) {
-          if (res.statusCode !== 200) return { category: category, data: null };
+          if (res.statusCode !== 200) return null;
           var json = JSON.parse(res.body);
-          return { category: category, data: json.data || null };
+          var d = json.data;
+          return (d && d.sources && d.sources.length > 0) ? d : null;
         })
-        .catch(function() { return { category: category, data: null }; });
+        .catch(function() { return null; });
+    };
+
+    var fetchCategory = function(category) {
+      return Promise.all(SERVERS.map(function(srv) {
+        return fetchServer(category, srv);
+      })).then(function(serverResults) {
+        for (var sri = 0; sri < serverResults.length; sri++) {
+          if (serverResults[sri]) return { category: category, data: serverResults[sri] };
+        }
+        return { category: category, data: null };
+      });
     };
 
     var results = await Promise.all([fetchCategory("sub"), fetchCategory("dub")]);
