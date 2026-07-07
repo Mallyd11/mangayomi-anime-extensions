@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.6",
+    "version": "0.3.7",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -324,51 +324,86 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
-  // Resolve a server linkId → embed URL → playable stream.
-  // Strategy 1: result IS a direct .m3u8/.mp4 URL → use it
-  // Strategy 2: result has a # fragment → base64-decode to get stream URL
-  async _resolveStream(linkId, audioType) {
+  // Resolve a server linkId → embed URL → array of playable streams.
+  async _resolveStreams(linkId, audioLabel) {
     var embedUrl = "";
     try {
       var serverRes = await this.client.get(
         this.source.baseUrl + "/ajax/server?get=" + encodeURIComponent(linkId),
-        {
-          "User-Agent": this.ua,
-          "Referer": this.source.baseUrl + "/",
-          "X-Requested-With": "XMLHttpRequest",
-          "Accept": "application/json, text/javascript, */*; q=0.01",
-        }
+        { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/", "X-Requested-With": "XMLHttpRequest", "Accept": "application/json, text/javascript, */*; q=0.01" }
       );
       var serverData;
-      try { serverData = JSON.parse(serverRes.body); } catch (e) { return null; }
-      if (!serverData || !serverData.result) return null;
+      try { serverData = JSON.parse(serverRes.body); } catch (e) { return []; }
+      if (!serverData || !serverData.result) return [];
+      if (typeof serverData.result === "string") embedUrl = serverData.result;
+      else if (serverData.result.url) embedUrl = serverData.result.url;
+      else if (serverData.result.link) embedUrl = serverData.result.link;
+    } catch (e) { return []; }
+    if (!embedUrl) return [];
 
-      if (typeof serverData.result === "string") {
-        embedUrl = serverData.result;
-      } else if (serverData.result.url) {
-        embedUrl = serverData.result.url;
-      } else if (serverData.result.link) {
-        embedUrl = serverData.result.link;
-      }
-    } catch (e) { return null; }
-    if (!embedUrl) return null;
-
+    if (embedUrl.indexOf("vidtube.site/stream/") >= 0) {
+      return await this._extractVidtubeStreams(embedUrl, audioLabel);
+    }
     if (embedUrl.includes(".m3u8") || embedUrl.includes(".mp4")) {
-      return { url: embedUrl, originalUrl: embedUrl, quality: audioType, headers: { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" }, subtitles: [] };
+      return [{ url: embedUrl, originalUrl: embedUrl, quality: audioLabel, headers: { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" }, subtitles: [] }];
     }
-
-    var hashIdx = embedUrl.indexOf("#");
-    if (hashIdx >= 0) {
-      var hashPart = embedUrl.substring(hashIdx + 1);
-      var decoded = this._b64dec(hashPart);
-      if (decoded && (decoded.includes(".m3u8") || decoded.includes(".mp4"))) {
-        var originM = embedUrl.match(/^(https?:\/\/[^/]+)/);
-        var referer = originM ? originM[1] + "/" : this.source.baseUrl + "/";
-        return { url: decoded, originalUrl: decoded, quality: audioType, headers: { "User-Agent": this.ua, "Referer": referer }, subtitles: [] };
+    var hi = embedUrl.indexOf("#");
+    if (hi >= 0) {
+      var dec = this._b64dec(embedUrl.substring(hi + 1));
+      if (dec && (dec.includes(".m3u8") || dec.includes(".mp4"))) {
+        var om = embedUrl.match(/^(https?:\/\/[^/]+)/);
+        return [{ url: dec, originalUrl: dec, quality: audioLabel, headers: { "User-Agent": this.ua, "Referer": om ? om[1] + "/" : this.source.baseUrl + "/" }, subtitles: [] }];
       }
     }
+    return [];
+  }
 
-    return null;
+  // Extract streams from vidtube.site embed: fetch page → getSourcesNew API → m3u8 → quality variants.
+  async _extractVidtubeStreams(embedUrl, audioLabel) {
+    var streams = [];
+    try {
+      var res = await this.client.get(embedUrl, { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" });
+      var html = res.body || "";
+      var idM = html.match(/getSourcesNew\?id=(\d+)/) || html.match(/<title>File (\d+)/i);
+      if (!idM) return streams;
+      var fileId = idM[1];
+      var typeM = embedUrl.match(/\/(sub|dub)(?:[?#]|$)/);
+      var type = typeM ? typeM[1] : "sub";
+
+      var srcRes = await this.client.get(
+        "https://vidtube.site/stream/getSourcesNew?id=" + fileId + "&type=" + type,
+        { "User-Agent": this.ua, "Referer": "https://vidtube.site/", "X-Requested-With": "XMLHttpRequest", "Accept": "application/json, text/javascript, */*; q=0.01" }
+      );
+      var srcData;
+      try { srcData = JSON.parse(srcRes.body); } catch (e) { return streams; }
+
+      var m3u8 = "";
+      if (srcData.sources) {
+        if (typeof srcData.sources === "string") m3u8 = srcData.sources;
+        else if (srcData.sources.file) m3u8 = srcData.sources.file;
+        else if (Array.isArray(srcData.sources) && srcData.sources.length) m3u8 = srcData.sources[0].file || srcData.sources[0].url || "";
+      }
+      if (!m3u8) return streams;
+
+      var subtitles = [];
+      if (Array.isArray(srcData.tracks)) {
+        for (var ti = 0; ti < srcData.tracks.length; ti++) {
+          var track = srcData.tracks[ti];
+          if (track && track.file && track.kind !== "thumbnails") subtitles.push({ file: track.file, label: track.label || "Unknown" });
+        }
+      }
+
+      var hdrs = { "User-Agent": this.ua, "Referer": "https://vidtube.site/" };
+      var variants = await this._resolveHlsVariants(m3u8, hdrs);
+      if (variants.length > 0) {
+        for (var v = 0; v < variants.length; v++) {
+          streams.push({ url: variants[v].url, originalUrl: m3u8, quality: variants[v].label + " - " + audioLabel, headers: hdrs, subtitles: subtitles });
+        }
+      } else {
+        streams.push({ url: m3u8, originalUrl: m3u8, quality: audioLabel, headers: hdrs, subtitles: subtitles });
+      }
+    } catch (e) {}
+    return streams;
   }
 
   // Fetch a master HLS playlist and return one entry per quality variant.
@@ -526,21 +561,18 @@ class DefaultExtension extends MProvider {
       } catch (e) {}
 
       var doc = new Document(html);
-      // Try multiple attribute names the site might use for the server linkId
-      var serverEls = doc.select("[data-link-id]");
-      if (serverEls.length === 0) serverEls = doc.select("[data-id]");
-      if (serverEls.length === 0) serverEls = doc.select("li[class]");
+      var serverEls = doc.select("li[data-link-id]");
 
       for (var i = 0; i < serverEls.length; i++) {
         var el = serverEls[i];
         var elType = (el.attr("data-type") || "").toLowerCase();
-        if (elType && elType !== audioType) continue;
-        var linkId = el.attr("data-link-id") || el.attr("data-id") || el.attr("data-server-id") || "";
+        if (audioType === "sub" && elType !== "sub" && elType !== "hsub") continue;
+        if (audioType === "dub" && elType !== "dub") continue;
+        var linkId = el.attr("data-link-id") || "";
         if (!linkId) continue;
-        var svName = (el.text || el.attr("data-sv-id") || el.attr("data-name") || "Srv" + (i + 1)).trim();
-        if (svName.length > 30) svName = "Srv" + (i + 1);
-        var stream = await this._resolveStream(linkId, audioLabel + " [" + svName + "]");
-        if (stream) streams.push(stream);
+        var svName = (el.text || "").trim().slice(0, 20) || "Srv" + (i + 1);
+        var resolved = await this._resolveStreams(linkId, audioLabel + " [" + svName + "]");
+        streams = streams.concat(resolved);
       }
     } catch (e) {}
     return streams;
@@ -566,14 +598,26 @@ class DefaultExtension extends MProvider {
       if (!malId || !timestamp) return [];
     }
 
-    var serverPref = "megaplay";
-    try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "megaplay"; } catch (e) {}
+    var serverPref = "list";
+    try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "list"; } catch (e) {}
     var audioPref = "sub_dub";
     try { audioPref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
 
     var subStreams = [], dubStreams = [];
 
-    // MegaPlay via MAL ID — most reliable, independent of site-specific stream servers
+    // Server list — VidPlay / HD / Vidstream via VidTube player
+    if (serverPref === "list" || serverPref === "all") {
+      if (!ids) {
+        var m2 = await this._fetchEpMeta(slug, epNum);
+        if (m2 && m2.ids) ids = m2.ids;
+      }
+      var listSub = await this._fetchServerListStreams(ids, "sub", "Sub");
+      var listDub = await this._fetchServerListStreams(ids, "dub", "Dub");
+      subStreams = subStreams.concat(listSub);
+      dubStreams = dubStreams.concat(listDub);
+    }
+
+    // MegaPlay via MAL ID
     if (serverPref === "megaplay" || serverPref === "all") {
       var mpSub = await this._extractMegaplay(malId, epNum, "sub", "Sub");
       var mpDub = await this._extractMegaplay(malId, epNum, "dub", "Dub");
@@ -581,8 +625,8 @@ class DefaultExtension extends MProvider {
       dubStreams = dubStreams.concat(mpDub);
     }
 
-    // Kiwi-Stream via mapper.nekostream.site
-    if (serverPref === "mapper" || serverPref === "all") {
+    // Kiwi-Stream via mapper (legacy — mapper no longer returns streaming linkIds)
+    if (serverPref === "mapper") {
       var mapRes;
       try {
         mapRes = await this.client.get(
@@ -597,22 +641,10 @@ class DefaultExtension extends MProvider {
           var kiwi = mapData["Kiwi-Stream-"] || {};
           var subLinkId = kiwi.sub && kiwi.sub.url ? kiwi.sub.url : "";
           var dubLinkId = kiwi.dub && kiwi.dub.url ? kiwi.dub.url : "";
-          if (subLinkId) { var ks = await this._resolveStream(subLinkId, "Sub [Kiwi-Stream]"); if (ks) subStreams.push(ks); }
-          if (dubLinkId) { var kd = await this._resolveStream(dubLinkId, "Dub [Kiwi-Stream]"); if (kd) dubStreams.push(kd); }
+          if (subLinkId) { var ks = await this._resolveStreams(subLinkId, "Sub [Kiwi-Stream]"); subStreams = subStreams.concat(ks); }
+          if (dubLinkId) { var kd = await this._resolveStreams(dubLinkId, "Dub [Kiwi-Stream]"); dubStreams = dubStreams.concat(kd); }
         }
       }
-    }
-
-    // Server list: VidPlay / Vidstream / HD — fetch per-server linkIds and resolve each
-    if (serverPref === "list") {
-      if (!ids) {
-        var m2 = await this._fetchEpMeta(slug, epNum);
-        if (m2 && m2.ids) ids = m2.ids;
-      }
-      var listSub = await this._fetchServerListStreams(ids, "sub", "Sub");
-      var listDub = await this._fetchServerListStreams(ids, "dub", "Dub");
-      subStreams = subStreams.concat(listSub);
-      dubStreams = dubStreams.concat(listDub);
     }
 
     if (audioPref === "dub_sub") return dubStreams.concat(subStreams);
@@ -631,15 +663,15 @@ class DefaultExtension extends MProvider {
         key: "anikoto_pref_server",
         listPreference: {
           title: "Stream source",
-          summary: "MegaPlay uses MAL ID and works independently of the site's own servers. Kiwi-Stream uses the mapper API. Server List (VidPlay/Vidstream/HD) is slow and may time out.",
+          summary: "Server List fetches streams from VidPlay/HD/Vidstream via VidTube. MegaPlay uses the MAL ID independently of AniKoto's servers. Kiwi-Stream is legacy and unlikely to work.",
           valueIndex: 0,
           entries: [
+            "Server List (VidPlay / HD / Vidstream)",
             "MegaPlay (MAL ID)",
-            "All (MegaPlay + Kiwi-Stream)",
-            "Kiwi-Stream (Mapper)",
-            "Server List (VidPlay / Vidstream / HD)",
+            "All (Server List + MegaPlay)",
+            "Kiwi-Stream (Mapper) [legacy]",
           ],
-          entryValues: ["megaplay", "all", "mapper", "list"],
+          entryValues: ["list", "megaplay", "all", "mapper"],
         },
       },
       {
