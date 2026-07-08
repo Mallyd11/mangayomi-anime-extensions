@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.8",
+    "version": "0.2.9",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -305,6 +305,60 @@ class DefaultExtension extends MProvider {
     };
   }
 
+  // Resolve an anixtv.in embed URL to a real HLS m3u8 by following the iframe chain:
+  // anixtv.in page → as-cdn21.top/video/{hash} iframe → /player/index.php?do=getVideo API
+  async resolveAnixTvEmbed(embedUrl, lang) {
+    // Step 1: GET the anixtv.in wrapper page — it just has one <iframe> pointing to as-cdn21.top
+    var anixRes = await this.client.get(embedUrl, {
+      "User-Agent": this.ua,
+      "Referer": this.source.baseUrl + "/",
+    });
+    var anixHtml = (anixRes && anixRes.body) || "";
+
+    // Extract <iframe src="https://as-cdn21.top/video/{hash}">
+    var iframeIdx = anixHtml.indexOf("<iframe ");
+    if (iframeIdx < 0) return null;
+    var srcIdx = anixHtml.indexOf('src="', iframeIdx);
+    if (srcIdx < 0) return null;
+    var srcEnd = anixHtml.indexOf('"', srcIdx + 5);
+    var playerUrl = anixHtml.slice(srcIdx + 5, srcEnd);
+    if (playerUrl.indexOf("as-cdn") < 0) return null;
+
+    // Extract the hash from the end of the path.
+    var hashIdx = playerUrl.lastIndexOf("/");
+    var hash = playerUrl.slice(hashIdx + 1);
+    if (!hash) return null;
+
+    // Step 2: POST to the getVideo API — returns the actual time-limited m3u8 URL.
+    var apiRes = await this.client.post(
+      "https://as-cdn21.top/player/index.php?data=" + hash + "&do=getVideo",
+      {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": this.ua,
+        "Referer": playerUrl,
+        "Origin": "https://as-cdn21.top",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      "hash=" + hash + "&r=https://anixtv.in/"
+    );
+
+    var videoData = JSON.parse(apiRes.body || "{}");
+    var streamUrl = videoData.securedLink || videoData.videoSource || "";
+    if (!streamUrl) return null;
+
+    return {
+      url: streamUrl,
+      originalUrl: streamUrl,
+      quality: "AnixTv [" + lang.toUpperCase() + "]",
+      headers: {
+        "User-Agent": this.ua,
+        "Referer": "https://as-cdn21.top/",
+        "Origin": "https://as-cdn21.top",
+      },
+      subtitles: [],
+    };
+  }
+
   async getVideoList(url) {
     var parts = url.split("||");
     var animeId = parts[0];
@@ -386,7 +440,19 @@ class DefaultExtension extends MProvider {
             streams.push({ url: msUrl, originalUrl: msUrl, quality: msQ, headers: streamHeaders, subtitles: [] });
           }
 
-          // embed_sources — require a real browser to play, skip for now.
+          // embed_sources — resolve anixtv iframe chain to get a real m3u8
+          var embedSources = data.embed_sources || [];
+          for (var ei = 0; ei < embedSources.length; ei++) {
+            var es = embedSources[ei];
+            var esUrl = es.url || "";
+            if (!esUrl) continue;
+            if (esUrl.indexOf("anixtv.in") >= 0) {
+              try {
+                var resolved = await this.resolveAnixTvEmbed(esUrl, lang);
+                if (resolved) streams.push(resolved);
+              } catch (ex) {}
+            }
+          }
         } catch (ex) {}
       }
     }
