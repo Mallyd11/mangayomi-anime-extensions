@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.9",
+    "version": "0.3.0",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -307,6 +307,35 @@ class DefaultExtension extends MProvider {
 
   // Resolve an anixtv.in embed URL to a real HLS m3u8 by following the iframe chain:
   // anixtv.in page → as-cdn21.top/video/{hash} iframe → /player/index.php?do=getVideo API
+  // Walk the AniList PREQUEL chain to determine the franchise season number.
+  // Season 1 has no prequel (returns 1), Season 2 has one prequel (returns 2), etc.
+  // Caps at 8 hops to bound API calls.
+  async getSeasonNumber(animeId) {
+    var seasonNum = 1;
+    var currentId = parseInt(animeId);
+    for (var hop = 0; hop < 8; hop++) {
+      try {
+        var q = "query ($id: Int) { Media(id: $id, type: ANIME) { relations { edges { relationType node { id } } } } }";
+        var res = await this.client.post(
+          "https://graphql.anilist.co",
+          this.alHeaders,
+          { query: q, variables: { id: currentId } }
+        );
+        var rData = JSON.parse(res.body || "{}");
+        var edges = [];
+        try { edges = rData.data.Media.relations.edges; } catch (e) {}
+        var prequel = null;
+        for (var i = 0; i < edges.length; i++) {
+          if (edges[i].relationType === "PREQUEL") { prequel = edges[i].node; break; }
+        }
+        if (!prequel) break;
+        currentId = prequel.id;
+        seasonNum++;
+      } catch (e) { break; }
+    }
+    return seasonNum;
+  }
+
   async resolveAnixTvEmbed(embedUrl, lang) {
     // Step 1: GET the anixtv.in wrapper page — it just has one <iframe> pointing to as-cdn21.top
     var anixRes = await this.client.get(embedUrl, {
@@ -383,6 +412,12 @@ class DefaultExtension extends MProvider {
       "Origin": this.source.baseUrl,
     };
     var streamHeaders = { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" };
+
+    // Determine franchise season number once — used to patch anixtv embed URLs
+    // whose season param defaults to 1 regardless of actual season.
+    var seasonNum = 1;
+    try { seasonNum = await this.getSeasonNumber(animeId); } catch (e) {}
+
     var streams = [];
 
     for (var li = 0; li < langs.length; li++) {
@@ -448,7 +483,17 @@ class DefaultExtension extends MProvider {
             if (!esUrl) continue;
             if (esUrl.indexOf("anixtv.in") >= 0) {
               try {
-                var resolved = await this.resolveAnixTvEmbed(esUrl, lang);
+                // Patch season= param so the correct franchise season plays
+                var patchedUrl = esUrl;
+                if (seasonNum > 1) {
+                  var si = patchedUrl.indexOf("season=");
+                  if (si >= 0) {
+                    var se = patchedUrl.indexOf("&", si);
+                    if (se < 0) se = patchedUrl.length;
+                    patchedUrl = patchedUrl.slice(0, si + 7) + seasonNum + patchedUrl.slice(se);
+                  }
+                }
+                var resolved = await this.resolveAnixTvEmbed(patchedUrl, lang);
                 if (resolved) streams.push(resolved);
               } catch (ex) {}
             }
