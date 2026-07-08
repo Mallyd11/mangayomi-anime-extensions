@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -95,16 +95,25 @@ class DefaultExtension extends MProvider {
 
   // ── Listings ──────────────────────────────────────────────────────────────
 
+  get supportsLatest() { return true; }
+
   async getPopular(page) {
-    var data = await this.apiGet("/home");
-    var items = data.popular || [];
-    return { list: this.parseAnimeList(items), hasNextPage: false };
+    try {
+      var data = await this.apiGet("/home");
+      return { list: this.parseAnimeList(data.popular || []), hasNextPage: false };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   async getLatestUpdates(page) {
-    var data = await this.apiGet("/home");
-    var items = data.latestEpisode || data.airing || [];
-    return { list: this.parseAnimeList(items), hasNextPage: false };
+    try {
+      var data = await this.apiGet("/home");
+      var items = data.latestEpisode || data.airing || [];
+      return { list: this.parseAnimeList(items), hasNextPage: false };
+    } catch (e) {
+      return { list: [], hasNextPage: false };
+    }
   }
 
   async search(query, page, filters) {
