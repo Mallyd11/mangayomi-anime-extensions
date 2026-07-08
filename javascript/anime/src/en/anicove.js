@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.1",
+    "version": "0.3.2",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -310,42 +310,44 @@ class DefaultExtension extends MProvider {
   // Walk the AniList PREQUEL chain to determine the franchise season number.
   // Season 1 has no prequel (returns 1), Season 2 has one prequel (returns 2), etc.
   // Caps at 8 hops to bound API calls.
-  // Extract the season number from an AniList title in one API call.
-  // Matches "Season 3", "3rd Season" patterns from the English/romaji title.
-  // Falls back to 1 if no season marker is found (Season 1 anime).
+  // Walk the AniList PREQUEL chain to find the franchise season number.
+  // Increments the counter only when the start year changes between consecutive
+  // entries — this collapses split-cour anime (e.g. S2 Part 1 and Part 2 both
+  // airing in the same year) into a single season, matching how streaming sites
+  // like anixtv.in label their seasons.
   async getSeasonNumber(animeId) {
-    try {
-      var snQ = "query ($id: Int) { Media(id: $id, type: ANIME) { title { english romaji } } }";
-      var snRes = await this.client.post(
-        "https://graphql.anilist.co",
-        this.alHeaders,
-        { query: snQ, variables: { id: parseInt(animeId) } }
-      );
-      var snData = JSON.parse(snRes.body || "{}");
-      var snTitle = "";
+    var seasonNum = 1;
+    var currentId = parseInt(animeId);
+    for (var hop = 0; hop < 8; hop++) {
       try {
-        var snT = snData.data.Media.title;
-        snTitle = (snT.english || snT.romaji || "").toLowerCase();
-      } catch (e) {}
+        var snQ = "query ($id: Int) { Media(id: $id, type: ANIME) { startDate { year } relations { edges { relationType node { id startDate { year } } } } } }";
+        var snRes = await this.client.post(
+          "https://graphql.anilist.co",
+          this.alHeaders,
+          { query: snQ, variables: { id: currentId } }
+        );
+        var snData = JSON.parse(snRes.body || "{}");
+        var curMedia = null;
+        try { curMedia = snData.data.Media; } catch (e) {}
+        if (!curMedia) break;
 
-      // "Season N" — most common pattern
-      var snIdx = snTitle.indexOf("season ");
-      if (snIdx >= 0) {
-        var snRest = snTitle.slice(snIdx + 7);
-        var snNum = "";
-        for (var snI = 0; snI < snRest.length; snI++) {
-          if (snRest[snI] >= "0" && snRest[snI] <= "9") { snNum += snRest[snI]; } else { break; }
+        var curYear = (curMedia.startDate && curMedia.startDate.year) || 0;
+
+        var edges = [];
+        try { edges = curMedia.relations.edges; } catch (e) {}
+        var prequel = null;
+        for (var i = 0; i < edges.length; i++) {
+          if (edges[i].relationType === "PREQUEL") { prequel = edges[i].node; break; }
         }
-        if (snNum) return parseInt(snNum);
-      }
+        if (!prequel) break;
 
-      // "Nth Season" — e.g. "2nd Season", "3rd Season"
-      var ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th"];
-      for (var oi = 0; oi < ordinals.length; oi++) {
-        if (snTitle.indexOf(ordinals[oi] + " season") >= 0) return oi + 1;
-      }
-    } catch (e) {}
-    return 1;
+        var preYear = (prequel.startDate && prequel.startDate.year) || 0;
+        // Different year = new season. Same year = split-cour, same season number.
+        if (curYear !== preYear || curYear === 0) seasonNum++;
+        currentId = prequel.id;
+      } catch (e) { break; }
+    }
+    return seasonNum;
   }
 
   async resolveAnixTvEmbed(embedUrl, lang) {
