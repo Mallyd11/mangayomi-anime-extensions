@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.2",
+    "version": "0.3.3",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -188,6 +188,8 @@ class DefaultExtension extends MProvider {
       + " description(asHtml: false)"
       + " genres status episodes"
       + " nextAiringEpisode { episode }"
+      + " startDate { year }"
+      + " relations { edges { relationType node { id startDate { year } } } }"
       + " } }";
 
     var media = null;
@@ -202,6 +204,55 @@ class DefaultExtension extends MProvider {
         media = alJson.data.Media;
       }
     } catch (e) {}
+
+    // Walk the PREQUEL chain to compute the franchise season number.
+    // Only increment when the start year changes — split-cour parts that aired
+    // in the same year are treated as one season (matching streaming site numbering).
+    var detailSeasonNum = 1;
+    if (media) {
+      var snCurYear = (media.startDate && media.startDate.year) || 0;
+      var snNextId = null;
+      // First hop: prequel data already available from the initial query
+      var snEdges = [];
+      try { snEdges = media.relations.edges; } catch (e) {}
+      for (var se = 0; se < snEdges.length; se++) {
+        if (snEdges[se].relationType === "PREQUEL") {
+          var snPreq = snEdges[se].node;
+          var snPreqYear = (snPreq.startDate && snPreq.startDate.year) || 0;
+          if (snCurYear !== snPreqYear && snCurYear !== 0 && snPreqYear !== 0) detailSeasonNum++;
+          snCurYear = snPreqYear;
+          snNextId = snPreq.id;
+          break;
+        }
+      }
+      // Continue following chain (each hop fetches that node's own prequel)
+      for (var sh = 0; sh < 7 && snNextId; sh++) {
+        try {
+          var shQ = "query ($id: Int) { Media(id: $id, type: ANIME) { startDate { year } relations { edges { relationType node { id startDate { year } } } } } }";
+          var shRes = await this.client.post(
+            "https://graphql.anilist.co",
+            this.alHeaders,
+            { query: shQ, variables: { id: snNextId } }
+          );
+          var shJson = JSON.parse(shRes.body || "{}");
+          var shMedia = null;
+          try { shMedia = shJson.data.Media; } catch (e) {}
+          if (!shMedia) { snNextId = null; break; }
+          var shCurYear = (shMedia.startDate && shMedia.startDate.year) || 0;
+          var shEdges = [];
+          try { shEdges = shMedia.relations.edges; } catch (e) {}
+          var shPreq = null;
+          for (var sj = 0; sj < shEdges.length; sj++) {
+            if (shEdges[sj].relationType === "PREQUEL") { shPreq = shEdges[sj].node; break; }
+          }
+          if (!shPreq) { snNextId = null; break; }
+          var shPreqYear = (shPreq.startDate && shPreq.startDate.year) || 0;
+          if (shCurYear !== shPreqYear && shCurYear !== 0 && shPreqYear !== 0) detailSeasonNum++;
+          snCurYear = shPreqYear;
+          snNextId = shPreq.id;
+        } catch (e) { snNextId = null; break; }
+      }
+    }
 
     // Fetch episode thumbnails from ani.zip only if the user has enabled them.
     var thumbMap = {};
@@ -254,7 +305,7 @@ class DefaultExtension extends MProvider {
 
       chapters.push({
         name: label,
-        url: animeId + "||" + epNum,
+        url: animeId + "||" + epNum + "||" + detailSeasonNum,
         thumbnailUrl: thumbMap[epNum] || "",
         scanlator: (ep.attr("class") || "").indexOf("is-filler") >= 0 ? "Filler" : "",
       });
@@ -268,7 +319,7 @@ class DefaultExtension extends MProvider {
       for (var j = 1; j <= total; j++) {
         chapters.push({
           name: "Episode " + j,
-          url: animeId + "||" + j,
+          url: animeId + "||" + j + "||" + detailSeasonNum,
           thumbnailUrl: thumbMap[String(j)] || "",
           scanlator: "",
         });
@@ -306,50 +357,8 @@ class DefaultExtension extends MProvider {
   }
 
   // Resolve an anixtv.in embed URL to a real HLS m3u8 by following the iframe chain:
+  // Resolve an anixtv.in embed URL to a real HLS m3u8 by following the iframe chain:
   // anixtv.in page → as-cdn21.top/video/{hash} iframe → /player/index.php?do=getVideo API
-  // Walk the AniList PREQUEL chain to determine the franchise season number.
-  // Season 1 has no prequel (returns 1), Season 2 has one prequel (returns 2), etc.
-  // Caps at 8 hops to bound API calls.
-  // Walk the AniList PREQUEL chain to find the franchise season number.
-  // Increments the counter only when the start year changes between consecutive
-  // entries — this collapses split-cour anime (e.g. S2 Part 1 and Part 2 both
-  // airing in the same year) into a single season, matching how streaming sites
-  // like anixtv.in label their seasons.
-  async getSeasonNumber(animeId) {
-    var seasonNum = 1;
-    var currentId = parseInt(animeId);
-    for (var hop = 0; hop < 8; hop++) {
-      try {
-        var snQ = "query ($id: Int) { Media(id: $id, type: ANIME) { startDate { year } relations { edges { relationType node { id startDate { year } } } } } }";
-        var snRes = await this.client.post(
-          "https://graphql.anilist.co",
-          this.alHeaders,
-          { query: snQ, variables: { id: currentId } }
-        );
-        var snData = JSON.parse(snRes.body || "{}");
-        var curMedia = null;
-        try { curMedia = snData.data.Media; } catch (e) {}
-        if (!curMedia) break;
-
-        var curYear = (curMedia.startDate && curMedia.startDate.year) || 0;
-
-        var edges = [];
-        try { edges = curMedia.relations.edges; } catch (e) {}
-        var prequel = null;
-        for (var i = 0; i < edges.length; i++) {
-          if (edges[i].relationType === "PREQUEL") { prequel = edges[i].node; break; }
-        }
-        if (!prequel) break;
-
-        var preYear = (prequel.startDate && prequel.startDate.year) || 0;
-        // Different year = new season. Same year = split-cour, same season number.
-        if (curYear !== preYear || curYear === 0) seasonNum++;
-        currentId = prequel.id;
-      } catch (e) { break; }
-    }
-    return seasonNum;
-  }
-
   async resolveAnixTvEmbed(embedUrl, lang) {
     // Step 1: GET the anixtv.in wrapper page — it just has one <iframe> pointing to as-cdn21.top
     var anixRes = await this.client.get(embedUrl, {
@@ -406,6 +415,8 @@ class DefaultExtension extends MProvider {
     var parts = url.split("||");
     var animeId = parts[0];
     var epNum = parts[1] || "1";
+    // Season number embedded by getDetail — no extra AniList call needed here
+    var seasonNum = parts[2] ? parseInt(parts[2]) : 1;
 
     // Read multi-select language preference — defaults to both sub and dub.
     var langs = ["sub", "dub"];
@@ -426,11 +437,6 @@ class DefaultExtension extends MProvider {
       "Origin": this.source.baseUrl,
     };
     var streamHeaders = { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" };
-
-    // Determine franchise season number once — used to patch anixtv embed URLs
-    // whose season param defaults to 1 regardless of actual season.
-    var seasonNum = 1;
-    try { seasonNum = await this.getSeasonNumber(animeId); } catch (e) {}
 
     var streams = [];
 
@@ -508,10 +514,6 @@ class DefaultExtension extends MProvider {
                   }
                 }
                 var resolved = await this.resolveAnixTvEmbed(patchedUrl, lang);
-                // If the patched season URL yields nothing, fall back to the original
-                if (!resolved && patchedUrl !== esUrl) {
-                  resolved = await this.resolveAnixTvEmbed(esUrl, lang);
-                }
                 if (resolved) streams.push(resolved);
               } catch (ex) {}
             }
