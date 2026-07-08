@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.23.0",
+    "version": "4.24.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -228,9 +228,6 @@ class DefaultExtension extends MProvider {
     for (var ki = 0; ki < keyHex.length; ki += 2) {
       obfKey.push(parseInt(keyHex.slice(ki, ki + 2), 16));
     }
-    // Warm up Cloudflare clearance on the first host before pipe attempts.
-    // hasCloudflare:true should handle this, but desktop may need an explicit hint.
-    try { await this.client.get("https://www.miruro.to/", { "User-Agent": this.ua, "Accept": "text/html" }); } catch(e) {}
     var lastErr = "no response";
     for (var hi = 0; hi < hosts.length; hi++) {
       try {
