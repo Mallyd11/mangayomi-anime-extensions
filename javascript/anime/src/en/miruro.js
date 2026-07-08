@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.22.0",
+    "version": "4.23.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -228,6 +228,9 @@ class DefaultExtension extends MProvider {
     for (var ki = 0; ki < keyHex.length; ki += 2) {
       obfKey.push(parseInt(keyHex.slice(ki, ki + 2), 16));
     }
+    // Warm up Cloudflare clearance on the first host before pipe attempts.
+    // hasCloudflare:true should handle this, but desktop may need an explicit hint.
+    try { await this.client.get("https://www.miruro.to/", { "User-Agent": this.ua, "Accept": "text/html" }); } catch(e) {}
     var lastErr = "no response";
     for (var hi = 0; hi < hosts.length; hi++) {
       try {
@@ -238,6 +241,7 @@ class DefaultExtension extends MProvider {
           "Accept": "*/*",
         });
         if (!res || !res.body) { lastErr = "empty body"; continue; }
+        if (res.statusCode && res.statusCode !== 200) { lastErr = "HTTP " + res.statusCode; continue; }
         var body = typeof res.body === "string" ? res.body : String(res.body);
         body = body.replace(/[^A-Za-z0-9+\/=\-_]/g, "");
         if (body.length < 4) { lastErr = "body too short"; continue; }
@@ -343,7 +347,7 @@ class DefaultExtension extends MProvider {
     }
     if (!id) throw new Error("bad id");
 
-    var q = "{Media(id:" + id + ",type:ANIME){id idMal title{romaji english native}coverImage{large extraLarge}description status episodes nextAiringEpisode{episode}genres}}";
+    var q = "{Media(id:" + id + ",type:ANIME){id idMal title{romaji english native}coverImage{large extraLarge}description status episodes nextAiringEpisode{episode}airingSchedule(notYetAired:false,sort:[TIME_DESC],perPage:1){nodes{episode}}genres}}";
     var d = await this.gql(q, {});
     var m = (d && d.Media) ? d.Media : null;
     var sm = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
@@ -405,12 +409,16 @@ class DefaultExtension extends MProvider {
     if (!epPipeOk) {
       var epCount = 0;
       if (m) {
-        if (m.status === "RELEASING" && m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
-          epCount = m.nextAiringEpisode.episode - 1;
-        } else if (m.episodes) {
-          epCount = m.episodes;
+        // airingSchedule(notYetAired:false, sort:TIME_DESC, perPage:1) → latest aired episode number
+        var airedNodes = m.airingSchedule && m.airingSchedule.nodes;
+        if (Array.isArray(airedNodes) && airedNodes.length > 0 && airedNodes[0].episode > 0) {
+          epCount = airedNodes[0].episode;
         } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
           epCount = m.nextAiringEpisode.episode - 1;
+        } else if (m.status === "FINISHED" || m.status === "CANCELLED") {
+          epCount = m.episodes || 0;
+        } else if (m.episodes) {
+          epCount = m.episodes;
         }
       }
       for (var ni = 1; ni <= epCount; ni++) {
