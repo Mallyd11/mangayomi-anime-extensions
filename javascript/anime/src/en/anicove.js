@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.3",
+    "version": "0.3.4",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -46,16 +46,6 @@ class DefaultExtension extends MProvider {
 
   get supportsLatest() {
     return true;
-  }
-
-  // Shared AniList headers — a browser User-Agent is required; AniList
-  // returns 403 for bare library requests without one.
-  get alHeaders() {
-    return {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "User-Agent": this.ua,
-    };
   }
 
   // Extract home-row-card entries from a named section of the /home page HTML.
@@ -163,16 +153,6 @@ class DefaultExtension extends MProvider {
     }
   }
 
-  statusCode(s) {
-    if (!s) return 5;
-    switch (s.toUpperCase()) {
-      case "FINISHED": return 1;
-      case "RELEASING": return 0;
-      case "NOT_YET_RELEASED": return 4;
-      default: return 5;
-    }
-  }
-
   extractAnimeId(url) {
     var m = url.match(/\/(?:anime|watch)\/(\d+)/);
     return m ? m[1] : "";
@@ -182,100 +162,6 @@ class DefaultExtension extends MProvider {
     var animeId = this.extractAnimeId(url);
     if (!animeId) throw new Error("Cannot parse anime ID from: " + url);
 
-    var alQuery = "query ($id: Int) { Media(id: $id, type: ANIME) {"
-      + " id title { romaji english native }"
-      + " coverImage { extraLarge large }"
-      + " description(asHtml: false)"
-      + " genres status episodes"
-      + " nextAiringEpisode { episode }"
-      + " startDate { year }"
-      + " relations { edges { relationType node { id startDate { year } } } }"
-      + " } }";
-
-    var media = null;
-    try {
-      var alRes = await this.client.post(
-        "https://graphql.anilist.co",
-        this.alHeaders,
-        { query: alQuery, variables: { id: parseInt(animeId) } }
-      );
-      var alJson = JSON.parse(alRes.body);
-      if (alJson && alJson.data && alJson.data.Media) {
-        media = alJson.data.Media;
-      }
-    } catch (e) {}
-
-    // Walk the PREQUEL chain to compute the franchise season number.
-    // Only increment when the start year changes — split-cour parts that aired
-    // in the same year are treated as one season (matching streaming site numbering).
-    var detailSeasonNum = 1;
-    if (media) {
-      var snCurYear = (media.startDate && media.startDate.year) || 0;
-      var snNextId = null;
-      // First hop: prequel data already available from the initial query
-      var snEdges = [];
-      try { snEdges = media.relations.edges; } catch (e) {}
-      for (var se = 0; se < snEdges.length; se++) {
-        if (snEdges[se].relationType === "PREQUEL") {
-          var snPreq = snEdges[se].node;
-          var snPreqYear = (snPreq.startDate && snPreq.startDate.year) || 0;
-          if (snCurYear !== snPreqYear && snCurYear !== 0 && snPreqYear !== 0) detailSeasonNum++;
-          snCurYear = snPreqYear;
-          snNextId = snPreq.id;
-          break;
-        }
-      }
-      // Continue following chain (each hop fetches that node's own prequel)
-      for (var sh = 0; sh < 7 && snNextId; sh++) {
-        try {
-          var shQ = "query ($id: Int) { Media(id: $id, type: ANIME) { startDate { year } relations { edges { relationType node { id startDate { year } } } } } }";
-          var shRes = await this.client.post(
-            "https://graphql.anilist.co",
-            this.alHeaders,
-            { query: shQ, variables: { id: snNextId } }
-          );
-          var shJson = JSON.parse(shRes.body || "{}");
-          var shMedia = null;
-          try { shMedia = shJson.data.Media; } catch (e) {}
-          if (!shMedia) { snNextId = null; break; }
-          var shCurYear = (shMedia.startDate && shMedia.startDate.year) || 0;
-          var shEdges = [];
-          try { shEdges = shMedia.relations.edges; } catch (e) {}
-          var shPreq = null;
-          for (var sj = 0; sj < shEdges.length; sj++) {
-            if (shEdges[sj].relationType === "PREQUEL") { shPreq = shEdges[sj].node; break; }
-          }
-          if (!shPreq) { snNextId = null; break; }
-          var shPreqYear = (shPreq.startDate && shPreq.startDate.year) || 0;
-          if (shCurYear !== shPreqYear && shCurYear !== 0 && shPreqYear !== 0) detailSeasonNum++;
-          snCurYear = shPreqYear;
-          snNextId = shPreq.id;
-        } catch (e) { snNextId = null; break; }
-      }
-    }
-
-    // Fetch episode thumbnails from ani.zip only if the user has enabled them.
-    var thumbMap = {};
-    var thumbsEnabled = false;
-    try { thumbsEnabled = this.getPreference("anicove_episode_thumbnails"); } catch (e) {}
-    if (thumbsEnabled) {
-      try {
-        var zipRes = await this.client.get(
-          "https://api.ani.zip/mappings?anilist_id=" + animeId,
-          { "User-Agent": this.ua }
-        );
-        var zipJson = JSON.parse(zipRes.body);
-        if (zipJson && zipJson.episodes) {
-          var zipKeys = Object.keys(zipJson.episodes);
-          for (var ki = 0; ki < zipKeys.length; ki++) {
-            var zk = zipKeys[ki];
-            var ze = zipJson.episodes[zk];
-            if (ze && ze.image) thumbMap[zk] = ze.image;
-          }
-        }
-      } catch (e) {}
-    }
-
     var watchRes = await this.client.get(
       this.source.baseUrl + "/watch/" + animeId + "/ep-1",
       this.headers
@@ -283,74 +169,37 @@ class DefaultExtension extends MProvider {
     var html = (watchRes && watchRes.body) || "";
     var doc = new Document(html);
 
-    // Extract the poster URL from WATCH_CONFIG — used as fallback for the
-    // anime cover image if AniList didn't respond. Do NOT use og:image from
-    // the watch page because it points to the episode screenshot, not the poster.
+    // Scrape name and poster from the WATCH_CONFIG JS block embedded in the page.
+    var animeNameM = html.match(/animeName:\s*"([^"]+)"/);
+    var name = animeNameM ? animeNameM[1] : "";
     var posterM = html.match(/poster:\s*"([^"]+)"/);
-    var watchPoster = posterM ? posterM[1] : "";
+    var imageUrl = posterM ? posterM[1] : "";
 
     var epEls = doc.select("a.episode-sidebar-item");
     var chapters = [];
-
     for (var i = 0; i < epEls.length; i++) {
       var ep = epEls[i];
       var epNum = ep.attr("data-number") || String(i + 1);
-
       var titleEl = ep.selectFirst(".episode-title");
       var rawTitle = titleEl ? (titleEl.text || "").trim() : "";
       var epTitle = rawTitle.replace(/\s*Filler\s*$/i, "").trim();
-
       var label = "Episode " + epNum;
       if (epTitle && epTitle !== epNum) label += ": " + epTitle;
-
       chapters.push({
         name: label,
-        url: animeId + "||" + epNum + "||" + detailSeasonNum,
-        thumbnailUrl: thumbMap[epNum] || "",
+        url: animeId + "||" + epNum,
+        thumbnailUrl: "",
         scanlator: (ep.attr("class") || "").indexOf("is-filler") >= 0 ? "Filler" : "",
       });
     }
-
-    if (chapters.length === 0 && media) {
-      var total = media.episodes || 0;
-      if (media.nextAiringEpisode && media.nextAiringEpisode.episode) {
-        total = media.nextAiringEpisode.episode - 1;
-      }
-      for (var j = 1; j <= total; j++) {
-        chapters.push({
-          name: "Episode " + j,
-          url: animeId + "||" + j + "||" + detailSeasonNum,
-          thumbnailUrl: thumbMap[String(j)] || "",
-          scanlator: "",
-        });
-      }
-    }
-
     chapters.reverse();
-
-    var name = media ? (media.title.english || media.title.romaji || "") : "";
-    var imageUrl = media ? ((media.coverImage && (media.coverImage.extraLarge || media.coverImage.large)) || "") : "";
-    var description = media ? (media.description || "") : "";
-    var genre = media ? (media.genres || []) : [];
-    var status = media ? this.statusCode(media.status) : 5;
-
-    // If AniList failed, fall back to data extracted from the watch page.
-    // Use WATCH_CONFIG animeName/poster — NOT og:image, which on the watch page
-    // is the episode screenshot rather than the anime poster.
-    if (!name) {
-      var animeNameM = html.match(/animeName:\s*"([^"]+)"/);
-      if (animeNameM) name = animeNameM[1];
-    }
-    if (!imageUrl) {
-      imageUrl = watchPoster;
-    }
 
     return {
       name: name,
       imageUrl: imageUrl,
-      description: description,
-      genre: genre,
-      status: status,
+      description: "",
+      genre: [],
+      status: 5,
       link: this.source.baseUrl + "/anime/" + animeId,
       chapters: chapters,
     };
@@ -415,8 +264,6 @@ class DefaultExtension extends MProvider {
     var parts = url.split("||");
     var animeId = parts[0];
     var epNum = parts[1] || "1";
-    // Season number embedded by getDetail — no extra AniList call needed here
-    var seasonNum = parts[2] ? parseInt(parts[2]) : 1;
 
     // Read multi-select language preference — defaults to both sub and dub.
     var langs = ["sub", "dub"];
@@ -503,17 +350,7 @@ class DefaultExtension extends MProvider {
             if (!esUrl) continue;
             if (esUrl.indexOf("anixtv.in") >= 0) {
               try {
-                // Patch season= param so the correct franchise season plays
-                var patchedUrl = esUrl;
-                if (seasonNum > 1) {
-                  var si = patchedUrl.indexOf("season=");
-                  if (si >= 0) {
-                    var se = patchedUrl.indexOf("&", si);
-                    if (se < 0) se = patchedUrl.length;
-                    patchedUrl = patchedUrl.slice(0, si + 7) + seasonNum + patchedUrl.slice(se);
-                  }
-                }
-                var resolved = await this.resolveAnixTvEmbed(patchedUrl, lang);
+                var resolved = await this.resolveAnixTvEmbed(esUrl, lang);
                 if (resolved) streams.push(resolved);
               } catch (ex) {}
             }
@@ -539,14 +376,6 @@ class DefaultExtension extends MProvider {
           values: ["sub", "dub"],
           entries: ["Sub (subtitled)", "Dub (dubbed)"],
           entryValues: ["sub", "dub"],
-        },
-      },
-      {
-        key: "anicove_episode_thumbnails",
-        switchPreferenceCompat: {
-          title: "Episode thumbnails",
-          summary: "Show episode screenshots in the episode list. Adds an extra request per anime page load.",
-          value: false,
         },
       },
     ];
