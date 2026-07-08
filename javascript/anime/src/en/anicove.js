@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.7",
+    "version": "0.2.8",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -351,12 +351,19 @@ class DefaultExtension extends MProvider {
           var data = JSON.parse(res.body || "{}");
           if (!data.available) continue;
 
-          // Top-level video_link — proxied m3u8 (anixtv puts the stream here, not in hls_sources)
-          var topLink = (typeof data.video_link === "string") ? data.video_link : "";
-          if (topLink) {
-            streams.push({ url: topLink, originalUrl: topLink,
-              quality: provider + " [" + lang.toUpperCase() + "]",
-              headers: streamHeaders, subtitles: [] });
+          var srcType = data.source_type || "";
+          var isEmbed = (srcType === "embed");
+
+          // video_link — only usable when source_type is hls or mp4.
+          // When source_type is "embed", video_link is an HTML proxy page that
+          // causes the player to buffer forever — skip it in that case.
+          if (!isEmbed) {
+            var topLink = (typeof data.video_link === "string") ? data.video_link : "";
+            if (topLink) {
+              streams.push({ url: topLink, originalUrl: topLink,
+                quality: provider + " [" + lang.toUpperCase() + "]",
+                headers: streamHeaders, subtitles: [] });
+            }
           }
 
           // hls_sources — each entry is a string URL or {file, url, quality}
@@ -379,15 +386,7 @@ class DefaultExtension extends MProvider {
             streams.push({ url: msUrl, originalUrl: msUrl, quality: msQ, headers: streamHeaders, subtitles: [] });
           }
 
-          // embed_sources — iframe/player URLs
-          var embedSources = data.embed_sources || [];
-          for (var ei = 0; ei < embedSources.length; ei++) {
-            var es = embedSources[ei];
-            var esUrl = es.url || "";
-            if (!esUrl) continue;
-            var esQ = (es.name || provider) + " Embed [" + lang.toUpperCase() + "]";
-            streams.push({ url: esUrl, originalUrl: esUrl, quality: esQ, headers: { "User-Agent": this.ua }, subtitles: [] });
-          }
+          // embed_sources — require a real browser to play, skip for now.
         } catch (ex) {}
       }
     }
