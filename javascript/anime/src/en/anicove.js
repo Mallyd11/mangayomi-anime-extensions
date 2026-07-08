@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.0",
+    "version": "0.3.1",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -310,30 +310,42 @@ class DefaultExtension extends MProvider {
   // Walk the AniList PREQUEL chain to determine the franchise season number.
   // Season 1 has no prequel (returns 1), Season 2 has one prequel (returns 2), etc.
   // Caps at 8 hops to bound API calls.
+  // Extract the season number from an AniList title in one API call.
+  // Matches "Season 3", "3rd Season" patterns from the English/romaji title.
+  // Falls back to 1 if no season marker is found (Season 1 anime).
   async getSeasonNumber(animeId) {
-    var seasonNum = 1;
-    var currentId = parseInt(animeId);
-    for (var hop = 0; hop < 8; hop++) {
+    try {
+      var snQ = "query ($id: Int) { Media(id: $id, type: ANIME) { title { english romaji } } }";
+      var snRes = await this.client.post(
+        "https://graphql.anilist.co",
+        this.alHeaders,
+        { query: snQ, variables: { id: parseInt(animeId) } }
+      );
+      var snData = JSON.parse(snRes.body || "{}");
+      var snTitle = "";
       try {
-        var q = "query ($id: Int) { Media(id: $id, type: ANIME) { relations { edges { relationType node { id } } } } }";
-        var res = await this.client.post(
-          "https://graphql.anilist.co",
-          this.alHeaders,
-          { query: q, variables: { id: currentId } }
-        );
-        var rData = JSON.parse(res.body || "{}");
-        var edges = [];
-        try { edges = rData.data.Media.relations.edges; } catch (e) {}
-        var prequel = null;
-        for (var i = 0; i < edges.length; i++) {
-          if (edges[i].relationType === "PREQUEL") { prequel = edges[i].node; break; }
+        var snT = snData.data.Media.title;
+        snTitle = (snT.english || snT.romaji || "").toLowerCase();
+      } catch (e) {}
+
+      // "Season N" — most common pattern
+      var snIdx = snTitle.indexOf("season ");
+      if (snIdx >= 0) {
+        var snRest = snTitle.slice(snIdx + 7);
+        var snNum = "";
+        for (var snI = 0; snI < snRest.length; snI++) {
+          if (snRest[snI] >= "0" && snRest[snI] <= "9") { snNum += snRest[snI]; } else { break; }
         }
-        if (!prequel) break;
-        currentId = prequel.id;
-        seasonNum++;
-      } catch (e) { break; }
-    }
-    return seasonNum;
+        if (snNum) return parseInt(snNum);
+      }
+
+      // "Nth Season" — e.g. "2nd Season", "3rd Season"
+      var ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th"];
+      for (var oi = 0; oi < ordinals.length; oi++) {
+        if (snTitle.indexOf(ordinals[oi] + " season") >= 0) return oi + 1;
+      }
+    } catch (e) {}
+    return 1;
   }
 
   async resolveAnixTvEmbed(embedUrl, lang) {
@@ -494,6 +506,10 @@ class DefaultExtension extends MProvider {
                   }
                 }
                 var resolved = await this.resolveAnixTvEmbed(patchedUrl, lang);
+                // If the patched season URL yields nothing, fall back to the original
+                if (!resolved && patchedUrl !== esUrl) {
+                  resolved = await this.resolveAnixTvEmbed(esUrl, lang);
+                }
                 if (resolved) streams.push(resolved);
               } catch (ex) {}
             }
