@@ -25,18 +25,18 @@ This repository contains the available javascript extension catalogues for the M
 | AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/06/15 |
 | AnimeParadise | 0.3.3 | No | Sub Only | 2026/06/15 |
 | Animetsu | 1.5.0 | No | Sub+Dub | 2026/07/07 |
-| HiAnime | 0.3.1 | Yes | Sub+Dub | 2026/07/08 |
+| HiAnime | 0.3.6 | Yes | Sub+Dub | 2026/07/08 |
 | JustAnime | 0.1.9 | Yes | Sub+Dub | 2026/07/08 |
-| Miruro | 4.25.0 | Yes | Sub+Dub | 2026/07/08 |
+| Miruro | 4.26.0 | Yes | Sub+Dub | 2026/07/08 |
 | MyroniX | 0.2.0 | Yes | Sub+Dub | 2026/07/07 |
 
 ## Novel
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| NovelFire | 0.0.1 | en | 2026/05/21 |
-| Novelbuddy | 0.0.9 | en | 2026/05/21 |
 | bookReadFree | 0.0.1 | en | 2026/05/21 |
+| Novelbuddy | 0.0.9 | en | 2026/05/21 |
+| NovelFire | 0.0.1 | en | 2026/05/21 |
 
 </details>
 
