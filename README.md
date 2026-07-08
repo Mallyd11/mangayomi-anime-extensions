@@ -27,7 +27,7 @@ This repository contains the available javascript extension catalogues for the M
 | Animetsu | 1.5.0 | No | Sub+Dub | 2026/07/07 |
 | HiAnime | 0.3.1 | Yes | Sub+Dub | 2026/07/08 |
 | JustAnime | 0.1.9 | Yes | Sub+Dub | 2026/07/08 |
-| Miruro | 4.26.0 | Yes | Sub+Dub | 2026/07/08 |
+| Miruro | 5.0.0 | Yes | Sub+Dub | 2026/07/08 |
 | MyroniX | 0.2.0 | Yes | Sub+Dub | 2026/07/07 |
 
 ## Novel
