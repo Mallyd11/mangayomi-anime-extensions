@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.21.0",
+    "version": "4.22.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -334,8 +334,6 @@ class DefaultExtension extends MProvider {
   }
 
   // ── Detail ────────────────────────────────────────────────────────────────
-  // Episode list is built from AniList episode count — no pipe call here.
-  // Provider-specific IDs are fetched in getVideoList when the user plays an episode.
 
   async getDetail(url) {
     var id = parseInt(url, 10);
@@ -351,24 +349,77 @@ class DefaultExtension extends MProvider {
     var sm = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
     var status = (m && sm[m.status] !== undefined) ? sm[m.status] : 5;
 
-    var epCount = 0;
-    if (m) {
-      if (m.status === "RELEASING" && m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
-        epCount = m.nextAiringEpisode.episode - 1;
-      } else if (m.episodes) {
-        epCount = m.episodes;
-      } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
-        epCount = m.nextAiringEpisode.episode - 1;
-      }
-    }
-
+    // Build episode list from miruro's episodes pipe — accurate count + pre-computed IDs.
+    // Falls back to AniList count (with nextAiringEpisode correction) if pipe fails/times out.
     var chapters = [];
-    for (var ni = 1; ni <= epCount; ni++) {
-      chapters.push({
-        name: "Episode " + ni,
-        url: JSON.stringify({ animeId: id, num: ni, malId: (m && m.idMal) ? m.idMal : 0 }),
-        isFiller: false,
-      });
+    var epPipeOk = false;
+    try {
+      var epData = await this.pipe("episodes", { anilistId: String(id) });
+      var epProviders = epData && epData.providers;
+      if (epProviders) {
+        var provKeys = ["ally", "bee", "bonk", "kiwi", "hop"];
+        // Pick the provider with the most sub episodes as the episode list source
+        var primarySub = [];
+        for (var pi = 0; pi < provKeys.length; pi++) {
+          var pk = provKeys[pi];
+          var pkSub = epProviders[pk] && epProviders[pk].episodes && epProviders[pk].episodes.sub;
+          if (Array.isArray(pkSub) && pkSub.length > primarySub.length) primarySub = pkSub;
+        }
+        for (var ei = 0; ei < primarySub.length; ei++) {
+          var ep = primarySub[ei];
+          var epNum = parseFloat(ep.number || 0);
+          if (!epNum) continue;
+          // Collect pre-computed episode IDs from every provider for sub + dub
+          var epIds = {};
+          for (var pi = 0; pi < provKeys.length; pi++) {
+            var pk = provKeys[pi];
+            var pkEps = epProviders[pk] && epProviders[pk].episodes;
+            if (!pkEps) continue;
+            var pkSub2 = pkEps.sub || [], pkDub = pkEps.dub || [];
+            for (var si = 0; si < pkSub2.length; si++) {
+              if (pkSub2[si].number == epNum && pkSub2[si].id) {
+                if (!epIds[pk]) epIds[pk] = {};
+                epIds[pk].sub = pkSub2[si].id;
+                break;
+              }
+            }
+            for (var di = 0; di < pkDub.length; di++) {
+              if (pkDub[di].number == epNum && pkDub[di].id) {
+                if (!epIds[pk]) epIds[pk] = {};
+                epIds[pk].dub = pkDub[di].id;
+                break;
+              }
+            }
+          }
+          chapters.push({
+            name: ep.title ? ("Ep " + epNum + ": " + ep.title) : ("Episode " + epNum),
+            url: JSON.stringify({ animeId: id, num: epNum, epIds: epIds }),
+            isFiller: ep.filler || false,
+          });
+        }
+        epPipeOk = chapters.length > 0;
+      }
+    } catch(e) {}
+
+    // Fallback to AniList episode count when episodes pipe failed or timed out
+    if (!epPipeOk) {
+      var epCount = 0;
+      if (m) {
+        if (m.status === "RELEASING" && m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
+          epCount = m.nextAiringEpisode.episode - 1;
+        } else if (m.episodes) {
+          epCount = m.episodes;
+        } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
+          epCount = m.nextAiringEpisode.episode - 1;
+        }
+      }
+      for (var ni = 1; ni <= epCount; ni++) {
+        chapters.push({
+          name: "Episode " + ni,
+          url: JSON.stringify({ animeId: id, num: ni }),
+          isFiller: false,
+        });
+      }
     }
 
     if (chapters.length === 0) {
@@ -396,39 +447,47 @@ class DefaultExtension extends MProvider {
 
     var id = info.animeId;
     var num = info.num;
+    var epIds = info.epIds || {};
 
     var provP = this.pref("miruro_providers") || [];
     if (!provP || provP.length === 0) provP = ["ally"];
     var audioP = this.pref("miruro_audio") || [];
     if (!audioP || audioP.length === 0) audioP = ["sub"];
 
-    // Use miruro info pipe to look up provider IDs — avoids dead/Cloudflare-blocked external APIs
-    var allyId = null, mooSlug = null;
-    try {
-      var t = Math.floor(Date.now() / (600 * 1e3)) * (600 * 1e3);
-      var infoData = await this.pipe("info/" + id, { live: "true", _t: String(t) });
-      var providers = infoData && infoData.mappings && infoData.mappings.providers;
-      if (providers) {
-        if (providers.ally && providers.ally.provider_id && providers.ally.provider_id[0]) {
-          allyId = providers.ally.provider_id[0];
+    // If no pre-computed IDs (fallback path from getDetail), fetch from episodes pipe now
+    if (!epIds || Object.keys(epIds).length === 0) {
+      try {
+        var epData = await this.pipe("episodes", { anilistId: String(id) });
+        var epProviders = epData && epData.providers;
+        if (epProviders) {
+          var provKeys = ["ally", "bee", "bonk", "kiwi", "hop"];
+          for (var pi = 0; pi < provKeys.length; pi++) {
+            var pk = provKeys[pi];
+            var pkEps = epProviders[pk] && epProviders[pk].episodes;
+            if (!pkEps) continue;
+            var pkSub = pkEps.sub || [], pkDub = pkEps.dub || [];
+            for (var si = 0; si < pkSub.length; si++) {
+              if (pkSub[si].number == num && pkSub[si].id) {
+                if (!epIds[pk]) epIds[pk] = {};
+                epIds[pk].sub = pkSub[si].id; break;
+              }
+            }
+            for (var di = 0; di < pkDub.length; di++) {
+              if (pkDub[di].number == num && pkDub[di].id) {
+                if (!epIds[pk]) epIds[pk] = {};
+                epIds[pk].dub = pkDub[di].id; break;
+              }
+            }
+          }
         }
-        if (providers.moo && providers.moo.provider_id && providers.moo.provider_id[0]) {
-          mooSlug = providers.moo.provider_id[0];
-        }
-      }
-    } catch (e) {}
-    var maps = { allyId: allyId, mooSlug: mooSlug };
+      } catch(e) {}
+    }
 
     var combinations = [];
     for (var pi = 0; pi < provP.length; pi++) {
       for (var ai = 0; ai < audioP.length; ai++) {
         var prov = provP[pi], cat = audioP[ai];
-        var epid = null;
-        if (prov === "ally" && maps.allyId) {
-          epid = this.encodeId("allmanga:" + maps.allyId + ":" + num);
-        } else if (prov === "moo" && maps.mooSlug) {
-          epid = this.encodeId("animegg:" + maps.mooSlug + ":" + num);
-        }
+        var epid = epIds[prov] && epIds[prov][cat];
         if (epid) combinations.push({ prov: prov, cat: cat, epid: epid });
       }
     }
@@ -542,8 +601,8 @@ class DefaultExtension extends MProvider {
           title: "Providers",
           summary: "Only selected providers are used. Fewer = faster load.",
           values:      ["ally"],
-          entries:     ["Ally (HLS streaming)", "Moo (HLS streaming)"],
-          entryValues: ["ally", "moo"],
+          entries:     ["Ally", "Bee", "Bonk", "Kiwi", "Hop"],
+          entryValues: ["ally", "bee", "bonk", "kiwi", "hop"],
         },
       },
       {
