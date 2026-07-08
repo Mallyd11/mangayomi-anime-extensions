@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -221,8 +221,8 @@ class DefaultExtension extends MProvider {
     var dubVideos = [];
     var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
 
-    // animepahe/animegg endpoints currently hang — skip them
-    var providers = ["megaplay", "miruro"];
+    // miruro streams are Cloudflare-blocked and its API call hangs on slow networks
+    var providers = ["megaplay"];
 
     for (var pi = 0; pi < providers.length; pi++) {
       var provider = providers[pi];
