@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.24.0",
+    "version": "4.25.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -350,81 +350,29 @@ class DefaultExtension extends MProvider {
     var sm = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
     var status = (m && sm[m.status] !== undefined) ? sm[m.status] : 5;
 
-    // Build episode list from miruro's episodes pipe — accurate count + pre-computed IDs.
-    // Falls back to AniList count (with nextAiringEpisode correction) if pipe fails/times out.
+    // Build episode list from AniList data only — no pipe call here to avoid CF-induced isolate timeout.
+    // Episode IDs are fetched on-demand in getVideoList() when the user taps play.
     var chapters = [];
-    var epPipeOk = false;
-    try {
-      var epData = await this.pipe("episodes", { anilistId: String(id) });
-      var epProviders = epData && epData.providers;
-      if (epProviders) {
-        var provKeys = ["ally", "bee", "bonk", "kiwi", "hop"];
-        // Pick the provider with the most sub episodes as the episode list source
-        var primarySub = [];
-        for (var pi = 0; pi < provKeys.length; pi++) {
-          var pk = provKeys[pi];
-          var pkSub = epProviders[pk] && epProviders[pk].episodes && epProviders[pk].episodes.sub;
-          if (Array.isArray(pkSub) && pkSub.length > primarySub.length) primarySub = pkSub;
-        }
-        for (var ei = 0; ei < primarySub.length; ei++) {
-          var ep = primarySub[ei];
-          var epNum = parseFloat(ep.number || 0);
-          if (!epNum) continue;
-          // Collect pre-computed episode IDs from every provider for sub + dub
-          var epIds = {};
-          for (var pi = 0; pi < provKeys.length; pi++) {
-            var pk = provKeys[pi];
-            var pkEps = epProviders[pk] && epProviders[pk].episodes;
-            if (!pkEps) continue;
-            var pkSub2 = pkEps.sub || [], pkDub = pkEps.dub || [];
-            for (var si = 0; si < pkSub2.length; si++) {
-              if (pkSub2[si].number == epNum && pkSub2[si].id) {
-                if (!epIds[pk]) epIds[pk] = {};
-                epIds[pk].sub = pkSub2[si].id;
-                break;
-              }
-            }
-            for (var di = 0; di < pkDub.length; di++) {
-              if (pkDub[di].number == epNum && pkDub[di].id) {
-                if (!epIds[pk]) epIds[pk] = {};
-                epIds[pk].dub = pkDub[di].id;
-                break;
-              }
-            }
-          }
-          chapters.push({
-            name: ep.title ? ("Ep " + epNum + ": " + ep.title) : ("Episode " + epNum),
-            url: JSON.stringify({ animeId: id, num: epNum, epIds: epIds }),
-            isFiller: ep.filler || false,
-          });
-        }
-        epPipeOk = chapters.length > 0;
+    var epCount = 0;
+    if (m) {
+      // airingSchedule(notYetAired:false,sort:TIME_DESC,perPage:1) → latest aired episode number
+      var airedNodes = m.airingSchedule && m.airingSchedule.nodes;
+      if (Array.isArray(airedNodes) && airedNodes.length > 0 && airedNodes[0].episode > 0) {
+        epCount = airedNodes[0].episode;
+      } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
+        epCount = m.nextAiringEpisode.episode - 1;
+      } else if (m.status === "FINISHED" || m.status === "CANCELLED") {
+        epCount = m.episodes || 0;
+      } else if (m.episodes) {
+        epCount = m.episodes;
       }
-    } catch(e) {}
-
-    // Fallback to AniList episode count when episodes pipe failed or timed out
-    if (!epPipeOk) {
-      var epCount = 0;
-      if (m) {
-        // airingSchedule(notYetAired:false, sort:TIME_DESC, perPage:1) → latest aired episode number
-        var airedNodes = m.airingSchedule && m.airingSchedule.nodes;
-        if (Array.isArray(airedNodes) && airedNodes.length > 0 && airedNodes[0].episode > 0) {
-          epCount = airedNodes[0].episode;
-        } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
-          epCount = m.nextAiringEpisode.episode - 1;
-        } else if (m.status === "FINISHED" || m.status === "CANCELLED") {
-          epCount = m.episodes || 0;
-        } else if (m.episodes) {
-          epCount = m.episodes;
-        }
-      }
-      for (var ni = 1; ni <= epCount; ni++) {
-        chapters.push({
-          name: "Episode " + ni,
-          url: JSON.stringify({ animeId: id, num: ni }),
-          isFiller: false,
-        });
-      }
+    }
+    for (var ni = 1; ni <= epCount; ni++) {
+      chapters.push({
+        name: "Episode " + ni,
+        url: JSON.stringify({ animeId: id, num: ni }),
+        isFiller: false,
+      });
     }
 
     if (chapters.length === 0) {
