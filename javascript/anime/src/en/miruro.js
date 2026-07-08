@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.26.0",
+    "version": "5.0.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -38,23 +38,23 @@ class DefaultExtension extends MProvider {
     return new SharedPreferences().get(key);
   }
 
-  // ── Base64url ─────────────────────────────────────────────────────────────
+  // ── Base64url ──────────────────────────────────────────────────────────────
 
-  b64dec(str) {
-    str = str.replace(/-/g, "+").replace(/_/g, "/");
-    while (str.length % 4 !== 0) str += "=";
+  b64dec(s) {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
     var alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     var lut = {};
     for (var i = 0; i < alpha.length; i++) lut[alpha[i]] = i;
     var out = [];
-    for (var i = 0; i < str.length; i += 4) {
-      var a = lut[str[i]] | 0, b = lut[str[i+1]] | 0;
-      var q2 = str[i+2], q3 = str[i+3];
-      var c = q2 !== "=" ? lut[q2] | 0 : 0;
-      var d = q3 !== "=" ? lut[q3] | 0 : 0;
+    for (var i = 0; i < s.length; i += 4) {
+      var a = lut[s[i]] | 0, b = lut[s[i+1]] | 0;
+      var c2 = s[i+2], c3 = s[i+3];
+      var c = c2 !== "=" ? lut[c2] | 0 : 0;
+      var d = c3 !== "=" ? lut[c3] | 0 : 0;
       out.push((a << 2) | (b >> 4));
-      if (q2 !== "=") out.push(((b & 0xF) << 4) | (c >> 2));
-      if (q3 !== "=") out.push(((c & 3) << 6) | d);
+      if (c2 !== "=") out.push(((b & 0xF) << 4) | (c >> 2));
+      if (c3 !== "=") out.push(((c & 3) << 6) | d);
     }
     return out;
   }
@@ -63,9 +63,7 @@ class DefaultExtension extends MProvider {
     var alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     var out = "";
     for (var i = 0; i < bytes.length; i += 3) {
-      var b0 = bytes[i];
-      var b1 = i+1 < bytes.length ? bytes[i+1] : 0;
-      var b2 = i+2 < bytes.length ? bytes[i+2] : 0;
+      var b0 = bytes[i], b1 = i+1 < bytes.length ? bytes[i+1] : 0, b2 = i+2 < bytes.length ? bytes[i+2] : 0;
       out += alpha[b0 >> 2];
       out += alpha[((b0 & 3) << 4) | (b1 >> 4)];
       out += i+1 < bytes.length ? alpha[((b1 & 0xF) << 2) | (b2 >> 6)] : "=";
@@ -74,7 +72,7 @@ class DefaultExtension extends MProvider {
     return out.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
   }
 
-  // ── UTF-8 ─────────────────────────────────────────────────────────────────
+  // ── UTF-8 ──────────────────────────────────────────────────────────────────
 
   strToBytes(str) {
     var out = [];
@@ -87,459 +85,377 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
-  // Chunked String.fromCharCode.apply to avoid O(n²) string concat in QuickJS
   bytesToStr(bytes) {
     var parts = [], i = 0, CHUNK = 2048;
     while (i < bytes.length) {
-      var chunk = [];
-      var end = i + CHUNK < bytes.length ? i + CHUNK : bytes.length;
+      var chunk = [], end = Math.min(i + CHUNK, bytes.length);
       while (i < end) {
         var b = bytes[i++];
-        if (b < 0x80) {
-          chunk.push(b);
-        } else if ((b & 0xE0) === 0xC0) {
-          chunk.push(((b & 0x1F) << 6) | (bytes[i++] & 0x3F));
-        } else if ((b & 0xF0) === 0xE0) {
-          var b2 = bytes[i++], b3 = bytes[i++];
-          chunk.push(((b & 0xF) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F));
-        } else {
-          var b2 = bytes[i++], b3 = bytes[i++], b4 = bytes[i++];
-          var cp = (((b & 7) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)) - 0x10000;
-          chunk.push(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF));
-        }
+        if (b < 0x80) { chunk.push(b); }
+        else if ((b & 0xE0) === 0xC0) { chunk.push(((b & 0x1F) << 6) | (bytes[i++] & 0x3F)); }
+        else if ((b & 0xF0) === 0xE0) { var b2 = bytes[i++], b3 = bytes[i++]; chunk.push(((b & 0xF) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)); }
+        else { var b2 = bytes[i++], b3 = bytes[i++], b4 = bytes[i++]; var cp = (((b & 7) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)) - 0x10000; chunk.push(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF)); }
       }
       parts.push(String.fromCharCode.apply(null, chunk));
     }
     return parts.join("");
   }
 
-  encodeId(str) {
-    return this.b64enc(this.strToBytes(str));
-  }
+  // ── gzip inflate ──────────────────────────────────────────────────────────
 
-  // ── gzip inflate (RFC 1951/1952) — QuickJS safe ───────────────────────────
-  // maxOut: optional byte limit — stop early (for partial JSON extraction via regex)
-
-  inflate(data, maxOut) {
+  inflate(data) {
     if (data[0] !== 0x1F || data[1] !== 0x8B) throw new Error("not gzip");
     var flg = data[3], pos = 10;
     if (flg & 4)  { var xl = data[pos] | (data[pos+1] << 8); pos += 2 + xl; }
     if (flg & 8)  { while (data[pos++] !== 0) {} }
     if (flg & 16) { while (data[pos++] !== 0) {} }
     if (flg & 2)  { pos += 2; }
-
     var out = [], bp = pos, bb = 0, bl = 0;
-
-    function bit() {
-      if (bl === 0) { bb = data[bp++]; bl = 8; }
-      var v = bb & 1; bb >>>= 1; bl--; return v;
-    }
-    function bits(n) {
-      var v = 0; for (var i = 0; i < n; i++) v |= bit() << i; return v;
-    }
+    function bit() { if (!bl) { bb = data[bp++]; bl = 8; } var v = bb & 1; bb >>>= 1; bl--; return v; }
+    function bits(n) { var v = 0; for (var i = 0; i < n; i++) v |= bit() << i; return v; }
     function tree(lens) {
-      var mx = 0;
-      for (var i = 0; i < lens.length; i++) if (lens[i] > mx) mx = lens[i];
-      if (mx === 0) return { t: {}, m: 0 };
+      var mx = 0; for (var i = 0; i < lens.length; i++) if (lens[i] > mx) mx = lens[i];
+      if (!mx) return { t: {}, m: 0 };
       var bc = []; for (var i = 0; i <= mx; i++) bc.push(0);
       for (var i = 0; i < lens.length; i++) if (lens[i]) bc[lens[i]]++;
       var nc = []; for (var i = 0; i <= mx+1; i++) nc.push(0);
-      var code = 0;
-      for (var b = 1; b <= mx; b++) { code = (code + bc[b-1]) << 1; nc[b] = code; }
+      var code = 0; for (var b = 1; b <= mx; b++) { code = (code + bc[b-1]) << 1; nc[b] = code; }
       var t = {};
-      for (var i = 0; i < lens.length; i++) {
-        var l = lens[i];
-        if (l) { if (!t[l]) t[l] = {}; t[l][nc[l]] = i; nc[l]++; }
-      }
+      for (var i = 0; i < lens.length; i++) { var l = lens[i]; if (l) { if (!t[l]) t[l] = {}; t[l][nc[l]] = i; nc[l]++; } }
       return { t: t, m: mx };
     }
-    function sym(tr) {
-      var code = 0;
-      for (var l = 1; l <= tr.m; l++) {
-        code = (code << 1) | bit();
-        if (tr.t[l] !== undefined && tr.t[l][code] !== undefined) return tr.t[l][code];
-      }
-      throw new Error("bad code");
-    }
+    function sym(tr) { var code = 0; for (var l = 1; l <= tr.m; l++) { code = (code << 1) | bit(); if (tr.t[l] !== undefined && tr.t[l][code] !== undefined) return tr.t[l][code]; } throw new Error("bad sym"); }
     var LB=[3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
     var LE=[0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
     var DB=[1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
     var DE=[0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
-
-    var done = false;
     function block(lt, dt) {
       while (true) {
-        if (maxOut && out.length >= maxOut) { done = true; return; }
         var s = sym(lt);
         if (s < 256) { out.push(s); }
         else if (s === 256) { break; }
-        else {
-          var idx = s - 257, len = LB[idx] + bits(LE[idx]);
-          var ds = sym(dt), dist = DB[ds] + bits(DE[ds]);
-          var st = out.length - dist;
-          for (var k = 0; k < len; k++) out.push(out[st+k]);
-        }
+        else { var idx = s-257, len = LB[idx]+bits(LE[idx]), ds = sym(dt), dist = DB[ds]+bits(DE[ds]), st = out.length-dist; for (var k = 0; k < len; k++) out.push(out[st+k]); }
       }
     }
-
+    var done = false;
     while (!done) {
       var fin = bit(), type = bits(2);
       if (type === 0) {
-        bl = 0;
-        var ln = data[bp] | (data[bp+1] << 8); bp += 4;
-        for (var i = 0; i < ln; i++) {
-          if (maxOut && out.length >= maxOut) { done = true; break; }
-          out.push(data[bp++]);
-        }
+        bl = 0; var ln = data[bp] | (data[bp+1] << 8); bp += 4; for (var i = 0; i < ln; i++) out.push(data[bp++]);
       } else if (type === 1) {
         var ll = []; for (var i=0;i<=143;i++) ll.push(8); for(var i=144;i<=255;i++) ll.push(9); for(var i=256;i<=279;i++) ll.push(7); for(var i=280;i<=287;i++) ll.push(8);
-        var dl = []; for (var i=0;i<30;i++) dl.push(5);
-        block(tree(ll), tree(dl));
+        var dl=[]; for(var i=0;i<30;i++) dl.push(5); block(tree(ll), tree(dl));
       } else if (type === 2) {
-        var hlit = bits(5)+257, hdist = bits(5)+1, hclen = bits(4)+4;
-        var co = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
-        var cl = []; for (var i=0;i<19;i++) cl.push(0);
-        for (var i=0;i<hclen;i++) cl[co[i]] = bits(3);
-        var ct = tree(cl), all = [];
-        while (all.length < hlit+hdist) {
-          var s = sym(ct);
-          if (s < 16) { all.push(s); }
-          else if (s === 16) { var n=bits(2)+3, pv=all.length>0?all[all.length-1]:0; for(var i=0;i<n;i++) all.push(pv); }
-          else if (s === 17) { var n=bits(3)+3; for(var i=0;i<n;i++) all.push(0); }
-          else { var n=bits(7)+11; for(var i=0;i<n;i++) all.push(0); }
-        }
+        var hlit=bits(5)+257, hdist=bits(5)+1, hclen=bits(4)+4;
+        var co=[16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15], cl=[];
+        for(var i=0;i<19;i++) cl.push(0); for(var i=0;i<hclen;i++) cl[co[i]]=bits(3);
+        var ct=tree(cl), all=[];
+        while(all.length < hlit+hdist) { var s=sym(ct); if(s<16){all.push(s);}else if(s===16){var n=bits(2)+3,pv=all.length?all[all.length-1]:0;for(var i=0;i<n;i++)all.push(pv);}else if(s===17){var n=bits(3)+3;for(var i=0;i<n;i++)all.push(0);}else{var n=bits(7)+11;for(var i=0;i<n;i++)all.push(0);} }
         block(tree(all.slice(0,hlit)), tree(all.slice(hlit)));
-      } else { throw new Error("bad block type"); }
+      } else { throw new Error("bad block"); }
       if (fin) done = true;
     }
     return out;
   }
 
-  // ── Miruro pipe ───────────────────────────────────────────────────────────
-  // GET /api/secure/pipe?e={base64url(JSON)} → x-obfuscated:2 → base64url(XOR(key,gzip(JSON)))
-  // Key from PIPE_OBF_KEY in miruro.tv/env2.js — stored as user preference for easy rotation.
+  // ── Miruro pipe ────────────────────────────────────────────────────────────
+  // Protocol v0.2.0: GET /api/secure/pipe?e=base64url(JSON)
+  // Response: base64url(XOR(key, gzip(JSON)))
 
   async pipe(path, query) {
     var req = JSON.stringify({ path: path, method: "GET", query: query, body: null, version: "0.2.0" });
     var e = this.b64enc(this.strToBytes(req));
-    var hosts = ["https://www.miruro.to", "https://www.miruro.tv", "https://www.miruro.bz"];
     var keyHex = this.pref("miruro_obf_key") || "71951034f8fbcf53d89db52ceb3dc22c";
     var obfKey = [];
-    for (var ki = 0; ki < keyHex.length; ki += 2) {
-      obfKey.push(parseInt(keyHex.slice(ki, ki + 2), 16));
-    }
-    var lastErr = "no response";
-    for (var hi = 0; hi < hosts.length; hi++) {
-      try {
-        var url = hosts[hi] + "/api/secure/pipe?e=" + e;
-        var res = await this.client.get(url, {
-          "User-Agent": this.ua,
-          "Referer": "https://www.miruro.to/",
-          "Accept": "*/*",
-        });
-        if (!res || !res.body) { lastErr = "empty body"; continue; }
-        if (res.statusCode && res.statusCode !== 200) { lastErr = "HTTP " + res.statusCode; continue; }
-        var body = typeof res.body === "string" ? res.body : String(res.body);
-        body = body.replace(/[^A-Za-z0-9+\/=\-_]/g, "");
-        if (body.length < 4) { lastErr = "body too short"; continue; }
-        var bytes = this.b64dec(body);
-        for (var xi = 0; xi < bytes.length; xi++) {
-          bytes[xi] = bytes[xi] ^ obfKey[xi % obfKey.length];
-        }
-        var raw = this.inflate(bytes);
-        return JSON.parse(this.bytesToStr(raw));
-      } catch (ex) {
-        lastErr = hosts[hi] + ": " + String(ex);
-      }
-    }
-    throw new Error(lastErr);
+    for (var i = 0; i < keyHex.length; i += 2) obfKey.push(parseInt(keyHex.slice(i, i+2), 16));
+
+    var res = await this.client.get(
+      "https://www.miruro.to/api/secure/pipe?e=" + e,
+      { "User-Agent": this.ua, "Referer": "https://www.miruro.to/", "Accept": "*/*" }
+    );
+    if (!res || !res.body) throw new Error("no response");
+    if (res.statusCode && res.statusCode !== 200) throw new Error("HTTP " + res.statusCode);
+    var body = (typeof res.body === "string" ? res.body : String(res.body)).replace(/[^A-Za-z0-9+\/=\-_]/g, "");
+    if (body.length < 4) throw new Error("bad body");
+    var bytes = this.b64dec(body);
+    for (var i = 0; i < bytes.length; i++) bytes[i] ^= obfKey[i % obfKey.length];
+    return JSON.parse(this.bytesToStr(this.inflate(bytes)));
   }
 
-  // ── AniList ───────────────────────────────────────────────────────────────
+  // ── AniList GraphQL ────────────────────────────────────────────────────────
 
-  async gql(query, vars) {
+  async anilist(query, vars) {
     try {
       var res = await this.client.post(
         "https://graphql.anilist.co",
         { "Content-Type": "application/json", "Accept": "application/json" },
-        { query: query, variables: vars }
+        { query: query, variables: vars || {} }
       );
       if (!res || res.statusCode !== 200) return {};
-      var parsed = JSON.parse(res.body);
-      return (parsed && parsed.data) ? parsed.data : {};
+      var d = JSON.parse(res.body);
+      return (d && d.data) ? d.data : {};
     } catch (e) { return {}; }
   }
 
-  title(t) {
+  preferredTitle(t) {
     if (!t) return "Unknown";
     var lang = this.pref("miruro_lang") || "english";
-    return t[lang] || t.english || t.romaji || "Unknown";
+    return t[lang] || t.english || t.romaji || t.native || "Unknown";
   }
 
-  toList(media) {
-    var out = [];
-    for (var i = 0; i < media.length; i++) {
-      var m = media[i];
-      out.push({ name: this.title(m.title), link: "https://www.miruro.to/info/" + String(m.id), imageUrl: (m.coverImage && m.coverImage.large) || "" });
-    }
-    return out;
+  mediaToItem(m) {
+    return {
+      name: this.preferredTitle(m.title),
+      link: "https://www.miruro.to/info/" + m.id,
+      imageUrl: (m.coverImage && m.coverImage.large) || "",
+    };
   }
 
-  // ── Browse ────────────────────────────────────────────────────────────────
+  // ── Browse ─────────────────────────────────────────────────────────────────
 
   async getPopular(page) {
     try {
       var n = page || 1;
-      var q = "{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[TRENDING_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
-      var d = await this.gql(q, {});
-      var pg = (d && d.Page) ? d.Page : {};
-      return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+      var d = await this.anilist("{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[TRENDING_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}");
+      var pg = d.Page || {};
+      var self = this;
+      return { list: (pg.media || []).map(function(m) { return self.mediaToItem(m); }), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
     } catch (e) { return { list: [], hasNextPage: false }; }
   }
 
   async getLatestUpdates(page) {
     try {
       var n = page || 1;
-      var q = "{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}";
-      var d = await this.gql(q, {});
-      var pg = (d && d.Page) ? d.Page : {};
-      return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+      var d = await this.anilist("{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}");
+      var pg = d.Page || {};
+      var self = this;
+      return { list: (pg.media || []).map(function(m) { return self.mediaToItem(m); }), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
     } catch (e) { return { list: [], hasNextPage: false }; }
   }
 
   async search(query, page, filters) {
-    var conds = ["type:ANIME", "isAdult:false"], args = "$p:Int,$n:Int", vars = { p: page, n: 20 };
-    if (query && query.length > 0) { conds.push("search:$q"); args += ",$q:String"; vars.q = query; }
-    else { conds.push("sort:TRENDING_DESC"); }
-    if (filters && Array.isArray(filters)) {
-      for (var fi = 0; fi < filters.length; fi++) {
-        var f = filters[fi];
-        if (f.type_name === "SelectFilter" && f.state > 0) {
-          var v = f.values[f.state].value;
-          if      (f.name === "Season" && v) { conds.push("season:$season");   args += ",$season:MediaSeason"; vars.season = v; }
-          else if (f.name === "Format" && v) { conds.push("format:$format");   args += ",$format:MediaFormat"; vars.format = v; }
-          else if (f.name === "Status" && v) { conds.push("status:$status");   args += ",$status:MediaStatus"; vars.status = v; }
-          else if (f.name === "Year"   && v) { conds.push("seasonYear:$yr");   args += ",$yr:Int";             vars.yr = parseInt(v); }
-          else if (f.name === "Sort"   && v) { conds.push("sort:[$sort]");     args += ",$sort:[MediaSort]";   vars.sort = [v]; }
-        } else if (f.type_name === "GroupFilter") {
-          var genres = [], gs = f.state || [];
-          for (var gi = 0; gi < gs.length; gi++) { if (gs[gi].state === true) genres.push(gs[gi].value); }
-          if (genres.length > 0) { conds.push("genre_in:$genres"); args += ",$genres:[String]"; vars.genres = genres; }
+    try {
+      var n = page || 1;
+      var conds = ["type:ANIME", "isAdult:false"], args = "$p:Int,$n:Int", vars = { p: n, n: 20 };
+      if (query && query.length) { conds.push("search:$q"); args += ",$q:String"; vars.q = query; }
+      else { conds.push("sort:TRENDING_DESC"); }
+      if (filters && Array.isArray(filters)) {
+        for (var fi = 0; fi < filters.length; fi++) {
+          var f = filters[fi];
+          if (f.type_name === "SelectFilter" && f.state > 0) {
+            var v = f.values[f.state].value;
+            if (f.name === "Season" && v) { conds.push("season:$season"); args += ",$season:MediaSeason"; vars.season = v; }
+            else if (f.name === "Format" && v) { conds.push("format:$format"); args += ",$format:MediaFormat"; vars.format = v; }
+            else if (f.name === "Status" && v) { conds.push("status:$status"); args += ",$status:MediaStatus"; vars.status = v; }
+            else if (f.name === "Year"   && v) { conds.push("seasonYear:$yr"); args += ",$yr:Int"; vars.yr = parseInt(v); }
+            else if (f.name === "Sort"   && v) { conds.push("sort:[$sort]"); args += ",$sort:[MediaSort]"; vars.sort = [v]; }
+          } else if (f.type_name === "GroupFilter") {
+            var genres = [], gs = f.state || [];
+            for (var gi = 0; gi < gs.length; gi++) if (gs[gi].state === true) genres.push(gs[gi].value);
+            if (genres.length) { conds.push("genre_in:$genres"); args += ",$genres:[String]"; vars.genres = genres; }
+          }
         }
       }
-    }
-    var q = "query(" + args + "){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(" + conds.join(",") + "){id title{romaji english}coverImage{large}}}}";
-    var d = await this.gql(q, vars);
-    var pg = d.Page || {};
-    return { list: this.toList(pg.media || []), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+      var q = "query(" + args + "){Page(page:$p,perPage:$n){pageInfo{hasNextPage}media(" + conds.join(",") + "){id title{romaji english}coverImage{large}}}}";
+      var d = await this.anilist(q, vars);
+      var pg = d.Page || {};
+      var self = this;
+      return { list: (pg.media || []).map(function(m) { return self.mediaToItem(m); }), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+    } catch (e) { return { list: [], hasNextPage: false }; }
   }
 
-  // ── Detail ────────────────────────────────────────────────────────────────
+  // ── Detail ─────────────────────────────────────────────────────────────────
 
   async getDetail(url) {
+    // Extract AniList ID from the URL (either bare number or /info/12345)
     var id = parseInt(url, 10);
-    if (!id) {
-      var m2 = url.match(/\/(\d+)/);
-      id = m2 ? parseInt(m2[1], 10) : 0;
-    }
-    if (!id) throw new Error("bad id");
+    if (!id) { var m2 = url.match(/(\d+)/); id = m2 ? parseInt(m2[1], 10) : 0; }
+    if (!id) throw new Error("cannot parse AniList ID from: " + url);
 
-    // Note: sort:[TIME_DESC] is NOT valid on Media.airingSchedule (only on root AiringSchedule query).
-    // Using default ascending order and reading the last node for the latest aired episode number.
-    var q = "{Media(id:" + id + ",type:ANIME){id idMal title{romaji english native}coverImage{large extraLarge}description status episodes nextAiringEpisode{episode}airingSchedule(notYetAired:false,perPage:50){nodes{episode}}genres}}";
-    var d = await this.gql(q, {});
-    var m = (d && d.Media) ? d.Media : null;
-    var sm = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
-    var status = (m && sm[m.status] !== undefined) ? sm[m.status] : 5;
+    var _d = await this.anilist(
+      "{Media(id:" + id + ",type:ANIME){" +
+        "id idMal " +
+        "title{romaji english native} " +
+        "coverImage{large extraLarge} " +
+        "description " +
+        "status " +
+        "episodes " +
+        "nextAiringEpisode{episode} " +
+        "genres" +
+      "}}"
+    );
+    var m = _d.Media || null;
 
-    // Build episode list from AniList data only — no pipe call here to avoid CF-induced isolate timeout.
-    // Episode IDs are fetched on-demand in getVideoList() when the user taps play.
-    var chapters = [];
+    var statusMap = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
+    var status = m ? (statusMap[m.status] !== undefined ? statusMap[m.status] : 5) : 5;
+
+    // Determine aired episode count:
+    //   RELEASING  → nextAiringEpisode.episode - 1  (e.g. ep3 next → 2 have aired)
+    //   FINISHED / CANCELLED → episodes field (the confirmed total)
+    //   anything else → episodes field or 0
     var epCount = 0;
     if (m) {
-      var airedNodes = m.airingSchedule && m.airingSchedule.nodes;
-      if (Array.isArray(airedNodes) && airedNodes.length > 0) {
-        // Last node in ascending list = latest aired episode
-        var lastAired = airedNodes[airedNodes.length - 1].episode;
-        if (airedNodes.length < 50) {
-          epCount = lastAired;
-        } else {
-          // perPage limit hit — use nextAiringEpisode or total as fallback
-          epCount = (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) ? m.nextAiringEpisode.episode - 1 : (m.episodes || lastAired);
+      if (m.status === "RELEASING") {
+        if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
+          epCount = m.nextAiringEpisode.episode - 1;
+        } else if (m.episodes) {
+          epCount = m.episodes;
         }
-      } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
-        epCount = m.nextAiringEpisode.episode - 1;
-      } else if (m.status === "FINISHED" || m.status === "CANCELLED") {
+      } else {
         epCount = m.episodes || 0;
-      } else if (m.episodes) {
-        epCount = m.episodes;
       }
     }
-    for (var ni = 1; ni <= epCount; ni++) {
+
+    var chapters = [];
+    for (var i = 1; i <= epCount; i++) {
       chapters.push({
-        name: "Episode " + ni,
-        url: JSON.stringify({ animeId: id, num: ni }),
+        name: "Episode " + i,
+        url: JSON.stringify({ animeId: id, num: i }),
         isFiller: false,
       });
     }
-
-    if (chapters.length === 0) {
-      chapters.push({ name: "No episodes found", url: "n/a", isFiller: false });
+    if (!chapters.length) {
+      chapters.push({ name: "No episodes available", url: "n/a", isFiller: false });
     }
-
     chapters.reverse();
+
     return {
-      name:        m ? this.title(m.title) : "Anime " + id,
-      imageUrl:    (m && m.coverImage && (m.coverImage.extraLarge || m.coverImage.large)) || "",
-      description: (m && m.description) ? m.description.replace(/<[^>]+>/g, "") : "",
-      genre:       (m && m.genres) ? m.genres : [],
+      name:        m ? this.preferredTitle(m.title) : "Unknown",
+      imageUrl:    m && m.coverImage ? (m.coverImage.extraLarge || m.coverImage.large || "") : "",
+      description: m && m.description ? m.description.replace(/<[^>]+>/g, "") : "",
+      genre:       m && m.genres ? m.genres : [],
       status:      status,
       link:        "https://www.miruro.to/info/" + id,
       chapters:    chapters,
     };
   }
 
-  // ── Video list ────────────────────────────────────────────────────────────
+  // ── Video list ─────────────────────────────────────────────────────────────
 
   async getVideoList(url) {
     if (!url || url === "n/a") return [];
     var info;
     try { info = JSON.parse(url); } catch (e) { return []; }
+    var id = info.animeId, num = info.num;
+    if (!id || !num) return [];
 
-    var id = info.animeId;
-    var num = info.num;
-    var epIds = info.epIds || {};
+    var provList = this.pref("miruro_providers");
+    if (!provList || !provList.length) provList = ["ally"];
+    var audioList = this.pref("miruro_audio");
+    if (!audioList || !audioList.length) audioList = ["sub"];
 
-    var provP = this.pref("miruro_providers") || [];
-    if (!provP || provP.length === 0) provP = ["ally"];
-    var audioP = this.pref("miruro_audio") || [];
-    if (!audioP || audioP.length === 0) audioP = ["sub"];
+    // Fetch episode IDs for all providers in one pipe call
+    var epData = null;
+    try { epData = await this.pipe("episodes", { anilistId: String(id) }); } catch (e) {}
+    var providers = epData && epData.providers ? epData.providers : {};
 
-    // If no pre-computed IDs (fallback path from getDetail), fetch from episodes pipe now
-    if (!epIds || Object.keys(epIds).length === 0) {
-      try {
-        var epData = await this.pipe("episodes", { anilistId: String(id) });
-        var epProviders = epData && epData.providers;
-        if (epProviders) {
-          var provKeys = ["ally", "bee", "bonk", "kiwi", "hop"];
-          for (var pi = 0; pi < provKeys.length; pi++) {
-            var pk = provKeys[pi];
-            var pkEps = epProviders[pk] && epProviders[pk].episodes;
-            if (!pkEps) continue;
-            var pkSub = pkEps.sub || [], pkDub = pkEps.dub || [];
-            for (var si = 0; si < pkSub.length; si++) {
-              if (pkSub[si].number == num && pkSub[si].id) {
-                if (!epIds[pk]) epIds[pk] = {};
-                epIds[pk].sub = pkSub[si].id; break;
-              }
-            }
-            for (var di = 0; di < pkDub.length; di++) {
-              if (pkDub[di].number == num && pkDub[di].id) {
-                if (!epIds[pk]) epIds[pk] = {};
-                epIds[pk].dub = pkDub[di].id; break;
-              }
-            }
+    // Build (provider, category, episodeId) triples from the response
+    var combos = [];
+    for (var pi = 0; pi < provList.length; pi++) {
+      var prov = provList[pi];
+      var provData = providers[prov];
+      if (!provData || !provData.episodes) continue;
+      for (var ai = 0; ai < audioList.length; ai++) {
+        var cat = audioList[ai];
+        var epList = provData.episodes[cat];
+        if (!Array.isArray(epList)) continue;
+        for (var ei = 0; ei < epList.length; ei++) {
+          if (String(epList[ei].number) === String(num) && epList[ei].id) {
+            combos.push({ prov: prov, cat: cat, epid: epList[ei].id });
+            break;
           }
         }
-      } catch(e) {}
-    }
-
-    var combinations = [];
-    for (var pi = 0; pi < provP.length; pi++) {
-      for (var ai = 0; ai < audioP.length; ai++) {
-        var prov = provP[pi], cat = audioP[ai];
-        var epid = epIds[prov] && epIds[prov][cat];
-        if (epid) combinations.push({ prov: prov, cat: cat, epid: epid });
       }
     }
 
+    if (!combos.length) return [];
+
+    // Fetch sources for each combo
     var self = this;
-    var results = await Promise.all(
-      combinations.map(function(combo) {
-        return self.pipe("sources", {
-          episodeId: combo.epid,
-          provider:  combo.prov,
-          category:  combo.cat,
-          anilistId: id,
-        }).then(function(data) {
-          var srcs = data.streams || data.sources || [];
-          var subs = data.subtitles || [];
-          var subtitles = [];
-          for (var ti = 0; ti < subs.length; ti++) {
-            var t = subs[ti];
-            if (t.file || t.url) subtitles.push({ file: t.file || t.url, label: t.label || t.lang || "Sub" });
-          }
-          var out = [];
-          for (var si = 0; si < srcs.length; si++) {
-            var src = srcs[si];
-            if (src.type === "embed") continue;
-            if (src.isActive === false) continue;
-            var su = src.url || src.file;
-            if (!su || su.length < 10) continue;
-            // Skip ally MP4 tokens that have expired
-            if (src.type === "mp4") {
-              var expiryMatch = su.match(/Authorization=[^_]+_[^_]+_[^_]+_[^_]+_(\d{14})_/);
-              if (expiryMatch) {
-                var exp = expiryMatch[1];
-                var expMs = Date.UTC(
-                  parseInt(exp.slice(0,4)), parseInt(exp.slice(4,6))-1, parseInt(exp.slice(6,8)),
-                  parseInt(exp.slice(8,10)), parseInt(exp.slice(10,12)), parseInt(exp.slice(12,14))
-                );
-                if (Date.now() > expMs) continue;
-              }
-            }
-            var referer = src.referer || "https://www.miruro.to/";
-            var server = src.server ? (" " + src.server) : "";
-            var entry = {
-              url: su, originalUrl: su,
-              quality: (src.quality || "Auto") + server + " [" + combo.cat.toUpperCase() + " · " + combo.prov + "]",
-              headers: { "User-Agent": self.ua, "Referer": referer, "Origin": referer.replace(/\/$/, "") },
-            };
-            if (subtitles.length > 0) entry.subtitles = subtitles;
-            out.push(entry);
-          }
-          return out;
-        }).catch(function() { return []; });
-      })
-    );
+    var results = await Promise.all(combos.map(function(c) {
+      return self.pipe("sources", {
+        episodeId: c.epid,
+        provider:  c.prov,
+        category:  c.cat,
+        anilistId: id,
+      }).then(function(data) {
+        var streams = data.streams || data.sources || [];
+        var rawSubs = data.subtitles || [];
+        var subtitles = rawSubs.map(function(s) {
+          return { file: s.file || s.url || "", label: s.label || s.lang || "Sub" };
+        });
+        var out = [];
+        for (var si = 0; si < streams.length; si++) {
+          var s = streams[si];
+          if (s.type === "embed") continue;
+          if (s.isActive === false) continue;
+          var su = s.url || s.file;
+          if (!su || su.length < 8) continue;
+          var referer = s.referer || "https://www.miruro.to/";
+          var entry = {
+            url: su,
+            originalUrl: su,
+            quality: (s.quality || "Auto") + " [" + c.cat.toUpperCase() + " · " + c.prov + "]",
+            headers: {
+              "User-Agent": self.ua,
+              "Referer": referer,
+              "Origin": referer.replace(/\/$/, ""),
+            },
+          };
+          if (subtitles.length) entry.subtitles = subtitles;
+          out.push(entry);
+        }
+        return out;
+      }).catch(function() { return []; });
+    }));
 
     var streams = [];
-    for (var ri = 0; ri < results.length; ri++) {
-      var r = results[ri];
-      for (var si = 0; si < r.length; si++) streams.push(r[si]);
-    }
+    for (var ri = 0; ri < results.length; ri++)
+      for (var si = 0; si < results[ri].length; si++)
+        streams.push(results[ri][si]);
     return streams;
   }
 
-  // ── Filters ───────────────────────────────────────────────────────────────
+  // ── Filters ────────────────────────────────────────────────────────────────
 
   getFilterList() {
     return [
       { type_name: "SelectFilter", name: "Sort", state: 0, values: [
-          { type_name: "SelectOption", name: "Trending",   value: "TRENDING_DESC"   },
-          { type_name: "SelectOption", name: "Popularity", value: "POPULARITY_DESC" },
-          { type_name: "SelectOption", name: "Score",      value: "SCORE_DESC"      },
-          { type_name: "SelectOption", name: "Newest",     value: "START_DATE_DESC" },
+        { type_name: "SelectOption", name: "Trending",   value: "TRENDING_DESC"   },
+        { type_name: "SelectOption", name: "Popularity", value: "POPULARITY_DESC" },
+        { type_name: "SelectOption", name: "Score",      value: "SCORE_DESC"      },
+        { type_name: "SelectOption", name: "Newest",     value: "START_DATE_DESC" },
       ]},
       { type_name: "SelectFilter", name: "Season", state: 0, values: [
-          { type_name: "SelectOption", name: "Any", value: "" }, { type_name: "SelectOption", name: "Winter", value: "WINTER" },
-          { type_name: "SelectOption", name: "Spring", value: "SPRING" }, { type_name: "SelectOption", name: "Summer", value: "SUMMER" },
-          { type_name: "SelectOption", name: "Fall", value: "FALL" },
+        { type_name: "SelectOption", name: "Any",    value: ""       },
+        { type_name: "SelectOption", name: "Winter", value: "WINTER" },
+        { type_name: "SelectOption", name: "Spring", value: "SPRING" },
+        { type_name: "SelectOption", name: "Summer", value: "SUMMER" },
+        { type_name: "SelectOption", name: "Fall",   value: "FALL"   },
       ]},
       { type_name: "SelectFilter", name: "Format", state: 0, values: [
-          { type_name: "SelectOption", name: "Any", value: "" }, { type_name: "SelectOption", name: "TV", value: "TV" },
-          { type_name: "SelectOption", name: "Movie", value: "MOVIE" }, { type_name: "SelectOption", name: "OVA", value: "OVA" },
-          { type_name: "SelectOption", name: "ONA", value: "ONA" }, { type_name: "SelectOption", name: "Special", value: "SPECIAL" },
+        { type_name: "SelectOption", name: "Any",     value: ""        },
+        { type_name: "SelectOption", name: "TV",      value: "TV"      },
+        { type_name: "SelectOption", name: "Movie",   value: "MOVIE"   },
+        { type_name: "SelectOption", name: "OVA",     value: "OVA"     },
+        { type_name: "SelectOption", name: "ONA",     value: "ONA"     },
+        { type_name: "SelectOption", name: "Special", value: "SPECIAL" },
       ]},
       { type_name: "SelectFilter", name: "Status", state: 0, values: [
-          { type_name: "SelectOption", name: "Any", value: "" }, { type_name: "SelectOption", name: "Airing", value: "RELEASING" },
-          { type_name: "SelectOption", name: "Finished", value: "FINISHED" }, { type_name: "SelectOption", name: "Not Yet Aired", value: "NOT_YET_RELEASED" },
+        { type_name: "SelectOption", name: "Any",          value: ""                },
+        { type_name: "SelectOption", name: "Airing",       value: "RELEASING"       },
+        { type_name: "SelectOption", name: "Finished",     value: "FINISHED"        },
+        { type_name: "SelectOption", name: "Not Yet Aired", value: "NOT_YET_RELEASED"},
       ]},
       { type_name: "SelectFilter", name: "Year", state: 0, values: [
-          { type_name: "SelectOption", name: "Any", value: "" }, { type_name: "SelectOption", name: "2026", value: "2026" },
-          { type_name: "SelectOption", name: "2025", value: "2025" }, { type_name: "SelectOption", name: "2024", value: "2024" },
-          { type_name: "SelectOption", name: "2023", value: "2023" }, { type_name: "SelectOption", name: "2022", value: "2022" },
-          { type_name: "SelectOption", name: "2021", value: "2021" }, { type_name: "SelectOption", name: "2020", value: "2020" },
+        { type_name: "SelectOption", name: "Any",  value: ""     },
+        { type_name: "SelectOption", name: "2026", value: "2026" },
+        { type_name: "SelectOption", name: "2025", value: "2025" },
+        { type_name: "SelectOption", name: "2024", value: "2024" },
+        { type_name: "SelectOption", name: "2023", value: "2023" },
+        { type_name: "SelectOption", name: "2022", value: "2022" },
+        { type_name: "SelectOption", name: "2021", value: "2021" },
+        { type_name: "SelectOption", name: "2020", value: "2020" },
       ]},
     ];
   }
@@ -549,8 +465,8 @@ class DefaultExtension extends MProvider {
       {
         key: "miruro_lang",
         listPreference: {
-          title: "Preferred title language",
-          summary: "Language used for anime titles",
+          title: "Title language",
+          summary: "",
           valueIndex: 0,
           entries:     ["English", "Romaji", "Native"],
           entryValues: ["english", "romaji", "native"],
@@ -560,7 +476,7 @@ class DefaultExtension extends MProvider {
         key: "miruro_providers",
         multiSelectListPreference: {
           title: "Providers",
-          summary: "Only selected providers are used. Fewer = faster load.",
+          summary: "Stream providers to use (Ally = AllAnime, default)",
           values:      ["ally"],
           entries:     ["Ally", "Bee", "Bonk", "Kiwi", "Hop"],
           entryValues: ["ally", "bee", "bonk", "kiwi", "hop"],
@@ -569,8 +485,8 @@ class DefaultExtension extends MProvider {
       {
         key: "miruro_audio",
         multiSelectListPreference: {
-          title: "Stream type",
-          summary: "Selecting both Sub and Dub doubles the number of requests per provider.",
+          title: "Audio type",
+          summary: "",
           values:      ["sub"],
           entries:     ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
@@ -580,10 +496,10 @@ class DefaultExtension extends MProvider {
         key: "miruro_obf_key",
         editTextPreference: {
           title: "Pipe obfuscation key",
-          summary: "Hex key from PIPE_OBF_KEY in miruro.tv/env2.js — update here if streams stop loading after a site update",
+          summary: "Update if streams stop loading after a site update (32-char hex from miruro.tv/env2.js → PIPE_OBF_KEY)",
           value: "71951034f8fbcf53d89db52ceb3dc22c",
           dialogTitle: "Pipe obfuscation key",
-          dialogMessage: "32-character hex string from PIPE_OBF_KEY in https://www.miruro.tv/env2.js",
+          dialogMessage: "32-character hex string",
         },
       },
     ];
