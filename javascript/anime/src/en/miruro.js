@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "4.25.0",
+    "version": "4.26.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -344,7 +344,9 @@ class DefaultExtension extends MProvider {
     }
     if (!id) throw new Error("bad id");
 
-    var q = "{Media(id:" + id + ",type:ANIME){id idMal title{romaji english native}coverImage{large extraLarge}description status episodes nextAiringEpisode{episode}airingSchedule(notYetAired:false,sort:[TIME_DESC],perPage:1){nodes{episode}}genres}}";
+    // Note: sort:[TIME_DESC] is NOT valid on Media.airingSchedule (only on root AiringSchedule query).
+    // Using default ascending order and reading the last node for the latest aired episode number.
+    var q = "{Media(id:" + id + ",type:ANIME){id idMal title{romaji english native}coverImage{large extraLarge}description status episodes nextAiringEpisode{episode}airingSchedule(notYetAired:false,perPage:50){nodes{episode}}genres}}";
     var d = await this.gql(q, {});
     var m = (d && d.Media) ? d.Media : null;
     var sm = { RELEASING: 0, FINISHED: 1, NOT_YET_RELEASED: 4, CANCELLED: 5, HIATUS: 5 };
@@ -355,10 +357,16 @@ class DefaultExtension extends MProvider {
     var chapters = [];
     var epCount = 0;
     if (m) {
-      // airingSchedule(notYetAired:false,sort:TIME_DESC,perPage:1) → latest aired episode number
       var airedNodes = m.airingSchedule && m.airingSchedule.nodes;
-      if (Array.isArray(airedNodes) && airedNodes.length > 0 && airedNodes[0].episode > 0) {
-        epCount = airedNodes[0].episode;
+      if (Array.isArray(airedNodes) && airedNodes.length > 0) {
+        // Last node in ascending list = latest aired episode
+        var lastAired = airedNodes[airedNodes.length - 1].episode;
+        if (airedNodes.length < 50) {
+          epCount = lastAired;
+        } else {
+          // perPage limit hit — use nextAiringEpisode or total as fallback
+          epCount = (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) ? m.nextAiringEpisode.episode - 1 : (m.episodes || lastAired);
+        }
       } else if (m.nextAiringEpisode && m.nextAiringEpisode.episode > 1) {
         epCount = m.nextAiringEpisode.episode - 1;
       } else if (m.status === "FINISHED" || m.status === "CANCELLED") {
