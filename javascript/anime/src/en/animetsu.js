@@ -13,7 +13,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "",
     "apiUrl": "",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -190,7 +190,7 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     var serverPref = this.getPreference("animetsu_pref_stream_server");
-    if (serverPref.length < 1) serverPref.push("meg");
+    if (serverPref.length < 1) serverPref.push("kite");
 
     var audioPref = this.getPreference("animetsu_pref_stream_subdub_type");
     if (audioPref.length < 1) audioPref.push("sub");
@@ -229,7 +229,9 @@ class DefaultExtension extends MProvider {
   // old_hls=false → HLS master: pre-parse variants so the player gets a direct
   // playlist URL rather than an adaptive master.
   // old_hls=true  → already a direct playlist: pass through unchanged.
-  // kiss/sage = soft-sub → "soft" prefix in quality label.
+  // kite = soft-sub → "soft" prefix in quality label.
+  // .m3u8 on originalUrl forces M3u8Downloader which sends Referer/n1 headers
+  // to every segment fetch — prevents 403-induced buffering.
   async getDioKissStreams(epData, audioType, serverName) {
     var hdr = this.getHeaders();
     var subtitles = [];
@@ -239,7 +241,7 @@ class DefaultExtension extends MProvider {
       });
     }
 
-    var isSoftSub = serverName === "kiss" || serverName === "sage";
+    var isSoftSub = serverName === "kite";
 
     // Fetch all source masters in parallel instead of sequentially.
     var perSource = await Promise.all(epData.sources.map(async (item) => {
@@ -264,7 +266,7 @@ class DefaultExtension extends MProvider {
                 var variantUrl = nextLine.startsWith("http") ? nextLine : baseDir + nextLine;
                 result.push({
                   url: variantUrl,
-                  originalUrl: variantUrl, // no extension — libmpv via content-type, not M3u8Downloader
+                  originalUrl: variantUrl + ".m3u8",
                   quality: this.streamNamer(resolution, audioLabel, serverName),
                   headers: hdr,
                   subtitles: subtitles,
@@ -276,11 +278,11 @@ class DefaultExtension extends MProvider {
         } catch (e) {}
       }
 
-      // Direct playlist (old_hls == true) or master parse failed — pass through like Pahe.
+      // Direct playlist (old_hls == true) or master parse failed — pass through.
       if (!parsed) {
         result.push({
           url: masterUrl,
-          originalUrl: masterUrl,
+          originalUrl: masterUrl + ".m3u8",
           quality: this.streamNamer(item.quality || "auto", audioLabel, serverName),
           headers: hdr,
           subtitles: subtitles,
@@ -339,9 +341,9 @@ class DefaultExtension extends MProvider {
         multiSelectListPreference: {
           title: "Preferred server",
           summary: "Fewer servers = faster load.",
-          values: ["meg"],
-          entries: ["Meg", "Kiss", "Pahe", "Dio", "Sage"],
-          entryValues: ["meg", "kiss", "pahe", "dio", "sage"],
+          values: ["kite"],
+          entries: ["Kite", "Dio"],
+          entryValues: ["kite", "dio"],
         },
       },
       {
