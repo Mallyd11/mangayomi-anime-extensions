@@ -9,10 +9,10 @@ const mangayomiSources = [
     "dateFormat": "",
     "dateFormatLocale": "",
     "isNsfw": false,
-    "hasCloudflare": true,
+    "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "5.0.1",
+    "version": "5.2.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -36,175 +36,6 @@ class DefaultExtension extends MProvider {
 
   pref(key) {
     return new SharedPreferences().get(key);
-  }
-
-  // ── Base64url ──────────────────────────────────────────────────────────────
-
-  b64dec(s) {
-    s = s.replace(/-/g, "+").replace(/_/g, "/");
-    while (s.length % 4) s += "=";
-    var alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var lut = {};
-    for (var i = 0; i < alpha.length; i++) lut[alpha[i]] = i;
-    var out = [];
-    for (var i = 0; i < s.length; i += 4) {
-      var a = lut[s[i]] | 0, b = lut[s[i+1]] | 0;
-      var c2 = s[i+2], c3 = s[i+3];
-      var c = c2 !== "=" ? lut[c2] | 0 : 0;
-      var d = c3 !== "=" ? lut[c3] | 0 : 0;
-      out.push((a << 2) | (b >> 4));
-      if (c2 !== "=") out.push(((b & 0xF) << 4) | (c >> 2));
-      if (c3 !== "=") out.push(((c & 3) << 6) | d);
-    }
-    return out;
-  }
-
-  b64enc(bytes) {
-    var alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var out = "";
-    for (var i = 0; i < bytes.length; i += 3) {
-      var b0 = bytes[i], b1 = i+1 < bytes.length ? bytes[i+1] : 0, b2 = i+2 < bytes.length ? bytes[i+2] : 0;
-      out += alpha[b0 >> 2];
-      out += alpha[((b0 & 3) << 4) | (b1 >> 4)];
-      out += i+1 < bytes.length ? alpha[((b1 & 0xF) << 2) | (b2 >> 6)] : "=";
-      out += i+2 < bytes.length ? alpha[b2 & 0x3F] : "=";
-    }
-    return out.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-  }
-
-  // ── UTF-8 ──────────────────────────────────────────────────────────────────
-
-  strToBytes(str) {
-    var out = [];
-    for (var i = 0; i < str.length; i++) {
-      var c = str.charCodeAt(i);
-      if (c < 0x80) { out.push(c); }
-      else if (c < 0x800) { out.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F)); }
-      else { out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F)); }
-    }
-    return out;
-  }
-
-  bytesToStr(bytes) {
-    var parts = [], i = 0, CHUNK = 2048;
-    while (i < bytes.length) {
-      var chunk = [], end = Math.min(i + CHUNK, bytes.length);
-      while (i < end) {
-        var b = bytes[i++];
-        if (b < 0x80) { chunk.push(b); }
-        else if ((b & 0xE0) === 0xC0) { chunk.push(((b & 0x1F) << 6) | (bytes[i++] & 0x3F)); }
-        else if ((b & 0xF0) === 0xE0) { var b2 = bytes[i++], b3 = bytes[i++]; chunk.push(((b & 0xF) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)); }
-        else { var b2 = bytes[i++], b3 = bytes[i++], b4 = bytes[i++]; var cp = (((b & 7) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)) - 0x10000; chunk.push(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF)); }
-      }
-      parts.push(String.fromCharCode.apply(null, chunk));
-    }
-    return parts.join("");
-  }
-
-  // ── gzip inflate ──────────────────────────────────────────────────────────
-
-  inflate(data) {
-    if (data[0] !== 0x1F || data[1] !== 0x8B) throw new Error("not gzip");
-    var flg = data[3], pos = 10;
-    if (flg & 4)  { var xl = data[pos] | (data[pos+1] << 8); pos += 2 + xl; }
-    if (flg & 8)  { while (data[pos++] !== 0) {} }
-    if (flg & 16) { while (data[pos++] !== 0) {} }
-    if (flg & 2)  { pos += 2; }
-    var out = [], bp = pos, bb = 0, bl = 0;
-    function bit() { if (!bl) { bb = data[bp++]; bl = 8; } var v = bb & 1; bb >>>= 1; bl--; return v; }
-    function bits(n) { var v = 0; for (var i = 0; i < n; i++) v |= bit() << i; return v; }
-    function tree(lens) {
-      var mx = 0; for (var i = 0; i < lens.length; i++) if (lens[i] > mx) mx = lens[i];
-      if (!mx) return { t: {}, m: 0 };
-      var bc = []; for (var i = 0; i <= mx; i++) bc.push(0);
-      for (var i = 0; i < lens.length; i++) if (lens[i]) bc[lens[i]]++;
-      var nc = []; for (var i = 0; i <= mx+1; i++) nc.push(0);
-      var code = 0; for (var b = 1; b <= mx; b++) { code = (code + bc[b-1]) << 1; nc[b] = code; }
-      var t = {};
-      for (var i = 0; i < lens.length; i++) { var l = lens[i]; if (l) { if (!t[l]) t[l] = {}; t[l][nc[l]] = i; nc[l]++; } }
-      return { t: t, m: mx };
-    }
-    function sym(tr) { var code = 0; for (var l = 1; l <= tr.m; l++) { code = (code << 1) | bit(); if (tr.t[l] !== undefined && tr.t[l][code] !== undefined) return tr.t[l][code]; } throw new Error("bad sym"); }
-    var LB=[3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
-    var LE=[0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
-    var DB=[1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
-    var DE=[0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
-    function block(lt, dt) {
-      while (true) {
-        var s = sym(lt);
-        if (s < 256) { out.push(s); }
-        else if (s === 256) { break; }
-        else { var idx = s-257, len = LB[idx]+bits(LE[idx]), ds = sym(dt), dist = DB[ds]+bits(DE[ds]), st = out.length-dist; for (var k = 0; k < len; k++) out.push(out[st+k]); }
-      }
-    }
-    var done = false;
-    while (!done) {
-      var fin = bit(), type = bits(2);
-      if (type === 0) {
-        bl = 0; var ln = data[bp] | (data[bp+1] << 8); bp += 4; for (var i = 0; i < ln; i++) out.push(data[bp++]);
-      } else if (type === 1) {
-        var ll = []; for (var i=0;i<=143;i++) ll.push(8); for(var i=144;i<=255;i++) ll.push(9); for(var i=256;i<=279;i++) ll.push(7); for(var i=280;i<=287;i++) ll.push(8);
-        var dl=[]; for(var i=0;i<30;i++) dl.push(5); block(tree(ll), tree(dl));
-      } else if (type === 2) {
-        var hlit=bits(5)+257, hdist=bits(5)+1, hclen=bits(4)+4;
-        var co=[16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15], cl=[];
-        for(var i=0;i<19;i++) cl.push(0); for(var i=0;i<hclen;i++) cl[co[i]]=bits(3);
-        var ct=tree(cl), all=[];
-        while(all.length < hlit+hdist) { var s=sym(ct); if(s<16){all.push(s);}else if(s===16){var n=bits(2)+3,pv=all.length?all[all.length-1]:0;for(var i=0;i<n;i++)all.push(pv);}else if(s===17){var n=bits(3)+3;for(var i=0;i<n;i++)all.push(0);}else{var n=bits(7)+11;for(var i=0;i<n;i++)all.push(0);} }
-        block(tree(all.slice(0,hlit)), tree(all.slice(hlit)));
-      } else { throw new Error("bad block"); }
-      if (fin) done = true;
-    }
-    return out;
-  }
-
-  // ── Miruro pipe ────────────────────────────────────────────────────────────
-  // Protocol v0.2.0: GET /api/secure/pipe?e=base64url(JSON)
-  // Response: base64url(XOR(key, gzip(JSON)))
-
-  decodeId(id) {
-    try { var s = this.bytesToStr(this.b64dec(id)); if (s.indexOf(":") >= 0) return s; } catch (e) {}
-    return id;
-  }
-
-  encodeId(str) { return this.b64enc(this.strToBytes(str)); }
-
-  async pipe(path, query) {
-    var req = JSON.stringify({ path: path, method: "GET", query: query, body: null, version: "0.2.0" });
-    var e = this.b64enc(this.strToBytes(req));
-    var keyHex = this.pref("miruro_obf_key") || "71951034f8fbcf53d89db52ceb3dc22c";
-    var obfKey = [];
-    for (var i = 0; i < keyHex.length; i += 2) obfKey.push(parseInt(keyHex.slice(i, i+2), 16));
-
-    var cfCookie = this.pref("miruro_cf_cookie") || "";
-    var hdrs = {
-      "User-Agent": this.ua,
-      "Referer": "https://www.miruro.to/",
-      "Origin": "https://www.miruro.to",
-      "Accept": "*/*",
-      "Accept-Language": "en-US,en;q=0.9",
-      "sec-ch-ua": '"Chromium";v="135", "Google Chrome";v="135", "Not=A?Brand";v="8"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": '"Windows"',
-      "sec-fetch-dest": "empty",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-site": "same-origin",
-    };
-    if (cfCookie) hdrs["Cookie"] = "cf_clearance=" + cfCookie;
-
-    var res = await this.client.get("https://www.miruro.to/api/secure/pipe?e=" + e, hdrs);
-    if (!res || !res.body) throw new Error("no response");
-    if (res.statusCode && res.statusCode !== 200) throw new Error("HTTP " + res.statusCode);
-    var body = (typeof res.body === "string" ? res.body : String(res.body)).replace(/[^A-Za-z0-9+\/=\-_]/g, "");
-    if (body.length < 4) throw new Error("bad body");
-    var raw = this.b64dec(body);
-
-    // Try XOR+inflate first (standard v0.2.0), then plain inflate (key may have changed)
-    var bytes = raw.slice();
-    for (var i = 0; i < bytes.length; i++) bytes[i] ^= obfKey[i % obfKey.length];
-    try { return JSON.parse(this.bytesToStr(this.inflate(bytes))); } catch (ex) {}
-    try { return JSON.parse(this.bytesToStr(this.inflate(raw))); } catch (ex2) {}
-    return JSON.parse(this.bytesToStr(raw));
   }
 
   // ── AniList GraphQL ────────────────────────────────────────────────────────
@@ -355,6 +186,35 @@ class DefaultExtension extends MProvider {
     };
   }
 
+  // ── HLS playlist resolver ──────────────────────────────────────────────────
+
+  async resolveMasterPlaylist(masterUrl, headers) {
+    try {
+      var res = await this.client.get(masterUrl, headers);
+      var body = (res && res.body) || "";
+      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return [];
+      var base = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
+      var variants = [];
+      var lines = body.split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf("#EXT-X-STREAM-INF") !== 0) continue;
+        var resMatch = line.match(/RESOLUTION=\d+x(\d+)/);
+        var quality = resMatch ? resMatch[1] + "p" : "auto";
+        for (var j = i + 1; j < lines.length; j++) {
+          var u = lines[j].trim();
+          if (!u || u.charAt(0) === "#") continue;
+          variants.push({ url: u.indexOf("http") === 0 ? u : base + u, quality: quality });
+          break;
+        }
+      }
+      variants.sort(function(a, b) {
+        return (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0);
+      });
+      return variants;
+    } catch (e) { return []; }
+  }
+
   // ── Video list ─────────────────────────────────────────────────────────────
 
   async getVideoList(url) {
@@ -364,90 +224,78 @@ class DefaultExtension extends MProvider {
     var id = info.animeId, num = info.num;
     if (!id || !num) return [];
 
-    var provList = this.pref("miruro_providers");
-    if (!provList || !provList.length) provList = ["ally"];
     var audioList = this.pref("miruro_audio");
     if (!audioList || !audioList.length) audioList = ["sub"];
 
-    // Fetch episode IDs for all providers in one pipe call (anilistId must be a number)
-    var epData = null;
-    try { epData = await this.pipe("episodes", { anilistId: id }); } catch (e) {}
-    var providers = epData && epData.providers ? epData.providers : {};
+    var streams = [];
+    try {
+      var res = await this.client.get(
+        "https://core.justanime.to/api/watch/" + id + "/episode/" + num + "/megaplay",
+        {
+          "User-Agent": this.ua,
+          "Origin": "https://justanime.to",
+          "Referer": "https://justanime.to/",
+          "Accept": "application/json",
+        }
+      );
+      if (!res || res.statusCode !== 200) return [];
+      var data = JSON.parse(res.body);
+      if (!data || data.error || (!data.sub && !data.dub)) return [];
 
-    // Build (provider, category, episodeId) triples
-    // Try preferred providers first; if none found, fall back to whatever providers exist
-    var combos = [];
-    var allProvKeys = Object.keys(providers);
-    var tryProviders = (function() {
-      for (var pi = 0; pi < provList.length; pi++) {
-        if (providers[provList[pi]]) return provList;
-      }
-      return allProvKeys; // fallback: use any available provider
-    })();
+      for (var ti = 0; ti < audioList.length; ti++) {
+        var type = audioList[ti];
+        var typeData = data[type];
+        if (!typeData || !typeData.sources) continue;
 
-    for (var pi = 0; pi < tryProviders.length; pi++) {
-      var prov = tryProviders[pi];
-      var provData = providers[prov];
-      if (!provData || !provData.episodes) continue;
-      for (var ai = 0; ai < audioList.length; ai++) {
-        var cat = audioList[ai];
-        var epList = provData.episodes[cat];
-        if (!Array.isArray(epList)) continue;
-        for (var ei = 0; ei < epList.length; ei++) {
-          if (String(epList[ei].number) === String(num) && epList[ei].id) {
-            // Decode then re-encode the episode ID to match what the sources endpoint expects
-            combos.push({ prov: prov, cat: cat, epid: this.encodeId(this.decodeId(epList[ei].id)) });
-            break;
+        var apiHeaders = typeData.headers || {};
+        var streamHeaders = {
+          "User-Agent": this.ua,
+          "Referer": apiHeaders["Referer"] || "https://megaplay.buzz/",
+        };
+        if (apiHeaders["Origin"]) streamHeaders["Origin"] = apiHeaders["Origin"];
+
+        var subtitles = [];
+        var tracks = typeData.subtitles || typeData.tracks || [];
+        for (var sti = 0; sti < tracks.length; sti++) {
+          var track = tracks[sti];
+          if (track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
+            subtitles.push({ file: track.file, label: track.label || "Unknown" });
           }
         }
-      }
-    }
 
-    if (!combos.length) return [];
+        var sources = typeData.sources;
+        for (var si = 0; si < sources.length; si++) {
+          var s = sources[si];
+          var streamUrl = s.url || s.file;
+          if (!streamUrl) continue;
 
-    // Fetch sources for each combo
-    var self = this;
-    var results = await Promise.all(combos.map(function(c) {
-      return self.pipe("sources", {
-        episodeId: c.epid,
-        provider:  c.prov,
-        category:  c.cat,
-        anilistId: id,
-      }).then(function(data) {
-        var streams = data.streams || data.sources || [];
-        var rawSubs = data.subtitles || [];
-        var subtitles = rawSubs.map(function(s) {
-          return { file: s.file || s.url || "", label: s.label || s.lang || "Sub" };
-        });
-        var out = [];
-        for (var si = 0; si < streams.length; si++) {
-          var s = streams[si];
-          if (s.type === "embed") continue;
-          if (s.isActive === false) continue;
-          var su = s.url || s.file;
-          if (!su || su.length < 8) continue;
-          var referer = s.referer || "https://www.miruro.to/";
-          var entry = {
-            url: su,
-            originalUrl: su,
-            quality: (s.quality || "Auto") + " [" + c.cat.toUpperCase() + " · " + c.prov + "]",
-            headers: {
-              "User-Agent": self.ua,
-              "Referer": referer,
-              "Origin": referer.replace(/\/$/, ""),
-            },
-          };
-          if (subtitles.length) entry.subtitles = subtitles;
-          out.push(entry);
+          if (s.isM3U8 || streamUrl.indexOf(".m3u8") >= 0) {
+            var variants = await this.resolveMasterPlaylist(streamUrl, streamHeaders);
+            if (variants.length > 0) {
+              for (var vi = 0; vi < variants.length; vi++) {
+                streams.push({
+                  url: variants[vi].url,
+                  originalUrl: streamUrl,
+                  quality: variants[vi].quality + " [" + type.toUpperCase() + "]",
+                  headers: streamHeaders,
+                  subtitles: subtitles,
+                });
+              }
+              continue;
+            }
+          }
+
+          streams.push({
+            url: streamUrl,
+            originalUrl: streamUrl,
+            quality: (s.quality || "auto") + " [" + type.toUpperCase() + "]",
+            headers: streamHeaders,
+            subtitles: subtitles,
+          });
         }
-        return out;
-      }).catch(function() { return []; });
-    }));
+      }
+    } catch (e) {}
 
-    var streams = [];
-    for (var ri = 0; ri < results.length; ri++)
-      for (var si = 0; si < results[ri].length; si++)
-        streams.push(results[ri][si]);
     return streams;
   }
 
@@ -508,16 +356,6 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "miruro_providers",
-        multiSelectListPreference: {
-          title: "Providers",
-          summary: "Stream providers to use (Ally = AllAnime, default)",
-          values:      ["ally"],
-          entries:     ["Ally", "Bee", "Bonk", "Kiwi", "Hop"],
-          entryValues: ["ally", "bee", "bonk", "kiwi", "hop"],
-        },
-      },
-      {
         key: "miruro_audio",
         multiSelectListPreference: {
           title: "Audio type",
@@ -525,26 +363,6 @@ class DefaultExtension extends MProvider {
           values:      ["sub"],
           entries:     ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
-        },
-      },
-      {
-        key: "miruro_obf_key",
-        editTextPreference: {
-          title: "Pipe obfuscation key",
-          summary: "Update if streams stop loading after a site update (32-char hex from miruro.tv/env2.js → PIPE_OBF_KEY)",
-          value: "71951034f8fbcf53d89db52ceb3dc22c",
-          dialogTitle: "Pipe obfuscation key",
-          dialogMessage: "32-character hex string",
-        },
-      },
-      {
-        key: "miruro_cf_cookie",
-        editTextPreference: {
-          title: "Cloudflare clearance cookie (optional)",
-          summary: "If streams fail: open miruro.to in browser → DevTools → Application → Cookies → copy cf_clearance value and paste here",
-          value: "",
-          dialogTitle: "cf_clearance cookie value",
-          dialogMessage: "Paste the cf_clearance cookie value from your browser",
         },
       },
     ];
