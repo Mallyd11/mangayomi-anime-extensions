@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -303,11 +303,28 @@ class DefaultExtension extends MProvider {
     var pref = "sub";
     try { pref = new SharedPreferences().get("myronix_pref_lang") || "sub"; } catch (e) {}
 
-    var SERVERS = ["Default", "Luf-mp4", "Mp4"];
+    var FALLBACK_SERVERS = ["Default", "Luf-mp4", "Mp4", "Yt-mp4", "S-mp4"];
     var self = this;
 
-    // Try each showId in sequence, 3 servers in parallel per showId.
-    // Picks the first (showId, server) combination that returns sources.
+    // Ask the site which servers are available for this episode.
+    // Returns the category-specific list, or FALLBACK_SERVERS if the endpoint
+    // is CF-blocked or returns an empty list.
+    var discoverServers = function(episodeId, category) {
+      var url = self.source.baseUrl + "/api/v2/allanime/episode/servers" +
+        "?animeEpisodeId=" + encodeURIComponent(episodeId);
+      return self.client.get(url, self.getHeaders)
+        .then(function(res) {
+          if (res.statusCode !== 200) return FALLBACK_SERVERS;
+          var json = JSON.parse(res.body);
+          var d = json.data;
+          var list = (d && Array.isArray(d[category])) ? d[category] : [];
+          return list.length > 0 ? list : FALLBACK_SERVERS;
+        })
+        .catch(function() { return FALLBACK_SERVERS; });
+    };
+
+    // Try each showId in sequence. For each showId, discover available servers
+    // then try them all in parallel. Picks first combination with real sources.
     var fetchCategory = function(category) {
       var tryShowId = function(sidIndex) {
         if (sidIndex >= tryShowIds.length) {
@@ -315,24 +332,26 @@ class DefaultExtension extends MProvider {
         }
         var sid = tryShowIds[sidIndex];
         var episodeId = "allanime:" + sid + ":" + epNum;
-        return Promise.all(SERVERS.map(function(srv) {
-          var apiUrl = self.source.baseUrl + "/api/v2/allanime/episode/sources" +
-            "?animeEpisodeId=" + encodeURIComponent(episodeId) +
-            "&server=" + encodeURIComponent(srv) +
-            "&category=" + category;
-          return self.client.get(apiUrl, self.getHeaders)
-            .then(function(res) {
-              if (res.statusCode !== 200) return null;
-              var json = JSON.parse(res.body);
-              var d = json.data;
-              return (d && d.sources && d.sources.length > 0) ? d : null;
-            })
-            .catch(function() { return null; });
-        })).then(function(serverResults) {
-          for (var sri = 0; sri < serverResults.length; sri++) {
-            if (serverResults[sri]) return { category: category, data: serverResults[sri] };
-          }
-          return tryShowId(sidIndex + 1);
+        return discoverServers(episodeId, category).then(function(serverList) {
+          return Promise.all(serverList.map(function(srv) {
+            var apiUrl = self.source.baseUrl + "/api/v2/allanime/episode/sources" +
+              "?animeEpisodeId=" + encodeURIComponent(episodeId) +
+              "&server=" + encodeURIComponent(srv) +
+              "&category=" + category;
+            return self.client.get(apiUrl, self.getHeaders)
+              .then(function(res) {
+                if (res.statusCode !== 200) return null;
+                var json = JSON.parse(res.body);
+                var d = json.data;
+                return (d && d.sources && d.sources.length > 0) ? d : null;
+              })
+              .catch(function() { return null; });
+          })).then(function(serverResults) {
+            for (var sri = 0; sri < serverResults.length; sri++) {
+              if (serverResults[sri]) return { category: category, data: serverResults[sri] };
+            }
+            return tryShowId(sidIndex + 1);
+          });
         });
       };
       return tryShowId(0);
