@@ -75,7 +75,7 @@ class DefaultExtension extends MProvider {
     if (pref === "recent_ep") {
       return await this.formList("ep/recently-added", page);
     }
-    return await this.formList('search?q=&sort={"postDate":-1}', page);
+    return await this.formList(`search?q=&sort=${encodeURIComponent('{"postDate":-1}')}`, page);
   }
   async search(query, page, filters) {
     try {
