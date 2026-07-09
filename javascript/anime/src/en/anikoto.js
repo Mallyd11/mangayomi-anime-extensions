@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.8",
+    "version": "0.3.9",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -639,8 +639,8 @@ class DefaultExtension extends MProvider {
       if (!malId || !timestamp) return [];
     }
 
-    var serverPref = "list";
-    try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "list"; } catch (e) {}
+    var serverPref = "megaplay";
+    try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "megaplay"; } catch (e) {}
     var audioPref = "sub_dub";
     try { audioPref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
 
@@ -705,12 +705,12 @@ class DefaultExtension extends MProvider {
           summary: "Server List fetches streams from VidPlay/HD/Vidstream via VidTube. MegaPlay uses the MAL ID independently of AniKoto's servers. Kiwi-Stream is legacy and unlikely to work.",
           valueIndex: 0,
           entries: [
-            "Server List (VidPlay / HD / Vidstream)",
             "MegaPlay (MAL ID)",
+            "Server List (VidPlay / HD / Vidstream)",
             "All (Server List + MegaPlay)",
             "Kiwi-Stream (Mapper) [legacy]",
           ],
-          entryValues: ["list", "megaplay", "all", "mapper"],
+          entryValues: ["megaplay", "list", "all", "mapper"],
         },
       },
       {
