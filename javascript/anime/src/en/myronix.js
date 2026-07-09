@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.2.1",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -178,9 +178,9 @@ class DefaultExtension extends MProvider {
         var epJson = JSON.parse(epRes.body);
         var episodes = (epJson.data && epJson.data.episodes) || [];
 
-        var primaryShowId = null;   // first showId encountered = streaming record
-        var primaryEps    = [];     // episodes belonging to the primary show
-        var titleMap      = {};     // epNum → best title from any show record
+        var showIds    = [];     // unique showIds in appearance order
+        var showEpsMap = {};    // showId → [episodes]
+        var titleMap   = {};    // epNum → best title from any show record
 
         for (var i = 0; i < episodes.length; i++) {
           var ep    = episodes[i];
@@ -191,16 +191,24 @@ class DefaultExtension extends MProvider {
           var sid   = rawId.substring(c1 + 1, c2);
           var epNum = rawId.substring(c2 + 1);
 
-          if (!primaryShowId) primaryShowId = sid;
-          if (sid === primaryShowId) primaryEps.push(ep);
+          if (!showEpsMap[sid]) { showIds.push(sid); showEpsMap[sid] = []; }
+          showEpsMap[sid].push(ep);
 
           var t = (ep.title || "").trim();
           if (t && !titleMap[epNum]) titleMap[epNum] = t;
         }
 
+        var primaryShowId = showIds[0];
+        if (!primaryShowId) throw new Error("no episodes");
+        var primaryEps = showEpsMap[primaryShowId];
+
         primaryEps.sort(function(a, b) {
           return (parseFloat(a.number) || 0) - (parseFloat(b.number) || 0);
         });
+
+        // Embed all showIds (up to 3) so getVideoList can try each if the
+        // first has no streaming sources on any server.
+        var showIdPrefix = showIds.slice(0, 3).join(",");
 
         for (var ei = 0; ei < primaryEps.length; ei++) {
           var ep    = primaryEps[ei];
@@ -215,7 +223,7 @@ class DefaultExtension extends MProvider {
           var fallback = "Episode " + numStr;
           var label    = (epTitle && epTitle !== fallback)
             ? "E" + numStr + ": " + epTitle : fallback;
-          chapters.push({ name: label, url: primaryShowId + "|" + epNum });
+          chapters.push({ name: label, url: showIdPrefix + "|" + epNum });
         }
       }
     } catch (e) { /* fall through */ }
@@ -263,66 +271,71 @@ class DefaultExtension extends MProvider {
   // ── Streaming ───────────────────────────────────────────────────────────────
   async getVideoList(url) {
     // Chapter URL formats:
-    //   "{showId}|{epNum}"           current (v0.0.7+) — e.g. "wbnpCxPu3fyk9XSaZ|1"
+    //   "sid1,sid2|{epNum}"          current (v0.2.1+) — multiple showIds, comma-separated
+    //   "{showId}|{epNum}"           v0.0.7–v0.2.0 — single showId
     //   "allanime:{showId}:{epNum}"  legacy v0.0.6
     //   "stub|..."                   fallback stub — no streaming
     //   "{digits}|{epNum}"           legacy v0.0.5 stub — no streaming
 
     if (!url || url.startsWith("stub|")) return [];
 
-    var showId, epNum;
+    var tryShowIds, epNum;
 
     if (url.startsWith("allanime:")) {
       // Legacy v0.0.6 format — re-parse to recover showId/epNum
       var c1 = url.indexOf(":");
       var c2 = url.indexOf(":", c1 + 1);
       if (c1 < 0 || c2 < 0) return [];
-      showId = url.substring(c1 + 1, c2);
-      epNum  = url.substring(c2 + 1);
+      tryShowIds = [url.substring(c1 + 1, c2)];
+      epNum      = url.substring(c2 + 1);
     } else {
       var pipe = url.indexOf("|");
       if (pipe < 0) return [];
-      showId = url.substring(0, pipe);
-      epNum  = url.substring(pipe + 1);
+      var showIdPart = url.substring(0, pipe);
+      epNum = url.substring(pipe + 1);
       // Legacy v0.0.5: showId was the numeric AniList ID — can't stream
-      if (/^\d+$/.test(showId)) return [];
+      if (/^\d+$/.test(showIdPart)) return [];
+      tryShowIds = showIdPart.split(",").filter(function(s) { return s.length > 0; });
+      if (tryShowIds.length === 0) return [];
     }
-
-    var episodeId = "allanime:" + showId + ":" + epNum;
 
     // Read preferred language — sub is default
     var pref = "sub";
     try { pref = new SharedPreferences().get("myronix_pref_lang") || "sub"; } catch (e) {}
 
-    // Fetch sub and dub sources in parallel — cuts load time roughly in half
-    // compared to sequential awaits.
     var SERVERS = ["Default", "Luf-mp4", "Mp4"];
     var self = this;
 
-    var fetchServer = function(category, server) {
-      var apiUrl = self.source.baseUrl + "/api/v2/allanime/episode/sources" +
-        "?animeEpisodeId=" + encodeURIComponent(episodeId) +
-        "&server=" + encodeURIComponent(server) +
-        "&category=" + category;
-      return self.client.get(apiUrl, self.getHeaders)
-        .then(function(res) {
-          if (res.statusCode !== 200) return null;
-          var json = JSON.parse(res.body);
-          var d = json.data;
-          return (d && d.sources && d.sources.length > 0) ? d : null;
-        })
-        .catch(function() { return null; });
-    };
-
+    // Try each showId in sequence, 3 servers in parallel per showId.
+    // Picks the first (showId, server) combination that returns sources.
     var fetchCategory = function(category) {
-      return Promise.all(SERVERS.map(function(srv) {
-        return fetchServer(category, srv);
-      })).then(function(serverResults) {
-        for (var sri = 0; sri < serverResults.length; sri++) {
-          if (serverResults[sri]) return { category: category, data: serverResults[sri] };
+      var tryShowId = function(sidIndex) {
+        if (sidIndex >= tryShowIds.length) {
+          return Promise.resolve({ category: category, data: null });
         }
-        return { category: category, data: null };
-      });
+        var sid = tryShowIds[sidIndex];
+        var episodeId = "allanime:" + sid + ":" + epNum;
+        return Promise.all(SERVERS.map(function(srv) {
+          var apiUrl = self.source.baseUrl + "/api/v2/allanime/episode/sources" +
+            "?animeEpisodeId=" + encodeURIComponent(episodeId) +
+            "&server=" + encodeURIComponent(srv) +
+            "&category=" + category;
+          return self.client.get(apiUrl, self.getHeaders)
+            .then(function(res) {
+              if (res.statusCode !== 200) return null;
+              var json = JSON.parse(res.body);
+              var d = json.data;
+              return (d && d.sources && d.sources.length > 0) ? d : null;
+            })
+            .catch(function() { return null; });
+        })).then(function(serverResults) {
+          for (var sri = 0; sri < serverResults.length; sri++) {
+            if (serverResults[sri]) return { category: category, data: serverResults[sri] };
+          }
+          return tryShowId(sidIndex + 1);
+        });
+      };
+      return tryShowId(0);
     };
 
     var results = await Promise.all([fetchCategory("sub"), fetchCategory("dub")]);
