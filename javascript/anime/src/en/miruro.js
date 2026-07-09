@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.0.0",
+    "version": "6.1.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -320,19 +320,11 @@ class DefaultExtension extends MProvider {
       }
     }
 
-    // Concurrently look up AllAnime showId for the pipe fallback.
-    // Stored in episode URLs so getVideoList doesn't need an extra API call.
-    var allAnimeId = null;
-    var titleForSearch = m ? (m.title.english || m.title.romaji || "") : "";
-    if (titleForSearch) {
-      try { allAnimeId = await this.getAllAnimeId(id, titleForSearch); } catch (e) {}
-    }
-
     var chapters = [];
     for (var i = 1; i <= epCount; i++) {
       chapters.push({
         name: "Episode " + i,
-        url: JSON.stringify({ animeId: id, num: i, allAnimeId: allAnimeId, title: titleForSearch }),
+        url: JSON.stringify({ animeId: id, num: i }),
         isFiller: false,
       });
     }
@@ -388,7 +380,6 @@ class DefaultExtension extends MProvider {
     var id = info.animeId, num = info.num;
     if (!id || !num) return [];
 
-    var allAnimeId = info.allAnimeId || null;
     var audioList = this.pref("miruro_audio");
     if (!audioList || !audioList.length) audioList = ["sub"];
 
@@ -452,47 +443,47 @@ class DefaultExtension extends MProvider {
     if (streams.length > 0) return streams;
 
     // ── 2. Miruro pipe fallback (vault01.ultracloud.cc, works on residential IPs) ──
-    // If allAnimeId is missing (old episode URL), try lazy lookup via AllAnime API.
-    if (!allAnimeId && info.title) {
-      try { allAnimeId = await this.getAllAnimeId(id, info.title); } catch (e) {}
-    }
+    // Lazy lookup: AniList title → AllAnime showId (only when megaplay has no coverage).
+    var allAnimeId = null;
+    try {
+      var titleData = await this.anilist("{Media(id:" + id + ",type:ANIME){title{english romaji}}}");
+      var tm = titleData.Media;
+      var titleStr = tm ? (tm.title.english || tm.title.romaji || "") : "";
+      if (titleStr) allAnimeId = await this.getAllAnimeId(id, titleStr);
+    } catch (e) {}
     if (!allAnimeId) return [];
 
-    var pipeProviders = ["ally", "bee", "bonk", "bun", "cog", "dune", "moo", "twin", "hop", "kiwi", "pewe", "kuz", "nun", "telli"];
-
-    for (var ai = 0; ai < audioList.length; ai++) {
+    // Only try "ally" — avoids multi-minute hang when pipe is CF-blocked (one timeout max).
+    var pipeBlocked = false;
+    for (var ai = 0; ai < audioList.length && !pipeBlocked; ai++) {
       var cat = audioList[ai];
-      for (var pi = 0; pi < pipeProviders.length; pi++) {
-        var prov = pipeProviders[pi];
-        try {
-          var episodeId = this.b64enc(this.strToBytes("allmanga:" + allAnimeId + ":" + num));
-          var pipeData = await this.pipe({ episodeId: episodeId, provider: prov, category: cat });
-          var sources = pipeData.streams || pipeData.sources || [];
-          if (!sources.length) continue;
+      try {
+        var episodeId = this.b64enc(this.strToBytes("allmanga:" + allAnimeId + ":" + num));
+        var pipeData = await this.pipe({ episodeId: episodeId, provider: "ally", category: cat });
+        var sources = pipeData.streams || pipeData.sources || [];
 
-          var rawSubs = pipeData.subtitles || [];
-          var subtitles = rawSubs.map(function(s) {
-            return { file: s.file || s.url || "", label: s.label || s.lang || "Sub" };
+        var rawSubs = pipeData.subtitles || [];
+        var subtitles = rawSubs.map(function(s) {
+          return { file: s.file || s.url || "", label: s.label || s.lang || "Sub" };
+        });
+
+        for (var si = 0; si < sources.length; si++) {
+          var s = sources[si];
+          if (s.type === "embed" || s.isActive === false) continue;
+          var su = s.url || s.file;
+          if (!su || su.length < 8) continue;
+          var referer = s.referer || "https://www.miruro.to/";
+          streams.push({
+            url: su,
+            originalUrl: su,
+            quality: (s.quality || "Auto") + " [" + cat.toUpperCase() + " · ally]",
+            headers: { "User-Agent": self.ua, "Referer": referer, "Origin": referer.replace(/\/$/, "") },
+            subtitles: subtitles,
           });
-
-          for (var si = 0; si < sources.length; si++) {
-            var s = sources[si];
-            if (s.type === "embed" || s.isActive === false) continue;
-            var su = s.url || s.file;
-            if (!su || su.length < 8) continue;
-            var referer = s.referer || "https://www.miruro.to/";
-            streams.push({
-              url: su,
-              originalUrl: su,
-              quality: (s.quality || "Auto") + " [" + cat.toUpperCase() + " · " + prov + "]",
-              headers: { "User-Agent": self.ua, "Referer": referer, "Origin": referer.replace(/\/$/, "") },
-              subtitles: subtitles,
-            });
-          }
-          if (streams.length > 0) break;
-        } catch (e) {}
+        }
+      } catch (e) {
+        pipeBlocked = true;
       }
-      if (streams.length > 0) break;
     }
 
     return streams;
