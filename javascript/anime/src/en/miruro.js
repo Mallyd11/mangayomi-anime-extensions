@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "5.3.0",
+    "version": "5.4.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -255,11 +255,15 @@ class DefaultExtension extends MProvider {
           if (!typeData || !typeData.sources) continue;
 
           var rhdrs = typeData.headers || {};
+          var provider = providers[pi];
+          var defaultReferer = provider === "miruro" ? "https://kwik.cx/" : "https://megaplay.buzz/";
+          var defaultOrigin  = provider === "miruro" ? "https://kwik.cx"  : null;
           var streamHeaders = {
             "User-Agent": this.ua,
-            "Referer": rhdrs["Referer"] || "https://megaplay.buzz/",
+            "Referer": rhdrs["Referer"] || defaultReferer,
           };
-          if (rhdrs["Origin"]) streamHeaders["Origin"] = rhdrs["Origin"];
+          var resolvedOrigin = rhdrs["Origin"] || defaultOrigin;
+          if (resolvedOrigin) streamHeaders["Origin"] = resolvedOrigin;
 
           var subtitles = [];
           var tracks = typeData.subtitles || typeData.tracks || [];
