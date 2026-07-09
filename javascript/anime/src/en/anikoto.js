@@ -613,6 +613,7 @@ class DefaultExtension extends MProvider {
         var svName = (el.text || "").trim().slice(0, 20) || "Srv" + (i + 1);
         var resolved = await this._resolveStreams(linkId, svName);
         streams = streams.concat(resolved);
+        if (streams.length > 0) break; // stop at first server that returns streams
       }
     } catch (e) {}
     return streams;
