@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mwask-anicove.hf.space",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.4",
+    "version": "0.3.5",
     "pkgPath": "anime/src/en/anicove.js",
     "isManga": false,
     "isNsfw": false,
@@ -175,6 +175,26 @@ class DefaultExtension extends MProvider {
     var posterM = html.match(/poster:\s*"([^"]+)"/);
     var imageUrl = posterM ? posterM[1] : "";
 
+    // Extract season number directly from the title AniCove shows (e.g. "Season 4").
+    // No AniList needed — if the page says "Season 4" we use 4, otherwise 1.
+    var seasonNum = 1;
+    var snLower = name.toLowerCase();
+    var snIdx = snLower.indexOf("season ");
+    if (snIdx >= 0) {
+      var snRest = name.slice(snIdx + 7);
+      var snStr = "";
+      for (var si = 0; si < snRest.length; si++) {
+        if (snRest[si] >= "0" && snRest[si] <= "9") { snStr += snRest[si]; } else { break; }
+      }
+      if (snStr) seasonNum = parseInt(snStr);
+    }
+    if (seasonNum === 1) {
+      var ordinals = ["2nd", "3rd", "4th", "5th", "6th", "7th", "8th"];
+      for (var oi = 0; oi < ordinals.length; oi++) {
+        if (snLower.indexOf(ordinals[oi] + " season") >= 0) { seasonNum = oi + 2; break; }
+      }
+    }
+
     var epEls = doc.select("a.episode-sidebar-item");
     var chapters = [];
     for (var i = 0; i < epEls.length; i++) {
@@ -187,7 +207,7 @@ class DefaultExtension extends MProvider {
       if (epTitle && epTitle !== epNum) label += ": " + epTitle;
       chapters.push({
         name: label,
-        url: animeId + "||" + epNum,
+        url: animeId + "||" + epNum + "||" + seasonNum,
         thumbnailUrl: "",
         scanlator: (ep.attr("class") || "").indexOf("is-filler") >= 0 ? "Filler" : "",
       });
@@ -264,6 +284,7 @@ class DefaultExtension extends MProvider {
     var parts = url.split("||");
     var animeId = parts[0];
     var epNum = parts[1] || "1";
+    var seasonNum = parts[2] ? parseInt(parts[2]) : 1;
 
     // Read multi-select language preference — defaults to both sub and dub.
     var langs = ["sub", "dub"];
@@ -350,6 +371,15 @@ class DefaultExtension extends MProvider {
             if (!esUrl) continue;
             if (esUrl.indexOf("anixtv.in") >= 0) {
               try {
+                // Patch season= param using the number extracted from the page title
+                if (seasonNum > 1) {
+                  var si = esUrl.indexOf("season=");
+                  if (si >= 0) {
+                    var se = esUrl.indexOf("&", si);
+                    if (se < 0) se = esUrl.length;
+                    esUrl = esUrl.slice(0, si + 7) + seasonNum + esUrl.slice(se);
+                  }
+                }
                 var resolved = await this.resolveAnixTvEmbed(esUrl, lang);
                 if (resolved) streams.push(resolved);
               } catch (ex) {}
