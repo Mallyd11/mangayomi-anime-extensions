@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.9",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -97,16 +97,21 @@ class DefaultExtension extends MProvider {
 
   get supportsLatest() { return true; }
 
+  // /search with no keyword returns ~5000 anime paginated by popularity (24/page)
   async getPopular(page) {
     try {
-      var data = await this.apiGet("/home");
-      return { list: this.parseAnimeList(data.popular || []), hasNextPage: false };
+      var data = await this.apiGet("/search?page=" + page);
+      var items = data.results || [];
+      var hasNextPage = !!(data.pageInfo && data.pageInfo.hasNextPage);
+      return { list: this.parseAnimeList(items), hasNextPage: hasNextPage };
     } catch (e) {
       return { list: [], hasNextPage: false };
     }
   }
 
+  // /home latestEpisode is the only source for recently-updated anime; no paginated endpoint exists
   async getLatestUpdates(page) {
+    if (page > 1) return { list: [], hasNextPage: false };
     try {
       var data = await this.apiGet("/home");
       var items = data.latestEpisode || data.airing || [];
