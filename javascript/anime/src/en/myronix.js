@@ -7,11 +7,11 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.2",
+    "version": "0.2.3",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
-    "hasCloudflare": true,
+    "hasCloudflare": false,
     "isFullData": false,
     "appMinVerReq": "0.5.0",
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/myronix.js",
@@ -162,76 +162,51 @@ class DefaultExtension extends MProvider {
     var status    = this.statusCode(m.status);
     var epCount   = m.episodes || 0;
 
-    // Fetch episode list from the site's AllAnime API.
-    // Chapter URL = "{showId}|{epNum}" — pipe-separated, no URL-scheme prefix.
-    // AllAnime maps multiple internal show records to the same AniList ID.
-    // The record that appears FIRST in the API response is the primary streaming
-    // record (has Default/Wix CDN sources). Later records may have episode titles
-    // but different CDN arrangements that don't work for us.
-    // Strategy:
-    //   1. Use the FIRST showId seen for chapter URLs (guarantees streaming works).
-    //   2. Build a titleMap across ALL records so we still get episode titles
-    //      even when the primary record has none.
+    // Fetch episode list from the site's AllAnime API (for episode numbers/titles).
+    // Chapter URL = "{anilistId}|{epNum}" — the HiAnime streaming API only needs
+    // these two values; no AllAnime showId required.
     var chapters = [];
     try {
       if (epRes && epRes.statusCode === 200) {
         var epJson = JSON.parse(epRes.body);
         var episodes = (epJson.data && epJson.data.episodes) || [];
 
-        var showIds    = [];     // unique showIds in appearance order
-        var showEpsMap = {};    // showId → [episodes]
-        var titleMap   = {};    // epNum → best title from any show record
+        var seenEpNums = {};
+        var titleMap   = {};  // epNum → title
 
         for (var i = 0; i < episodes.length; i++) {
           var ep    = episodes[i];
           var rawId = ep.episodeId || "";
-          var c1    = rawId.indexOf(":");
-          var c2    = rawId.indexOf(":", c1 + 1);
-          if (c1 < 0 || c2 < 0) continue;
-          var sid   = rawId.substring(c1 + 1, c2);
+          var c2    = rawId.lastIndexOf(":");
+          if (c2 < 0) continue;
           var epNum = rawId.substring(c2 + 1);
-
-          if (!showEpsMap[sid]) { showIds.push(sid); showEpsMap[sid] = []; }
-          showEpsMap[sid].push(ep);
-
           var t = (ep.title || "").trim();
           if (t && !titleMap[epNum]) titleMap[epNum] = t;
+          seenEpNums[epNum] = ep;
         }
 
-        var primaryShowId = showIds[0];
-        if (!primaryShowId) throw new Error("no episodes");
-        var primaryEps = showEpsMap[primaryShowId];
-
-        primaryEps.sort(function(a, b) {
-          return (parseFloat(a.number) || 0) - (parseFloat(b.number) || 0);
+        var epNumsSorted = Object.keys(seenEpNums).sort(function(a, b) {
+          return (parseFloat(a) || 0) - (parseFloat(b) || 0);
         });
 
-        // Embed all showIds (up to 3) so getVideoList can try each if the
-        // first has no streaming sources on any server.
-        var showIdPrefix = showIds.slice(0, 3).join(",");
-
-        for (var ei = 0; ei < primaryEps.length; ei++) {
-          var ep    = primaryEps[ei];
-          var rawId = ep.episodeId || "";
-          var c1    = rawId.indexOf(":");
-          var c2    = rawId.indexOf(":", c1 + 1);
-          if (c1 < 0 || c2 < 0) continue;
-          var epNum    = rawId.substring(c2 + 1);
-          var numStr   = (ep.number !== undefined && ep.number !== null)
+        for (var ei = 0; ei < epNumsSorted.length; ei++) {
+          var epNum   = epNumsSorted[ei];
+          var ep      = seenEpNums[epNum];
+          var numStr  = (ep.number !== undefined && ep.number !== null)
             ? String(ep.number) : epNum;
-          var epTitle  = titleMap[epNum] || "";
+          var epTitle = titleMap[epNum] || "";
           var fallback = "Episode " + numStr;
-          var label    = (epTitle && epTitle !== fallback)
+          var label   = (epTitle && epTitle !== fallback)
             ? "E" + numStr + ": " + epTitle : fallback;
-          chapters.push({ name: label, url: showIdPrefix + "|" + epNum });
+          chapters.push({ name: label, url: String(anilistId) + "|" + epNum });
         }
       }
     } catch (e) { /* fall through */ }
 
-    // Fallback when AllAnime returns no episodes
+    // Fallback when AllAnime returns no episodes — HiAnime can still stream
     if (chapters.length === 0 && epCount > 0) {
       for (var j = 1; j <= epCount; j++) {
-        chapters.push({ name: "Episode " + j, url: "stub|" + anilistId + "|" + j });
+        chapters.push({ name: "Episode " + j, url: String(anilistId) + "|" + j });
       }
     }
 
@@ -244,198 +219,84 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // ── Wix CDN helper ──────────────────────────────────────────────────────────
-  // Parse Wix CDN master URL → quality variant URLs without any HTTP request.
-  //
-  // Master URL format:
-  //   https://repackager.wixmp.com/.../video/{id}/,1080p,720p,480p,/mp4/file.mp4.urlset/master.m3u8
-  // Variant URL format:
-  //   https://repackager.wixmp.com/.../video/{id}/{quality}/mp4/file.mp4/index-v1-a1.m3u8
-  //
-  // Returns [{url, label}, ...] sorted highest quality first, or null if not a Wix URL.
-  parseWixMaster(masterUrl) {
-    var m = masterUrl.match(
-      /^(https?:\/\/repackager\.wixmp\.com\/.+\/video\/[^/]+)\/,([^/]+),\/mp4\/file\.mp4\.urlset\/master\.m3u8/
-    );
-    if (!m) return null;
-    var base  = m[1];
-    var quals = m[2].split(",").filter(function(q) { return q.length > 0; });
-    if (quals.length === 0) return null;
-    // Sort by resolution height descending (1080 > 720 > 480)
-    quals.sort(function(a, b) { return (parseInt(b) || 0) - (parseInt(a) || 0); });
-    return quals.map(function(q) {
-      return { url: base + "/" + q + "/mp4/file.mp4/index-v1-a1.m3u8", label: q };
-    });
-  }
-
   // ── Streaming ───────────────────────────────────────────────────────────────
   async getVideoList(url) {
-    // Chapter URL formats:
-    //   "sid1,sid2|{epNum}"          current (v0.2.1+) — multiple showIds, comma-separated
-    //   "{showId}|{epNum}"           v0.0.7–v0.2.0 — single showId
-    //   "allanime:{showId}:{epNum}"  legacy v0.0.6
-    //   "stub|..."                   fallback stub — no streaming
-    //   "{digits}|{epNum}"           legacy v0.0.5 stub — no streaming
+    // Chapter URL format (v0.2.3+): "{anilistId}|{epNum}" e.g. "16498|1"
+    // Old formats (pre v0.2.3) used AllAnime showIds — refresh the show to update.
 
-    if (!url || url.startsWith("stub|")) return [];
+    if (!url || url.startsWith("stub|") || url.startsWith("allanime:")) return [];
 
-    var tryShowIds, epNum;
+    var pipe = url.indexOf("|");
+    if (pipe < 0) return [];
+    var idPart = url.substring(0, pipe);
+    var epNum  = url.substring(pipe + 1);
 
-    if (url.startsWith("allanime:")) {
-      // Legacy v0.0.6 format — re-parse to recover showId/epNum
-      var c1 = url.indexOf(":");
-      var c2 = url.indexOf(":", c1 + 1);
-      if (c1 < 0 || c2 < 0) return [];
-      tryShowIds = [url.substring(c1 + 1, c2)];
-      epNum      = url.substring(c2 + 1);
-    } else {
-      var pipe = url.indexOf("|");
-      if (pipe < 0) return [];
-      var showIdPart = url.substring(0, pipe);
-      epNum = url.substring(pipe + 1);
-      // Legacy v0.0.5: showId was the numeric AniList ID — can't stream
-      if (/^\d+$/.test(showIdPart)) return [];
-      tryShowIds = showIdPart.split(",").filter(function(s) { return s.length > 0; });
-      if (tryShowIds.length === 0) return [];
-    }
+    // Old format had alphanumeric showIds before the pipe; new format is pure digits.
+    if (!/^\d+$/.test(idPart)) return [];
+    var anilistId = idPart;
 
-    // Read preferred language — sub is default
     var pref = "sub";
     try { pref = new SharedPreferences().get("myronix_pref_lang") || "sub"; } catch (e) {}
 
-    var FALLBACK_SERVERS = ["Default", "Luf-mp4", "Mp4", "Yt-mp4", "S-mp4"];
-    var self = this;
+    var self    = this;
+    var baseUrl = this.source.baseUrl;
 
-    // Ask the site which servers are available for this episode.
-    // Returns the category-specific list, or FALLBACK_SERVERS if the endpoint
-    // is CF-blocked or returns an empty list.
-    var discoverServers = function(episodeId, category) {
-      var url = self.source.baseUrl + "/api/v2/allanime/episode/servers" +
-        "?animeEpisodeId=" + encodeURIComponent(episodeId);
-      return self.client.get(url, self.getHeaders)
-        .then(function(res) {
-          if (res.statusCode !== 200) return FALLBACK_SERVERS;
-          var json = JSON.parse(res.body);
-          var d = json.data;
-          var list = (d && Array.isArray(d[category])) ? d[category] : [];
-          return list.length > 0 ? list : FALLBACK_SERVERS;
-        })
-        .catch(function() { return FALLBACK_SERVERS; });
-    };
-
-    // Try each showId in sequence. For each showId, discover available servers
-    // then try them all in parallel. Picks first combination with real sources.
     var fetchCategory = function(category) {
-      var tryShowId = function(sidIndex) {
-        if (sidIndex >= tryShowIds.length) {
-          return Promise.resolve({ category: category, data: null });
-        }
-        var sid = tryShowIds[sidIndex];
-        var episodeId = "allanime:" + sid + ":" + epNum;
-        return discoverServers(episodeId, category).then(function(serverList) {
+      var serversUrl = baseUrl + "/api/v2/shirayuki/hianime/episode/servers" +
+        "?animeEpisodeId=" + encodeURIComponent(anilistId) +
+        "&ep=" + encodeURIComponent(epNum) +
+        "&provider=anilist";
+
+      return self.client.get(serversUrl, self.getHeaders)
+        .then(function(res) {
+          if (res.statusCode !== 200) return [];
+          var json = JSON.parse(res.body);
+          if (!json.success || !json.data || !json.data.servers) return [];
+          var serverList = json.data.servers[category] || [];
+          if (serverList.length === 0) return [];
+
           return Promise.all(serverList.map(function(srv) {
-            var apiUrl = self.source.baseUrl + "/api/v2/allanime/episode/sources" +
-              "?animeEpisodeId=" + encodeURIComponent(episodeId) +
-              "&server=" + encodeURIComponent(srv) +
-              "&category=" + category;
-            return self.client.get(apiUrl, self.getHeaders)
-              .then(function(res) {
-                if (res.statusCode !== 200) return null;
-                var json = JSON.parse(res.body);
-                var d = json.data;
-                return (d && d.sources && d.sources.length > 0) ? d : null;
+            var sourcesUrl = baseUrl + "/api/v2/shirayuki/hianime/episode/sources" +
+              "?animeEpisodeId=" + encodeURIComponent(anilistId) +
+              "&ep=" + encodeURIComponent(epNum) +
+              "&server=" + encodeURIComponent(srv.nameId) +
+              "&category=" + category +
+              "&provider=anilist";
+
+            return self.client.get(sourcesUrl, self.getHeaders)
+              .then(function(res2) {
+                if (res2.statusCode !== 200) return [];
+                var json2 = JSON.parse(res2.body);
+                if (!json2.success || !json2.data || !json2.data.sources) return [];
+
+                var subtitles = (json2.data.tracks || [])
+                  .filter(function(t) { return t && t.file; })
+                  .map(function(t) { return { file: t.file, label: t.label || "Unknown" }; });
+
+                return json2.data.sources
+                  .filter(function(src) { return src && src.source; })
+                  .map(function(src) {
+                    return {
+                      url: src.source,
+                      originalUrl: src.source,
+                      quality: (srv.name || srv.nameId) + " [" + category.toUpperCase() + "]",
+                      headers: src.referer ? { "Referer": src.referer } : {},
+                      subtitles: subtitles,
+                    };
+                  });
               })
-              .catch(function() { return null; });
-          })).then(function(serverResults) {
-            for (var sri = 0; sri < serverResults.length; sri++) {
-              if (serverResults[sri]) return { category: category, data: serverResults[sri] };
-            }
-            return tryShowId(sidIndex + 1);
+              .catch(function() { return []; });
+          })).then(function(results) {
+            return results.reduce(function(acc, r) { return acc.concat(r); }, []);
           });
-        });
-      };
-      return tryShowId(0);
+        })
+        .catch(function() { return []; });
     };
 
     var results = await Promise.all([fetchCategory("sub"), fetchCategory("dub")]);
+    var subStreams = results[0];
+    var dubStreams = results[1];
 
-    var subStreams = [];
-    var dubStreams = [];
-    var seen = {};
-
-    for (var ri = 0; ri < results.length; ri++) {
-      var result   = results[ri];
-      var category = result.category;
-      var data     = result.data;
-      var bucket   = category === "sub" ? subStreams : dubStreams;
-
-      if (!data || !data.sources) continue;
-
-      // Use CDN headers returned by the API
-      var apiHdr = data.headers || {};
-      var streamHeaders = {
-        "User-Agent": apiHdr["User-Agent"] || this.ua,
-        "Referer":    apiHdr["Referer"]    || (this.source.baseUrl + "/"),
-      };
-      if (apiHdr["Origin"]) streamHeaders["Origin"] = apiHdr["Origin"];
-
-      // Subtitle tracks
-      var subtitles = [];
-      var tracks = data.tracks || [];
-      for (var ti = 0; ti < tracks.length; ti++) {
-        var t = tracks[ti];
-        if (t && t.file) subtitles.push({ file: t.file, label: t.label || "Unknown" });
-      }
-
-      var sources = data.sources;
-      for (var k = 0; k < sources.length; k++) {
-        var src    = sources[k];
-        var srcUrl = src && src.url;
-        if (!srcUrl) continue;
-
-        if (srcUrl.indexOf(".m3u8") >= 0) {
-          // Wix CDN: extract quality variants directly from the URL — no extra request
-          var variants = this.parseWixMaster(srcUrl);
-          if (variants && variants.length > 0) {
-            for (var vi = 0; vi < variants.length; vi++) {
-              var v  = variants[vi];
-              var vk = v.url + "|" + category;
-              if (seen[vk]) continue;
-              seen[vk] = true;
-              bucket.push({
-                url: v.url, originalUrl: srcUrl,
-                quality: v.label + " [" + category.toUpperCase() + "]",
-                headers: streamHeaders, subtitles: subtitles,
-              });
-            }
-          } else {
-            // Non-Wix HLS — pass master URL through
-            var mk = srcUrl + "|" + category;
-            if (!seen[mk]) {
-              seen[mk] = true;
-              bucket.push({
-                url: srcUrl, originalUrl: srcUrl,
-                quality: "HLS [" + category.toUpperCase() + "]",
-                headers: streamHeaders, subtitles: subtitles,
-              });
-            }
-          }
-        } else {
-          // Direct MP4 or other
-          var dk = srcUrl + "|" + category;
-          if (!seen[dk]) {
-            seen[dk] = true;
-            bucket.push({
-              url: srcUrl, originalUrl: srcUrl,
-              quality: (src.quality || "Auto") + " [" + category.toUpperCase() + "]",
-              headers: streamHeaders, subtitles: subtitles,
-            });
-          }
-        }
-      }
-    }
-
-    // Return preferred language first
     return pref === "dub"
       ? dubStreams.concat(subStreams)
       : subStreams.concat(dubStreams);
