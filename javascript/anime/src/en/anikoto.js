@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.7",
+    "version": "0.3.8",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -265,6 +265,7 @@ class DefaultExtension extends MProvider {
           }
 
           // Build chapter list with thumbnails, dates, and sub/dub badge.
+          var seenEpNums = {};
           for (var j = 0; j < epEls.length; j++) {
             var ep = epEls[j];
             var epNum = ep.attr("data-num") || "";
@@ -272,6 +273,8 @@ class DefaultExtension extends MProvider {
             var timestamp = ep.attr("data-timestamp") || "";
             var ids = ep.attr("data-ids") || "";
             if (!epNum || !malId || !timestamp) continue;
+            if (seenEpNums[epNum]) continue;
+            seenEpNums[epNum] = true;
 
             // Episode label: number + English title from the site
             var rawText = (ep.text || "").trim().replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ");
@@ -341,6 +344,11 @@ class DefaultExtension extends MProvider {
     } catch (e) { return []; }
     if (!embedUrl) return [];
 
+    // /stream/s-{N}/{id}/{sub|dub} — megaplay, vidwish, and similar hosts
+    var gsM = embedUrl.match(/\/stream\/s-\d+\/(\d+)\/(sub|dub)/);
+    if (gsM) {
+      return await this._extractGetSourcesStreams(embedUrl, gsM[1], audioLabel);
+    }
     if (embedUrl.indexOf("vidtube.site/stream/") >= 0) {
       return await this._extractVidtubeStreams(embedUrl, audioLabel);
     }
@@ -356,6 +364,46 @@ class DefaultExtension extends MProvider {
       }
     }
     return [];
+  }
+
+  // Extract streams via {host}/stream/getSources?id={streamId} (megaplay, vidwish, etc.)
+  async _extractGetSourcesStreams(embedUrl, streamId, audioLabel) {
+    var streams = [];
+    try {
+      var hostM = embedUrl.match(/^(https?:\/\/[^/]+)/);
+      if (!hostM) return streams;
+      var apiHost = hostM[1];
+      var srcRes = await this.client.get(
+        apiHost + "/stream/getSources?id=" + streamId,
+        { "User-Agent": this.ua, "Referer": apiHost + "/", "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" }
+      );
+      var srcData;
+      try { srcData = JSON.parse(srcRes.body); } catch (e) { return streams; }
+      var m3u8 = "";
+      if (srcData.sources) {
+        if (typeof srcData.sources === "string") m3u8 = srcData.sources;
+        else if (srcData.sources.file) m3u8 = srcData.sources.file;
+        else if (Array.isArray(srcData.sources) && srcData.sources.length) m3u8 = srcData.sources[0].file || srcData.sources[0].url || "";
+      }
+      if (!m3u8) return streams;
+      var subtitles = [];
+      if (Array.isArray(srcData.tracks)) {
+        for (var ti = 0; ti < srcData.tracks.length; ti++) {
+          var track = srcData.tracks[ti];
+          if (track && track.file && track.kind !== "thumbnails") subtitles.push({ file: track.file, label: track.label || "Unknown" });
+        }
+      }
+      var hdrs = { "User-Agent": this.ua, "Referer": apiHost + "/" };
+      var variants = await this._resolveHlsVariants(m3u8, hdrs);
+      if (variants.length > 0) {
+        for (var v = 0; v < variants.length; v++) {
+          streams.push({ url: variants[v].url, originalUrl: m3u8, quality: variants[v].label + " - " + audioLabel, headers: hdrs, subtitles: subtitles });
+        }
+      } else {
+        streams.push({ url: m3u8, originalUrl: m3u8, quality: audioLabel, headers: hdrs, subtitles: subtitles });
+      }
+    } catch (e) {}
+    return streams;
   }
 
   // Extract streams from vidtube.site embed: fetch page → getSourcesNew API → m3u8 → quality variants.
@@ -537,41 +585,33 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // Try every server returned by /ajax/server/list?servers={ids}.
-  // The linkId for /ajax/server?get= can live in several different attribute names
-  // depending on the site version — we try all common ones.
-  async _fetchServerListStreams(ids, audioType, audioLabel) {
+  // Fetch all unique servers from /ajax/server/list?servers={ids} and resolve each.
+  // data-type is no longer present on server elements, so we can't split sub/dub here.
+  // We deduplicate by data-sv-id so each server type is tried only once.
+  async _fetchServerListStreams(ids) {
     var streams = [];
     if (!ids) return streams;
     try {
       var res = await this.client.get(
         this.source.baseUrl + "/ajax/server/list?servers=" + ids,
-        {
-          "User-Agent": this.ua,
-          "Referer": this.source.baseUrl + "/",
-          "X-Requested-With": "XMLHttpRequest",
-          "Accept": "application/json, text/javascript, */*; q=0.01",
-        }
+        { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/", "X-Requested-With": "XMLHttpRequest", "Accept": "application/json, text/javascript, */*; q=0.01" }
       );
       var html = res.body || "";
-      // Unwrap JSON envelope: {status:200, result:"<html>"}
-      try {
-        var parsed = JSON.parse(html);
-        if (parsed && typeof parsed.result === "string") html = parsed.result;
-      } catch (e) {}
+      try { var parsed = JSON.parse(html); if (parsed && typeof parsed.result === "string") html = parsed.result; } catch (e) {}
 
       var doc = new Document(html);
       var serverEls = doc.select("li[data-link-id]");
+      var seenSvIds = {};
 
       for (var i = 0; i < serverEls.length; i++) {
         var el = serverEls[i];
-        var elType = (el.attr("data-type") || "").toLowerCase();
-        if (audioType === "sub" && elType !== "sub" && elType !== "hsub") continue;
-        if (audioType === "dub" && elType !== "dub") continue;
+        var svId = el.attr("data-sv-id") || ("srv" + i);
+        if (seenSvIds[svId]) continue;
+        seenSvIds[svId] = true;
         var linkId = el.attr("data-link-id") || "";
         if (!linkId) continue;
         var svName = (el.text || "").trim().slice(0, 20) || "Srv" + (i + 1);
-        var resolved = await this._resolveStreams(linkId, audioLabel + " [" + svName + "]");
+        var resolved = await this._resolveStreams(linkId, svName);
         streams = streams.concat(resolved);
       }
     } catch (e) {}
@@ -605,16 +645,14 @@ class DefaultExtension extends MProvider {
 
     var subStreams = [], dubStreams = [];
 
-    // Server list — VidPlay / HD / Vidstream via VidTube player
+    // Server list — VidPlay / HD / Vidstream / VidCloud (sub+dub mixed, resolved per-server)
     if (serverPref === "list" || serverPref === "all") {
       if (!ids) {
         var m2 = await this._fetchEpMeta(slug, epNum);
         if (m2 && m2.ids) ids = m2.ids;
       }
-      var listSub = await this._fetchServerListStreams(ids, "sub", "Sub");
-      var listDub = await this._fetchServerListStreams(ids, "dub", "Dub");
-      subStreams = subStreams.concat(listSub);
-      dubStreams = dubStreams.concat(listDub);
+      var listStreams = await this._fetchServerListStreams(ids);
+      subStreams = subStreams.concat(listStreams);
     }
 
     // MegaPlay via MAL ID
