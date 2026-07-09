@@ -28,21 +28,21 @@
     "anime": {
         "HiAnime": {
             "name": "HiAnime",
-            "version": "0.3.1",
+            "version": "0.3.6",
             "langs": "en",
-            "lastUpd": 1783615785.247751
+            "lastUpd": 1783616552.151359
+        },
+        "Miruro": {
+            "name": "Miruro",
+            "version": "5.0.1",
+            "langs": "en",
+            "lastUpd": 1783616540.5756695
         },
         "AniCove": {
             "name": "AniCove",
             "version": "0.3.5",
             "langs": "en",
             "lastUpd": 1783615774.909905
-        },
-        "Miruro": {
-            "name": "Miruro",
-            "version": "5.0.0",
-            "langs": "en",
-            "lastUpd": 1783544802.2880597
         },
         "JustAnime": {
             "name": "JustAnime",
@@ -88,8 +88,8 @@
         }
     },
     "novel": {
-        "NovelFire": {
-            "name": "NovelFire",
+        "bookReadFree": {
+            "name": "bookReadFree",
             "version": "0.0.1",
             "langs": "en",
             "lastUpd": 1779410651.044824
@@ -100,8 +100,8 @@
             "langs": "en",
             "lastUpd": 1779410651.044824
         },
-        "bookReadFree": {
-            "name": "bookReadFree",
+        "NovelFire": {
+            "name": "NovelFire",
             "version": "0.0.1",
             "langs": "en",
             "lastUpd": 1779410651.044824

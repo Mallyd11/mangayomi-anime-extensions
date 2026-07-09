@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "5.0.0",
+    "version": "5.0.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -162,6 +162,13 @@ class DefaultExtension extends MProvider {
   // Protocol v0.2.0: GET /api/secure/pipe?e=base64url(JSON)
   // Response: base64url(XOR(key, gzip(JSON)))
 
+  decodeId(id) {
+    try { var s = this.bytesToStr(this.b64dec(id)); if (s.indexOf(":") >= 0) return s; } catch (e) {}
+    return id;
+  }
+
+  encodeId(str) { return this.b64enc(this.strToBytes(str)); }
+
   async pipe(path, query) {
     var req = JSON.stringify({ path: path, method: "GET", query: query, body: null, version: "0.2.0" });
     var e = this.b64enc(this.strToBytes(req));
@@ -169,17 +176,35 @@ class DefaultExtension extends MProvider {
     var obfKey = [];
     for (var i = 0; i < keyHex.length; i += 2) obfKey.push(parseInt(keyHex.slice(i, i+2), 16));
 
-    var res = await this.client.get(
-      "https://www.miruro.to/api/secure/pipe?e=" + e,
-      { "User-Agent": this.ua, "Referer": "https://www.miruro.to/", "Accept": "*/*" }
-    );
+    var cfCookie = this.pref("miruro_cf_cookie") || "";
+    var hdrs = {
+      "User-Agent": this.ua,
+      "Referer": "https://www.miruro.to/",
+      "Origin": "https://www.miruro.to",
+      "Accept": "*/*",
+      "Accept-Language": "en-US,en;q=0.9",
+      "sec-ch-ua": '"Chromium";v="135", "Google Chrome";v="135", "Not=A?Brand";v="8"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+    };
+    if (cfCookie) hdrs["Cookie"] = "cf_clearance=" + cfCookie;
+
+    var res = await this.client.get("https://www.miruro.to/api/secure/pipe?e=" + e, hdrs);
     if (!res || !res.body) throw new Error("no response");
     if (res.statusCode && res.statusCode !== 200) throw new Error("HTTP " + res.statusCode);
     var body = (typeof res.body === "string" ? res.body : String(res.body)).replace(/[^A-Za-z0-9+\/=\-_]/g, "");
     if (body.length < 4) throw new Error("bad body");
-    var bytes = this.b64dec(body);
+    var raw = this.b64dec(body);
+
+    // Try XOR+inflate first (standard v0.2.0), then plain inflate (key may have changed)
+    var bytes = raw.slice();
     for (var i = 0; i < bytes.length; i++) bytes[i] ^= obfKey[i % obfKey.length];
-    return JSON.parse(this.bytesToStr(this.inflate(bytes)));
+    try { return JSON.parse(this.bytesToStr(this.inflate(bytes))); } catch (ex) {}
+    try { return JSON.parse(this.bytesToStr(this.inflate(raw))); } catch (ex2) {}
+    return JSON.parse(this.bytesToStr(raw));
   }
 
   // ── AniList GraphQL ────────────────────────────────────────────────────────
@@ -344,15 +369,24 @@ class DefaultExtension extends MProvider {
     var audioList = this.pref("miruro_audio");
     if (!audioList || !audioList.length) audioList = ["sub"];
 
-    // Fetch episode IDs for all providers in one pipe call
+    // Fetch episode IDs for all providers in one pipe call (anilistId must be a number)
     var epData = null;
-    try { epData = await this.pipe("episodes", { anilistId: String(id) }); } catch (e) {}
+    try { epData = await this.pipe("episodes", { anilistId: id }); } catch (e) {}
     var providers = epData && epData.providers ? epData.providers : {};
 
-    // Build (provider, category, episodeId) triples from the response
+    // Build (provider, category, episodeId) triples
+    // Try preferred providers first; if none found, fall back to whatever providers exist
     var combos = [];
-    for (var pi = 0; pi < provList.length; pi++) {
-      var prov = provList[pi];
+    var allProvKeys = Object.keys(providers);
+    var tryProviders = (function() {
+      for (var pi = 0; pi < provList.length; pi++) {
+        if (providers[provList[pi]]) return provList;
+      }
+      return allProvKeys; // fallback: use any available provider
+    })();
+
+    for (var pi = 0; pi < tryProviders.length; pi++) {
+      var prov = tryProviders[pi];
       var provData = providers[prov];
       if (!provData || !provData.episodes) continue;
       for (var ai = 0; ai < audioList.length; ai++) {
@@ -361,7 +395,8 @@ class DefaultExtension extends MProvider {
         if (!Array.isArray(epList)) continue;
         for (var ei = 0; ei < epList.length; ei++) {
           if (String(epList[ei].number) === String(num) && epList[ei].id) {
-            combos.push({ prov: prov, cat: cat, epid: epList[ei].id });
+            // Decode then re-encode the episode ID to match what the sources endpoint expects
+            combos.push({ prov: prov, cat: cat, epid: this.encodeId(this.decodeId(epList[ei].id)) });
             break;
           }
         }
@@ -500,6 +535,16 @@ class DefaultExtension extends MProvider {
           value: "71951034f8fbcf53d89db52ceb3dc22c",
           dialogTitle: "Pipe obfuscation key",
           dialogMessage: "32-character hex string",
+        },
+      },
+      {
+        key: "miruro_cf_cookie",
+        editTextPreference: {
+          title: "Cloudflare clearance cookie (optional)",
+          summary: "If streams fail: open miruro.to in browser → DevTools → Application → Cookies → copy cf_clearance value and paste here",
+          value: "",
+          dialogTitle: "cf_clearance cookie value",
+          dialogMessage: "Paste the cf_clearance cookie value from your browser",
         },
       },
     ];
