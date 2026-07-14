@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.1",
+    "version": "0.3.2",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -412,11 +412,21 @@ class DefaultExtension extends MProvider {
     return [];
   }
 
-  // Call the MegaPlay getSources API for a known data-id and build stream list
+  // Call the MegaPlay getSources API for a known data-id and build stream list.
+  // Tries getSources first; if it returns no usable streams (e.g. mewstream CDN is
+  // CF-blocked for certain anime), falls back to getSourcesNew which routes to nekostream.
   async fetchMegaplaySourcesById(dataId, refererUrl, audioType, audioLabel) {
+    var streams = await this._fetchMegaplayEndpoint("getSources", dataId, refererUrl, audioType, audioLabel);
+    if (streams.length === 0) {
+      streams = await this._fetchMegaplayEndpoint("getSourcesNew", dataId, refererUrl, audioType, audioLabel);
+    }
+    return streams;
+  }
+
+  async _fetchMegaplayEndpoint(endpoint, dataId, refererUrl, audioType, audioLabel) {
     var streams = [];
     try {
-      var res = await this.client.get("https://megaplay.buzz/stream/getSources?id=" + dataId, {
+      var res = await this.client.get("https://megaplay.buzz/stream/" + endpoint + "?id=" + dataId, {
         "User-Agent": this.ua,
         "Referer": refererUrl,
         "X-Requested-With": "XMLHttpRequest",
@@ -439,10 +449,14 @@ class DefaultExtension extends MProvider {
         var src = sourceList[s];
         var fileUrl = src.file || src.url;
         if (!fileUrl) continue;
+        // mewstream CDN is Cloudflare-blocked — skip it to avoid silent download failures
+        if (fileUrl.indexOf("mewstream") >= 0) continue;
         if (fileUrl.indexOf(".m3u8") >= 0) {
           var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
           if (resolved.kind === "master") {
             for (var v = 0; v < resolved.variants.length; v++) {
+              // Skip mewstream variant URLs too
+              if (resolved.variants[v].url.indexOf("mewstream") >= 0) continue;
               streams.push({ url: resolved.variants[v].url, originalUrl: fileUrl, quality: resolved.variants[v].label + " - MegaPlay [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
             }
           } else if (resolved.kind === "flat") {
