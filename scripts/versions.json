@@ -6,15 +6,15 @@
             "langs": "en",
             "lastUpd": 1784056247.770826
         },
-        "ReadComicOnline": {
-            "name": "ReadComicOnline",
-            "version": "0.3.1",
-            "langs": "en",
-            "lastUpd": 1779415180.160092
-        },
         "Weeb Central": {
             "name": "Weeb Central",
             "version": "0.1.1",
+            "langs": "en",
+            "lastUpd": 1779415180.160092
+        },
+        "ReadComicOnline": {
+            "name": "ReadComicOnline",
+            "version": "0.3.1",
             "langs": "en",
             "lastUpd": 1779415180.160092
         },
@@ -34,9 +34,9 @@
     "anime": {
         "HiAnime": {
             "name": "HiAnime",
-            "version": "0.3.6",
+            "version": "0.3.1",
             "langs": "en",
-            "lastUpd": 1784056262.796065
+            "lastUpd": 1784056298.83743
         },
         "Miruro": {
             "name": "Miruro",
