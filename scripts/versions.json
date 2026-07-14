@@ -1,14 +1,20 @@
 {
     "manga": {
-        "Weeb Central": {
-            "name": "Weeb Central",
-            "version": "0.1.1",
+        "MangaFire": {
+            "name": "MangaFire",
+            "version": "0.1.0",
             "langs": "en",
-            "lastUpd": 1779415180.160092
+            "lastUpd": 1784056247.770826
         },
         "ReadComicOnline": {
             "name": "ReadComicOnline",
             "version": "0.3.1",
+            "langs": "en",
+            "lastUpd": 1779415180.160092
+        },
+        "Weeb Central": {
+            "name": "Weeb Central",
+            "version": "0.1.1",
             "langs": "en",
             "lastUpd": 1779415180.160092
         },
@@ -28,9 +34,9 @@
     "anime": {
         "HiAnime": {
             "name": "HiAnime",
-            "version": "0.3.1",
+            "version": "0.3.6",
             "langs": "en",
-            "lastUpd": 1784055904.644573
+            "lastUpd": 1784056262.796065
         },
         "Miruro": {
             "name": "Miruro",
