@@ -3,11 +3,11 @@ const mangayomiSources = [
     "name": "Anidap",
     "id": 543219876,
     "lang": "en",
-    "baseUrl": "https://anidap.se",
+    "baseUrl": "https://anidap.lol",
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.26",
+    "version": "1.5.27",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -24,8 +24,84 @@ const mangayomiSources = [
   },
 ];
 
-// chad.anidap.se is the dedicated REST API subdomain (no Cloudflare)
-var CHAD = "https://chad.anidap.se/rest/api";
+// chad.anidap.lol is the dedicated REST API subdomain (site moved from anidap.se to anidap.lol)
+var CHAD = "https://chad.anidap.lol/rest/api";
+
+// ─── URL transform helpers ────────────────────────────────────────────────────
+//
+// Derived from anidap.lol/assets/api-9brnPJZ5.js (bundle as of 2026-07-14).
+//
+// Providers with complex transforms:
+//   beep  → path extraction    → bd.24stream.xyz/media{path}
+//   yuki  → uwu CDN proxy      → {cdn}.aniwatchtv.site/uwu/{encoded}
+//   uwu   → uwu CDN proxy      → {cdn}.aniwatchtv.site/uwu/{encoded}
+//   miku  → uwu CDN proxy      → {cdn}.aniwatchtv.site/uwu/{encoded}
+//   shiro → crs proxy (xorHex) → crs.24stream.xyz/media/{hex}&origin=kem.clvd.xyz
+//   kami  → crs proxy (xorHex) → crs.24stream.xyz/media/{hex}&origin=krussdomi.com
+//   vee   → crs proxy (xorHex) → crs.24stream.xyz/media/{hex}&origin=animeonsen.xyz
+//   mimi  → preprocessing only → hawk.aniwatchtv.site/media/{rest}
+//   mochi → string replace     → mp4.24stream.xyz/storage
+//   kiwi, loli, sora, zone, beep (if already bd.*) — identity after preprocessing
+//
+// Preprocessing (applied to ALL providers before provider-specific transform):
+//   vivibebe.site/public/stream/ → hawk.aniwatchtv.site/media/
+
+// XOR-with-137 hex encoder — used by crs.24stream.xyz proxy (b() in site JS)
+function _xorHex137(url) {
+  var r = "";
+  for (var i = 0; i < url.length; i++) {
+    var b = url.charCodeAt(i) ^ 137;
+    r += (b < 16 ? "0" : "") + b.toString(16);
+  }
+  return r;
+}
+
+// URL-safe base64 encoder (avoids btoa dependency) — for uwu CDN proxy
+function _b64url(bytes) {
+  var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  var r = "";
+  for (var i = 0; i < bytes.length; i += 3) {
+    var b0 = bytes[i];
+    var b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    var b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    r += t[b0 >> 2];
+    r += t[((b0 & 3) << 4) | (b1 >> 4)];
+    r += i + 1 < bytes.length ? t[((b1 & 15) << 2) | (b2 >> 6)] : "=";
+    r += i + 2 < bytes.length ? t[b2 & 63] : "=";
+  }
+  while (r.charAt(r.length - 1) === "=") r = r.slice(0, -1);
+  return r.replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+// N() from site JS: XOR-encodes (url + \0 + origin) with fixed key → base64url
+var _UWU_KEY = "10b06cdc1ca48c9fb0b94af97cc040cf";
+var _UWU_CDN = [
+  "https://cx.aniwatchtv.site",
+  "https://nsx.aniwatchtv.site",
+  "https://pro.aniwatchtv.site",
+  "https://rl2.aniwatchtv.site",
+  "https://rrl.aniwatchtv.site"
+];
+var _uwuCounter = 0;
+
+function _encodeUwu(url, origin) {
+  var urlB = [], origB = [];
+  for (var i = 0; i < url.length;    i++) urlB.push(url.charCodeAt(i) & 255);
+  for (var i = 0; i < origin.length; i++) origB.push(origin.charCodeAt(i) & 255);
+  var combined = new Uint8Array(urlB.length + 1 + origB.length);
+  for (var i = 0; i < urlB.length; i++)  combined[i] = urlB[i];
+  combined[urlB.length] = 0;
+  for (var i = 0; i < origB.length; i++) combined[urlB.length + 1 + i] = origB[i];
+  for (var i = 0; i < combined.length; i++)
+    combined[i] ^= _UWU_KEY.charCodeAt(i % _UWU_KEY.length);
+  return _b64url(combined);
+}
+
+function _uwuTransform(url, origin) {
+  var cdn = _UWU_CDN[_uwuCounter % _UWU_CDN.length];
+  _uwuCounter++;
+  return cdn + "/uwu/" + _encodeUwu(url, origin);
+}
 
 // ─── Slug cache ───────────────────────────────────────────────────────────────
 //
@@ -343,66 +419,52 @@ class DefaultExtension extends MProvider {
 
   // ── URL transformation ─────────────────────────────────────────────────────
   //
-  // Derived from anidap.se/assets/api-BgbRfQAC.js transform map:
-  //
-  //   uwu:   regex-replace vault-*.owocdn.top/stream/ → uwu.24stream.xyz/storage/
-  //   mochi: string-replace tools.fast4speed.rsvp    → mp4.24stream.xyz/storage
-  //   miku:  regex-replace any origin               → ply.24stream.xyz/media/
-  //   wave:  regex-replace any origin               → wv.24stream.xyz/
-  //
-  //   The following providers use origin-swap (replaceOrigin):
-  //   nuri → rapid-cloud.co   shiro → kem.clvd.xyz      kami → krussdomi.com
-  //   yuki → megaplay.buzz    koto  → megacloud.blog/    miru → senshi.live/
-  //   maze → ayy-eu.1stkmgv1.com    kiwi  → 4spromax.site/
-  //   mimi → otakuhg.site     zaza  → anizone.to
-  //
-  //   vee, beep: identity (no transform).
-
-  // Replace only the scheme+host part of a URL, preserving path/query/hash.
-  replaceOrigin(url, newOrigin) {
-    if (!url) return url;
-    var protoEnd = url.indexOf("://");
-    if (protoEnd < 0) return url;
-    var pathStart = url.indexOf("/", protoEnd + 3);
-    var path = pathStart >= 0 ? url.substring(pathStart) : "/";
-    return newOrigin.replace(/\/$/, "") + path;
-  }
+  // Mirrors the HOST_HANDLERS map from anidap.lol/assets/api-9brnPJZ5.js.
+  // See module-level helpers (_xorHex137, _uwuTransform) for the encoding.
 
   transformUrl(url, providerId) {
     if (!url) return url;
+
+    // Preprocessing — applied before any provider-specific transform
+    url = url.replace(
+      "https://vivibebe.site/public/stream/",
+      "https://hawk.aniwatchtv.site/media/"
+    );
+
     switch (providerId) {
-      // ── regex / string replace ─────────────────────────────────────────────
-      case "uwu":
-        return url.replace(
-          /https:\/\/vault-\d+\.(owo|uwu)cdn\.top\/stream\//,
-          "https://uwu.24stream.xyz/storage/"
-        );
+      // Path extraction → bd.24stream.xyz/media (strips /r2 prefix)
+      case "beep":
+        if (url.startsWith("https://bd.24stream.xyz/media")) return url;
+        if (url.startsWith("/"))
+          return "https://bd.24stream.xyz/media" + url.replace("/r2", "");
+        return "https://bd.24stream.xyz/media" +
+          url.replace(/https?:\/\/[^/]+/, "").replace("/r2", "");
+
+      // String replace — same target as before
       case "mochi":
         return url.replace(
           "https://tools.fast4speed.rsvp",
           "https://mp4.24stream.xyz/storage"
         );
-      case "miku":
-        return url.replace(
-          /https:\/\/[^/]+\//,
-          "https://ply.24stream.xyz/media/"
-        );
-      case "wave":
-        return url.replace(/https?:\/\/[^/]+\//, "https://wv.24stream.xyz/");
 
-      // ── origin-swap providers ──────────────────────────────────────────────
-      case "shiro": return this.replaceOrigin(url, "https://kem.clvd.xyz");
-      case "kami":  return this.replaceOrigin(url, "https://krussdomi.com");
-      case "yuki":  return this.replaceOrigin(url, "https://megaplay.buzz");
-      case "koto":  return this.replaceOrigin(url, "https://megacloud.blog");
-      case "miru":  return this.replaceOrigin(url, "https://senshi.live");
-      case "maze":  return this.replaceOrigin(url, "https://ayy-eu.1stkmgv1.com");
-      case "zaza":  return this.replaceOrigin(url, "https://anizone.to");
+      // uwu CDN proxy (rotating CDN, compound base64url encoding)
+      case "yuki": return _uwuTransform(url, "https://megaplay.buzz");
+      case "uwu":  return _uwuTransform(url, "https://kwik.cx/");
+      case "miku": return _uwuTransform(url, "https://allanime.uns.bio");
 
-      // ── identity providers (URL returned by API is already correct) ────────
-      // kiwi: site JS confirms kiwi:t=>t — no transform needed
-      // mimi: site JS confirms mimi:t=>t — no transform needed
-      // vee, beep, zone: also identity
+      // crs proxy (XOR-137 hex encoding + origin hint)
+      case "shiro":
+        return "https://crs.24stream.xyz/media/" + _xorHex137(url) +
+          "&origin=https://kem.clvd.xyz/";
+      case "kami":
+        return "https://crs.24stream.xyz/media/" + _xorHex137(url) +
+          "&origin=https://krussdomi.com";
+      case "vee":
+        if (url.startsWith("https://cdn.animeonsen.xyz")) return url;
+        return "https://crs.24stream.xyz/media/" + _xorHex137(url) +
+          "&origin=https://www.animeonsen.xyz/";
+
+      // Identity after preprocessing: kiwi, mimi, loli, sora, and any unknown provider
       default: return url;
     }
   }
@@ -621,11 +683,12 @@ class DefaultExtension extends MProvider {
         var sources = srcData.sources || [];
         var tracks  = srcData.tracks  || [];
 
-        // Use the Referer returned by the API — CDNs check it for hotlink
-        // protection. Without it the server returns 403 / an HTML error page.
+        // Forward Referer and Origin from the API response — CDNs check
+        // these for hotlink protection; without them the CDN returns 403.
         var apiHdrs = srcData.headers || {};
         var streamHdrs = { "User-Agent": this.ua };
         if (apiHdrs.Referer) streamHdrs.Referer = apiHdrs.Referer;
+        if (apiHdrs.Origin)  streamHdrs.Origin  = apiHdrs.Origin;
 
         var subtitles = [];
         (tracks || []).forEach(function(t) {
@@ -684,8 +747,8 @@ class DefaultExtension extends MProvider {
         key: "anidap_base_url",
         editTextPreference: {
           title: "Override base URL",
-          summary: "Change if the site moves to a new domain",
-          value: "https://anidap.se",
+          summary: "Site moved to anidap.lol — reset this if you set anidap.se before",
+          value: "https://anidap.lol",
           dialogTitle: "Override base URL",
           dialogMessage: "",
         },
@@ -715,9 +778,9 @@ class DefaultExtension extends MProvider {
         listPreference: {
           title: "Preferred server",
           summary: "Server tried first for playback. All servers appear in the quality picker.",
-          valueIndex: 1,
-          entries: ["Auto (API default)", "Kiwi", "UWU", "Beep", "MIMI", "Yuki", "Mochi", "Wave", "Vee"],
-          entryValues: ["auto", "kiwi", "uwu", "beep", "mimi", "yuki", "mochi", "wave", "vee"],
+          valueIndex: 2,
+          entries: ["Auto (API default)", "Beep", "Kiwi", "MIMI", "Yuki", "UWU", "Sora", "Loli"],
+          entryValues: ["auto", "beep", "kiwi", "mimi", "yuki", "uwu", "sora", "loli"],
         },
       },
       {
