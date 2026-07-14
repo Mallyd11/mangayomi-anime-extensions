@@ -1,5 +1,11 @@
 {
     "manga": {
+        "MangaFire": {
+            "name": "MangaFire",
+            "version": "0.2.0",
+            "langs": "en",
+            "lastUpd": 1784060682.345371
+        },
         "ReadComicOnline": {
             "name": "ReadComicOnline",
             "version": "0.3.1",
@@ -43,12 +49,6 @@
             "version": "6.1.0",
             "langs": "en",
             "lastUpd": 1784060668.375547
-        },
-        "AniCove": {
-            "name": "AniCove",
-            "version": "0.3.5",
-            "langs": "en",
-            "lastUpd": 1783632992.765798
         },
         "AniKoto": {
             "name": "AniKoto",
