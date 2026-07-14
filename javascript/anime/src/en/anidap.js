@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.27",
+    "version": "1.5.28",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -177,7 +177,11 @@ class DefaultExtension extends MProvider {
   }
 
   getBaseUrl() {
-    return this.getPreference("anidap_base_url") || this.source.baseUrl;
+    var url = this.getPreference("anidap_base_url");
+    // Auto-migrate: anidap.se is now a static landing page — always use anidap.lol.
+    // Stored preferences from old installs still say anidap.se, so override them here.
+    if (!url || url === "https://anidap.se") return "https://anidap.lol";
+    return url;
   }
 
   // Headers for requests to anidap.se (Remix .data routes).

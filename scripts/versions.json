@@ -4,7 +4,7 @@
             "name": "MangaFire",
             "version": "0.2.0",
             "langs": "en",
-            "lastUpd": 1784060682.345371
+            "lastUpd": 1784062928.823875
         },
         "Weeb Central": {
             "name": "Weeb Central",
@@ -32,59 +32,53 @@
         }
     },
     "anime": {
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.3.1",
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.5.28",
             "langs": "en",
-            "lastUpd": 1784062013.402752
+            "lastUpd": 1784062928.823875
         },
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.2.2",
             "langs": "en",
-            "lastUpd": 1784061242.759119
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.27",
-            "langs": "en",
-            "lastUpd": 1784060668.375547
-        },
-        "Miruro": {
-            "name": "Miruro",
-            "version": "6.1.0",
-            "langs": "en",
-            "lastUpd": 1784060668.375547
-        },
-        "MyroniX": {
-            "name": "MyroniX",
-            "version": "0.2.3",
-            "langs": "en",
-            "lastUpd": 1783632992.765798
+            "lastUpd": 1784062928.823875
         },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.3.9",
             "langs": "en",
-            "lastUpd": 1783632992.765798
+            "lastUpd": 1784057305.837381
         },
         "Animetsu": {
             "name": "Animetsu",
             "version": "1.5.1",
             "langs": "en",
-            "lastUpd": 1783632992.765798
+            "lastUpd": 1784057305.837381
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.3.6",
+            "langs": "en",
+            "lastUpd": 1784057305.837381
+        },
+        "MyroniX": {
+            "name": "MyroniX",
+            "version": "0.2.3",
+            "langs": "en",
+            "lastUpd": 1784057305.837381
         },
         "AnimeParadise": {
             "name": "AnimeParadise",
             "version": "0.3.3",
             "langs": "en",
-            "lastUpd": 1781556784.385987
+            "lastUpd": 1779565217.520518
         },
         "AnimeHeaven": {
             "name": "AnimeHeaven",
             "version": "0.0.7",
             "langs": "en",
-            "lastUpd": 1781556784.385987
+            "lastUpd": 1779564190.256346
         }
     },
     "novel": {
