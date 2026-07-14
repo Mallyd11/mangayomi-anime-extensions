@@ -20,15 +20,14 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Downloads | Sub/Dub | Last Updated |
 |------|---------|-----------|---------|--------------|
-| AniKoto | 0.3.9 | Yes | Sub+Dub | 2026/07/09 |
-| Anidap | 1.5.27 | No | Sub+Dub | 2026/07/14 |
-| AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/06/15 |
-| AnimeParadise | 0.3.3 | No | Sub Only | 2026/06/15 |
-| Animetsu | 1.5.1 | No | Sub+Dub | 2026/07/09 |
-| HiAnime | 0.3.1 | Yes | Sub+Dub | 2026/07/14 |
+| AniKoto | 0.3.9 | Yes | Sub+Dub | 2026/07/14 |
+| Anidap | 1.5.28 | No | Sub+Dub | 2026/07/14 |
+| AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/05/23 |
+| AnimeParadise | 0.3.3 | No | Sub Only | 2026/05/23 |
+| Animetsu | 1.5.1 | No | Sub+Dub | 2026/07/14 |
+| HiAnime | 0.3.6 | Yes | Sub+Dub | 2026/07/14 |
 | JustAnime | 0.2.2 | Yes | Sub+Dub | 2026/07/14 |
-| Miruro | 6.1.0 | Yes | Sub+Dub | 2026/07/14 |
-| MyroniX | 0.2.3 | Yes | Sub+Dub | 2026/07/09 |
+| MyroniX | 0.2.3 | Yes | Sub+Dub | 2026/07/14 |
 
 ## Novel
 
