@@ -2,9 +2,9 @@
     "manga": {
         "MangaFire": {
             "name": "MangaFire",
-            "version": "0.1.0",
+            "version": "0.2.0",
             "langs": "en",
-            "lastUpd": 1784056247.770826
+            "lastUpd": 1784056661.225285
         },
         "Weeb Central": {
             "name": "Weeb Central",

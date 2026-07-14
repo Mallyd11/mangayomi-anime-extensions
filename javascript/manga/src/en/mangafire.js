@@ -11,7 +11,7 @@ const mangayomiSources = [
     "isManga": true,
     "itemType": 0,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.2.0",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "manga/src/en/mangafire.js",
@@ -197,7 +197,14 @@ class DefaultExtension extends MProvider {
     );
     var data = JSON.parse(res.body).data;
 
-    var chapters = [];
+    var showUnofficial = false;
+    try {
+      showUnofficial = !!(await this.getPreference(
+        "mangafire_pref_show_unofficial"
+      ));
+    } catch (e) {}
+
+    var rawChapters = [];
     var page = 1;
     while (true) {
       var chRes = await this.client.get(
@@ -205,18 +212,33 @@ class DefaultExtension extends MProvider {
         this.getHeaders()
       );
       var chData = JSON.parse(chRes.body);
-      for (var chap of chData.items || []) {
-        var label = `Chapter ${chap.number}${chap.name ? ": " + chap.name : ""}`;
-        if (chap.type && chap.type !== "official") label += " [Unofficial]";
-        chapters.push({
-          name: label,
-          url: `/title/${data.hid}-${data.slug}/chapter/${chap.id}`,
-          dateUpload: (chap.createdAt * 1000).toString(),
-        });
-      }
+      rawChapters.push(...(chData.items || []));
       if (!chData.meta || !chData.meta.hasNext) break;
       page++;
     }
+
+    var chapterItems = rawChapters;
+    if (!showUnofficial) {
+      // Hide unofficial duplicates when an official release of the same
+      // number exists; keep unofficial chapters that have no official
+      // counterpart yet (e.g. the newest chapter ahead of the official release).
+      var officialNumbers = new Set(
+        rawChapters.filter((c) => c.type === "official").map((c) => c.number)
+      );
+      chapterItems = rawChapters.filter(
+        (c) => c.type === "official" || !officialNumbers.has(c.number)
+      );
+    }
+
+    var chapters = chapterItems.map((chap) => {
+      var label = `Chapter ${chap.number}${chap.name ? ": " + chap.name : ""}`;
+      if (chap.type && chap.type !== "official") label += " [Unofficial]";
+      return {
+        name: label,
+        url: `/title/${data.hid}-${data.slug}/chapter/${chap.id}`,
+        dateUpload: (chap.createdAt * 1000).toString(),
+      };
+    });
 
     return {
       name: data.title,
@@ -425,6 +447,15 @@ class DefaultExtension extends MProvider {
           title: "Include mature content",
           summary:
             "Also fetch erotica/pornographic rated titles and remove the default Ecchi/Adult/Hentai/Smut exclusion applied to Popular, Latest and genre-only browsing.",
+          value: false,
+        },
+      },
+      {
+        key: "mangafire_pref_show_unofficial",
+        switchPreferenceCompat: {
+          title: "Show unofficial chapters",
+          summary:
+            "Show fan/unofficial chapter releases even when an official release of the same number exists. Off by default, which hides the unofficial duplicate but still shows unofficial chapters that have no official counterpart yet.",
           value: false,
         },
       },
