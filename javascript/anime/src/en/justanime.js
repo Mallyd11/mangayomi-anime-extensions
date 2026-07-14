@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -225,13 +225,13 @@ class DefaultExtension extends MProvider {
           var typeData = data[type];
           if (!typeData || !typeData.sources) continue;
 
-          // Use headers the API tells us to use; fall back to safe defaults
-          var apiHeaders = typeData.headers || {};
+          // MegaPlay CDN (mewstream.buzz / ovexa.buzz) requires these exact headers
+          // for both streaming and segment downloads; reading from API returns wrong Referer
           var streamHeaders = {
             "User-Agent": ua,
-            "Referer": apiHeaders["Referer"] || "https://justanime.to/",
+            "Referer": "https://megaplay.buzz/",
+            "Origin": "https://megaplay.buzz",
           };
-          if (apiHeaders["Origin"]) streamHeaders["Origin"] = apiHeaders["Origin"];
 
           // Collect subtitles
           var subtitles = [];
