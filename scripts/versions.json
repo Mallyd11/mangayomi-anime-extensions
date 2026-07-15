@@ -32,12 +32,6 @@
         }
     },
     "anime": {
-        "MKissa": {
-            "name": "MKissa",
-            "version": "0.1.4",
-            "langs": "en",
-            "lastUpd": 1784154943.047005
-        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.3.1",
