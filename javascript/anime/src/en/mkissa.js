@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mkissa.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/mkissa.js",
     "isManga": false,
     "isNsfw": false,
@@ -286,10 +286,19 @@ class DefaultExtension extends MProvider {
     return 5; // unknown
   }
 
+  // Accepts the list-item format ("showId|epHint") or the canonical detail
+  // link this extension itself returns ("{baseUrl}/anime/{showId}") — Mangayomi
+  // re-calls getDetail with the stored canonical link once an anime is in the
+  // library, not just the original list link.
   async getDetail(url) {
-    var pipe = url.indexOf("|");
-    var showId = pipe >= 0 ? url.substring(0, pipe) : url;
-    var epHint = pipe >= 0 ? url.substring(pipe + 1) : "1";
+    var raw = url;
+    var base = this.source.baseUrl + "/anime/";
+    if (raw.indexOf(base) === 0) raw = raw.slice(base.length);
+    var pipe = raw.indexOf("|");
+    var showId = pipe >= 0 ? raw.substring(0, pipe) : raw;
+    var epHint = pipe >= 0 ? raw.substring(pipe + 1) : "1";
+    var slash = showId.indexOf("/");
+    if (slash >= 0) showId = showId.substring(0, slash);
 
     var show = await this.fetchShow(showId, epHint);
     if (!show) throw new Error("MKissa: could not load show " + showId);
