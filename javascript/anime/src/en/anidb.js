@@ -7,11 +7,11 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidb.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/anidb.js",
     "isManga": false,
     "isNsfw": false,
-    "hasCloudflare": true,
+    "hasCloudflare": false,
     "isFullData": false,
     "appMinVerReq": "0.5.0",
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/anidb.js",
@@ -37,6 +37,7 @@ class DefaultExtension extends MProvider {
     return {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
+      "Accept-Encoding": "identity",
     };
   }
 
@@ -342,13 +343,13 @@ class DefaultExtension extends MProvider {
       var label = isSub ? "Sub" : ((lang.name || lang.code) + " Dub");
 
       try {
-        var res = await this.client.get(lang.embed_url, streamHeaders);
+        var res = await this.client.get(lang.embed_url, this.headers);
         var body = res.body || "";
         var m = body.match(/file:\s*['"]([^'"]+\.m3u8)['"]/);
         if (!m) continue;
         var masterUrl = m[1];
 
-        var variants = await this.resolveMasterPlaylist(masterUrl, streamHeaders);
+        var variants = await this.resolveMasterPlaylist(masterUrl, this.headers);
         if (variants.length > 0) {
           for (var v = 0; v < variants.length; v++) {
             var entry = {
