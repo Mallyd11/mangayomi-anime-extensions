@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mkissa.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/mkissa.js",
     "isManga": false,
     "isNsfw": false,
@@ -43,12 +43,15 @@ const mangayomiSources = [
 // a real browser.
 //
 // Video sourceUrls come back either as a direct embed URL, or (for the site's
-// AllAnime-native mirrors) as "--<hex>" where hex-decoded-then-XOR-56'd bytes
-// yield a relative "/apivtwo/clock?id=..." path — AllAnime's well-known clock
-// endpoint (https://api.allanime.day) that resolves to real HLS/MP4 links.
-// Only those AllAnime-native sources are resolved here; the other embeds
-// (Filemoon/bysekoze, OK.ru, Vidnest, MP4Upload) each need their own bespoke
-// extractor that hasn't been implemented yet, so they're skipped.
+// AllAnime-native mirrors, labelled e.g. "Luf-Mp4"/"Ak") as "--<hex>" where
+// hex-decoded-then-XOR-56'd bytes yield a relative "/apivtwo/clock?id=..."
+// path — AllAnime's clock endpoint (https://api.allanime.day). That host
+// hard-Cloudflare-challenges every plain request with no client-side bypass,
+// so those sources are unresolvable and skipped. Only "Vn-Hls" (vidnest.io,
+// a Doodstream-style host — POST file_code to /dl, parse the returned
+// jwplayer() sources block for direct signed .mp4 links) is implemented.
+// The other embeds (Filemoon/bysekoze — needs solving a proof-of-work
+// challenge, OK.ru, MP4Upload) each need their own bespoke extractor.
 
 var AA_SBOX = [
   0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
@@ -347,24 +350,45 @@ class DefaultExtension extends MProvider {
 
   // ── Video sources ─────────────────────────────────────────────────────────
 
-  async resolveClockSource(relativePath, sourceName, type) {
+  // The AllAnime-native sources ("Luf-Mp4"/"Ak") decode to a relative
+  // "/apivtwo/clock?id=..." path meant to be resolved against
+  // api.allanime.day — but that host hard-Cloudflare-challenges every plain
+  // request (confirmed: 403 "Just a moment..." even with a browser UA/Referer),
+  // and there's no client-side-only bypass for a third-party domain. Skipped.
+  //
+  // vidnest.io ("Vn-Hls") is a Doodstream-style host and isn't Cloudflare
+  // gated: POST the embed's file_code to /dl (op=embed) and it returns an
+  // HTML page with a plain `jwplayer(...).setup({sources:[{file,label}]})`
+  // block containing direct, already-signed .mp4 CDN links.
+  async resolveVidnestSource(embedUrl, sourceName, type) {
     var out = [];
     try {
-      var clockHeaders = { "User-Agent": this.ua, "Referer": "https://allanime.day/" };
-      var res = await new Client().get("https://api.allanime.day" + relativePath, clockHeaders);
-      var json = JSON.parse(res.body);
-      var links = json.links || [];
-      for (var i = 0; i < links.length; i++) {
-        var l = links[i];
-        if (!l.link) continue;
-        var subtitles = (l.subtitles || []).filter(function(t) { return t && t.src; })
-          .map(function(t) { return { url: t.src, label: t.lang || "Unknown" }; });
+      var m = embedUrl.match(/vidnest\.io\/e\/([^/?#]+)/);
+      if (!m) return out;
+      var fileCode = m[1];
+      var dlHeaders = {
+        "User-Agent": this.ua,
+        "Referer": embedUrl,
+        "Content-Type": "application/x-www-form-urlencoded",
+      };
+      var body = "op=embed&file_code=" + encodeURIComponent(fileCode) + "&auto=1&referer=";
+      var res = await new Client().post("https://vidnest.io/dl", dlHeaders, body);
+      var html = res.body || "";
+      var setupStart = html.indexOf('jwplayer("vplayer").setup(');
+      if (setupStart < 0) return out;
+      var setupEnd = html.indexOf("});", setupStart);
+      var block = setupEnd >= 0 ? html.slice(setupStart, setupEnd) : html.slice(setupStart);
+
+      var streamHeaders = { "Referer": "https://vidnest.io/" };
+      var fileRe = /file\s*:\s*"([^"]+)"\s*,\s*label\s*:\s*"([^"]+)"/g;
+      var fm;
+      while ((fm = fileRe.exec(block)) !== null) {
         out.push({
-          url: l.link,
-          originalUrl: l.link,
-          quality: sourceName + " " + type.toUpperCase() + " [" + (l.resolutionStr || "auto") + "]",
-          headers: l.headers && Object.keys(l.headers).length ? l.headers : clockHeaders,
-          subtitles: subtitles,
+          url: fm[1],
+          originalUrl: fm[1],
+          quality: sourceName + " " + type.toUpperCase() + " [" + fm[2] + "]",
+          headers: streamHeaders,
+          subtitles: [],
         });
       }
     } catch (e) {}
@@ -382,8 +406,11 @@ class DefaultExtension extends MProvider {
       for (var i = 0; i < episode.sourceUrls.length; i++) {
         var s = episode.sourceUrls[i];
         var decoded = this.decodeSourceUrl(s.sourceUrl);
-        if (!decoded || decoded.indexOf("/") !== 0) continue; // only AllAnime-native (clock) sources are resolved
-        var streams = await this.resolveClockSource(decoded, s.sourceName || "Server", type);
+        if (!decoded) continue;
+        var streams = [];
+        if (decoded.indexOf("vidnest.io/e/") >= 0) {
+          streams = await this.resolveVidnestSource(decoded, s.sourceName || "Vidnest", type);
+        }
         out = out.concat(streams);
       }
     } catch (e) {}
@@ -417,7 +444,7 @@ class DefaultExtension extends MProvider {
         key: "mkissa_pref_audio",
         listPreference: {
           title: "Preferred language",
-          summary: "Primary audio track to list first. Only AllAnime-native mirror sources (labelled e.g. \"Luf-Mp4\"/\"Ak\") are resolved to playable streams; other embeds (Filemoon, OK.ru, Vidnest, MP4Upload) are not yet supported.",
+          summary: "Primary audio track to list first. Only the \"Vn-Hls\" (Vidnest) source resolves to a playable stream right now; other listed servers (AllAnime-native, Filemoon, OK.ru, MP4Upload) aren't supported yet.",
           valueIndex: 0,
           entries: ["Sub first, Dub fallback", "Dub first, Sub fallback"],
           entryValues: ["sub", "dub"],
