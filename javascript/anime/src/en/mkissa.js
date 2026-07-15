@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mkissa.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "pkgPath": "anime/src/en/mkissa.js",
     "isManga": false,
     "isNsfw": false,
@@ -379,7 +379,7 @@ class DefaultExtension extends MProvider {
       var setupEnd = html.indexOf("});", setupStart);
       var block = setupEnd >= 0 ? html.slice(setupStart, setupEnd) : html.slice(setupStart);
 
-      var streamHeaders = { "Referer": "https://vidnest.io/" };
+      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://vidnest.io/", "Origin": "https://vidnest.io" };
       var fileRe = /file\s*:\s*"([^"]+)"\s*,\s*label\s*:\s*"([^"]+)"/g;
       var fm;
       while ((fm = fileRe.exec(block)) !== null) {
