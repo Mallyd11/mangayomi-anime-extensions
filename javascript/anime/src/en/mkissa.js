@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://mkissa.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/mkissa.js",
     "isManga": false,
     "isNsfw": false,
@@ -74,6 +74,25 @@ var AA_RCON = [0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40];
 // extension never needs a SHA-256 implementation at runtime.
 var AA_KEY_V1 = [162,84,170,39,196,16,242,151,189,4,186,51,160,192,223,127,244,231,6,191,58,226,114,113,198,112,63,132,231,80,245,82];
 
+// AES T-tables (combined SubBytes+ShiftRows+MixColumns lookups) — precomputed
+// once at module load. QuickJS has no JIT, so a naive per-byte GF(2^8)
+// multiply in the encrypt hot loop is slow enough to blow Mangayomi's isolate
+// call timeout on real responses; T-tables cut a round down to 4 lookups +
+// XORs per column instead of ~16 multiplications.
+function aaGmul(a, b) {
+  var p = 0;
+  for (var i = 0; i < 8; i++) { if (b & 1) p ^= a; var hi = a & 0x80; a = (a << 1) & 0xff; if (hi) a ^= 0x1b; b >>= 1; }
+  return p;
+}
+var AA_T0 = new Array(256), AA_T1 = new Array(256), AA_T2 = new Array(256), AA_T3 = new Array(256);
+for (var aaTi = 0; aaTi < 256; aaTi++) {
+  var aaS = AA_SBOX[aaTi], aaM2 = aaGmul(aaS, 2), aaM3 = aaGmul(aaS, 3);
+  AA_T0[aaTi] = ((aaM2 << 24) | (aaS << 16) | (aaS << 8) | aaM3) >>> 0;
+  AA_T1[aaTi] = ((aaM3 << 24) | (aaM2 << 16) | (aaS << 8) | aaS) >>> 0;
+  AA_T2[aaTi] = ((aaS << 24) | (aaM3 << 16) | (aaM2 << 8) | aaS) >>> 0;
+  AA_T3[aaTi] = ((aaS << 24) | (aaS << 16) | (aaM3 << 8) | aaM2) >>> 0;
+}
+
 class DefaultExtension extends MProvider {
   get ua() {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
@@ -100,6 +119,8 @@ class DefaultExtension extends MProvider {
   }
 
   // ── pure-JS AES-256 (encrypt primitive only, used to drive GCM's CTR keystream) ──
+  // Round keys are packed as 32-bit words (one per state column) so the T-table
+  // hot loop is pure lookups/XORs, no per-byte array allocation.
   aesKeyExpansion256(key) {
     var Nk = 8, Nr = 14, Nb = 4;
     var w = [];
@@ -116,52 +137,40 @@ class DefaultExtension extends MProvider {
       var prev = w[i-Nk];
       w.push([prev[0]^temp[0], prev[1]^temp[1], prev[2]^temp[2], prev[3]^temp[3]]);
     }
-    return w;
-  }
-
-  gmul(a, b) {
-    var p = 0;
-    for (var i = 0; i < 8; i++) {
-      if (b & 1) p ^= a;
-      var hi = a & 0x80;
-      a = (a << 1) & 0xff;
-      if (hi) a ^= 0x1b;
-      b >>= 1;
+    var words = new Array(w.length);
+    for (var j = 0; j < w.length; j++) {
+      words[j] = ((w[j][0] << 24) | (w[j][1] << 16) | (w[j][2] << 8) | w[j][3]) >>> 0;
     }
-    return p;
+    return words;
   }
 
-  aesEncryptBlock256(inBytes, w) {
-    var self = this;
+  aesEncryptBlock256(inBytes, wWords) {
     var Nr = 14;
-    var state = [];
-    for (var c = 0; c < 4; c++) state.push([inBytes[4*c], inBytes[4*c+1], inBytes[4*c+2], inBytes[4*c+3]]);
-    function addRoundKey(round) {
-      for (var c = 0; c < 4; c++) { var word = w[round*4+c]; for (var r = 0; r < 4; r++) state[c][r] ^= word[r]; }
+    var s0 = ((inBytes[0] << 24) | (inBytes[1] << 16) | (inBytes[2] << 8) | inBytes[3]) >>> 0;
+    var s1 = ((inBytes[4] << 24) | (inBytes[5] << 16) | (inBytes[6] << 8) | inBytes[7]) >>> 0;
+    var s2 = ((inBytes[8] << 24) | (inBytes[9] << 16) | (inBytes[10] << 8) | inBytes[11]) >>> 0;
+    var s3 = ((inBytes[12] << 24) | (inBytes[13] << 16) | (inBytes[14] << 8) | inBytes[15]) >>> 0;
+    s0 ^= wWords[0]; s1 ^= wWords[1]; s2 ^= wWords[2]; s3 ^= wWords[3];
+    for (var round = 1; round < Nr; round++) {
+      var b0 = round*4, b1 = round*4+1, b2 = round*4+2, b3 = round*4+3;
+      var t0 = (AA_T0[(s0>>>24)&0xff] ^ AA_T1[(s1>>>16)&0xff] ^ AA_T2[(s2>>>8)&0xff] ^ AA_T3[s3&0xff] ^ wWords[b0]) >>> 0;
+      var t1 = (AA_T0[(s1>>>24)&0xff] ^ AA_T1[(s2>>>16)&0xff] ^ AA_T2[(s3>>>8)&0xff] ^ AA_T3[s0&0xff] ^ wWords[b1]) >>> 0;
+      var t2 = (AA_T0[(s2>>>24)&0xff] ^ AA_T1[(s3>>>16)&0xff] ^ AA_T2[(s0>>>8)&0xff] ^ AA_T3[s1&0xff] ^ wWords[b2]) >>> 0;
+      var t3 = (AA_T0[(s3>>>24)&0xff] ^ AA_T1[(s0>>>16)&0xff] ^ AA_T2[(s1>>>8)&0xff] ^ AA_T3[s2&0xff] ^ wWords[b3]) >>> 0;
+      s0 = t0; s1 = t1; s2 = t2; s3 = t3;
     }
-    function subBytes() { for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) state[c][r] = AA_SBOX[state[c][r]]; }
-    function shiftRows() {
-      for (var r = 1; r < 4; r++) {
-        var tmp = [];
-        for (var c = 0; c < 4; c++) tmp.push(state[(c+r)%4][r]);
-        for (var c = 0; c < 4; c++) state[c][r] = tmp[c];
-      }
-    }
-    function mixColumns() {
-      for (var c = 0; c < 4; c++) {
-        var a0 = state[c][0], a1 = state[c][1], a2 = state[c][2], a3 = state[c][3];
-        state[c][0] = self.gmul(a0,2) ^ self.gmul(a1,3) ^ a2 ^ a3;
-        state[c][1] = a0 ^ self.gmul(a1,2) ^ self.gmul(a2,3) ^ a3;
-        state[c][2] = a0 ^ a1 ^ self.gmul(a2,2) ^ self.gmul(a3,3);
-        state[c][3] = self.gmul(a0,3) ^ a1 ^ a2 ^ self.gmul(a3,2);
-      }
-    }
-    addRoundKey(0);
-    for (var round = 1; round < Nr; round++) { subBytes(); shiftRows(); mixColumns(); addRoundKey(round); }
-    subBytes(); shiftRows(); addRoundKey(Nr);
-    var out = new Array(16);
-    for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) out[4*c+r] = state[c][r];
-    return out;
+    // final round: SubBytes + ShiftRows (no MixColumns), then AddRoundKey
+    var f0 = ((AA_SBOX[(s0>>>24)&0xff]<<24)|(AA_SBOX[(s1>>>16)&0xff]<<16)|(AA_SBOX[(s2>>>8)&0xff]<<8)|AA_SBOX[s3&0xff]) >>> 0;
+    var f1 = ((AA_SBOX[(s1>>>24)&0xff]<<24)|(AA_SBOX[(s2>>>16)&0xff]<<16)|(AA_SBOX[(s3>>>8)&0xff]<<8)|AA_SBOX[s0&0xff]) >>> 0;
+    var f2 = ((AA_SBOX[(s2>>>24)&0xff]<<24)|(AA_SBOX[(s3>>>16)&0xff]<<16)|(AA_SBOX[(s0>>>8)&0xff]<<8)|AA_SBOX[s1&0xff]) >>> 0;
+    var f3 = ((AA_SBOX[(s3>>>24)&0xff]<<24)|(AA_SBOX[(s0>>>16)&0xff]<<16)|(AA_SBOX[(s1>>>8)&0xff]<<8)|AA_SBOX[s2&0xff]) >>> 0;
+    f0 ^= wWords[Nr*4]; f1 ^= wWords[Nr*4+1]; f2 ^= wWords[Nr*4+2]; f3 ^= wWords[Nr*4+3];
+    return [
+      (f0>>>24)&0xff, (f0>>>16)&0xff, (f0>>>8)&0xff, f0&0xff,
+      (f1>>>24)&0xff, (f1>>>16)&0xff, (f1>>>8)&0xff, f1&0xff,
+      (f2>>>24)&0xff, (f2>>>16)&0xff, (f2>>>8)&0xff, f2&0xff,
+      (f3>>>24)&0xff, (f3>>>16)&0xff, (f3>>>8)&0xff, f3&0xff,
+    ];
   }
 
   // GCM data keystream starts at IV || 0x00000002 (0x00000001 is reserved for the tag)
@@ -183,7 +192,11 @@ class DefaultExtension extends MProvider {
     return decodeURIComponent(bytesToStr);
   }
 
-  // Unwraps mkissa's AES-256-GCM response envelope, if present.
+  // Unwraps mkissa's AES-256-GCM response envelope, if present. Returns the
+  // decrypted plaintext parsed as-is (see gql() for the shape normalization —
+  // the plaintext itself isn't consistently shaped between query types: the
+  // episode query decrypts straight to {"episode":...}, but search decrypts to
+  // {"data":{"shows":...}}, an extra wrapper).
   decryptEnvelope(body) {
     var json = JSON.parse(body);
     if (!json.data || typeof json.data.tobeparsed !== "string") return json.data || null;
@@ -191,9 +204,8 @@ class DefaultExtension extends MProvider {
     var version = bytes[0];
     var iv = bytes.slice(1, 13);
     var ctAndTag = bytes.slice(13);
-    var keyBytes = version === 1 ? AA_KEY_V1 : AA_KEY_V1;
-    var plaintext = this.aesGcmDecrypt(keyBytes, iv, ctAndTag);
-    return JSON.parse(plaintext).data;
+    var plaintext = this.aesGcmDecrypt(AA_KEY_V1, iv, ctAndTag); // only version 1 is known/supported
+    return JSON.parse(plaintext);
   }
 
   // ── AllAnime-style "--<hex>" source obfuscation (XOR 0x38 per byte) ──
@@ -212,7 +224,10 @@ class DefaultExtension extends MProvider {
       "?variables=" + encodeURIComponent(JSON.stringify(variables)) +
       "&extensions=" + encodeURIComponent(JSON.stringify({ persistedQuery: { version: 1, sha256Hash: sha256Hash } }));
     var res = await new Client().get(url, this.headers);
-    return this.decryptEnvelope(res.body);
+    var result = this.decryptEnvelope(res.body);
+    // Normalize away the extra "data" wrapper some query types decrypt with.
+    if (result && result.data && !result.shows && !result.episode) result = result.data;
+    return result;
   }
 
   // ── Listings ──────────────────────────────────────────────────────────────
@@ -267,14 +282,18 @@ class DefaultExtension extends MProvider {
   // Show metadata is only returned nested inside a valid episode query — there is
   // no standalone "show(id)" lookup here — so fetch a single known-good episode
   // (the hint carried on the list entry, falling back to "1") to get both.
+  // Fired concurrently (not one-by-one) so a slow/failing combo can't stack up
+  // enough round-trips to blow Mangayomi's isolate call timeout.
   async fetchShow(showId, epHint) {
-    var attempts = [["sub", epHint], ["dub", epHint], ["sub", "1"], ["dub", "1"]];
-    for (var i = 0; i < attempts.length; i++) {
-      try {
-        var data = await this.gql("d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec",
-          { showId: showId, translationType: attempts[i][0], episodeString: attempts[i][1] });
-        if (data && data.episode && data.episode.show) return data.episode.show;
-      } catch (e) {}
+    var self = this;
+    var attempts = [["sub", epHint], ["dub", epHint]];
+    if (epHint !== "1") { attempts.push(["sub", "1"], ["dub", "1"]); }
+    var results = await Promise.all(attempts.map(function(a) {
+      return self.gql("d405d0edd690624b66baba3068e0edc3ac90f1597d898a1ec8db4e5c43c00fec",
+        { showId: showId, translationType: a[0], episodeString: a[1] }).catch(function() { return null; });
+    }));
+    for (var i = 0; i < results.length; i++) {
+      if (results[i] && results[i].episode && results[i].episode.show) return results[i].episode.show;
     }
     return null;
   }
