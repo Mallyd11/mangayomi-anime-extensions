@@ -18,26 +18,20 @@
             "langs": "en",
             "lastUpd": 1779415180.160092
         },
-        "WeLoMa": {
-            "name": "WeLoMa",
-            "version": "1.0.0",
-            "langs": "ja",
-            "lastUpd": 1779410651.044824
-        },
         "Mangapill": {
             "name": "Mangapill",
             "version": "1.0.4",
             "langs": "en",
             "lastUpd": 1779410651.044824
+        },
+        "WeLoMa": {
+            "name": "WeLoMa",
+            "version": "1.0.0",
+            "langs": "ja",
+            "lastUpd": 1779410651.044824
         }
     },
     "anime": {
-        "AniDB": {
-            "name": "AniDB",
-            "version": "0.1.2",
-            "langs": "en",
-            "lastUpd": 1784138395.377136
-        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.3.1",
@@ -94,6 +88,12 @@
         }
     },
     "novel": {
+        "bookReadFree": {
+            "name": "bookReadFree",
+            "version": "0.0.1",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
         "Novelbuddy": {
             "name": "Novelbuddy",
             "version": "0.0.9",
@@ -102,12 +102,6 @@
         },
         "NovelFire": {
             "name": "NovelFire",
-            "version": "0.0.1",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
-        "bookReadFree": {
-            "name": "bookReadFree",
             "version": "0.0.1",
             "langs": "en",
             "lastUpd": 1779410651.044824
