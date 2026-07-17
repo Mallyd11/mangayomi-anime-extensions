@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.9",
+    "version": "0.4.0",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -395,6 +395,7 @@ class DefaultExtension extends MProvider {
       }
       var hdrs = { "User-Agent": this.ua, "Referer": apiHost + "/" };
       var variants = await this._resolveHlsVariants(m3u8, hdrs);
+      if (variants === null) return streams; // CDN blocked (Cloudflare) — skip this server
       if (variants.length > 0) {
         for (var v = 0; v < variants.length; v++) {
           streams.push({ url: variants[v].url, originalUrl: m3u8, quality: variants[v].label + " - " + audioLabel, headers: hdrs, subtitles: subtitles });
@@ -443,6 +444,7 @@ class DefaultExtension extends MProvider {
 
       var hdrs = { "User-Agent": this.ua, "Referer": "https://vidtube.site/" };
       var variants = await this._resolveHlsVariants(m3u8, hdrs);
+      if (variants === null) return streams; // CDN blocked (Cloudflare) — skip this server
       if (variants.length > 0) {
         for (var v = 0; v < variants.length; v++) {
           streams.push({ url: variants[v].url, originalUrl: m3u8, quality: variants[v].label + " - " + audioLabel, headers: hdrs, subtitles: subtitles });
@@ -455,16 +457,18 @@ class DefaultExtension extends MProvider {
   }
 
   // Fetch a master HLS playlist and return one entry per quality variant.
-  // Returns [] if the URL is already a flat media playlist (no #EXT-X-STREAM-INF).
+  // Returns [] if the URL is a flat media playlist (no #EXT-X-STREAM-INF, use as-is).
+  // Returns null if the response is not a valid m3u8 (Cloudflare block, error page, or fetch failure).
   async _resolveHlsVariants(masterUrl, headers) {
-    var variants = [];
     try {
       var res = await this.client.get(masterUrl, headers);
       var body = res.body || "";
-      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return variants; // flat playlist, caller uses as-is
+      if (body.indexOf("#EXTM3U") < 0) return null; // not a valid m3u8 (blocked or error)
+      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return []; // flat media playlist, use master URL as-is
       var lastSlash = masterUrl.lastIndexOf("/");
       var baseDir = lastSlash > 0 ? masterUrl.substring(0, lastSlash + 1) : masterUrl;
       var lines = body.split("\n");
+      var variants = [];
       for (var i = 0; i < lines.length; i++) {
         var line = lines[i].trim();
         if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
@@ -478,72 +482,10 @@ class DefaultExtension extends MProvider {
           break;
         }
       }
-      // Best quality first
-      variants.sort(function(a, b) {
-        return (parseInt(b.label) || 0) - (parseInt(a.label) || 0);
-      });
+      variants.sort(function(a, b) { return (parseInt(b.label) || 0) - (parseInt(a.label) || 0); });
+      return variants;
     } catch (e) {}
-    return variants;
-  }
-
-  // MegaPlay stream extraction via MAL ID — mirrors the HiAnime approach.
-  // megaplay.buzz indexes content by MAL ID so it works for any site.
-  async _fetchMegaplaySources(dataId, referer, audioLabel) {
-    var streams = [];
-    try {
-      var res = await this.client.get(
-        "https://megaplay.buzz/stream/getSources?id=" + dataId,
-        { "User-Agent": this.ua, "Referer": referer, "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" }
-      );
-      var data;
-      try { data = JSON.parse(res.body); } catch (e) { return streams; }
-      if (!data || !data.sources) return streams;
-      var srcList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
-      var hdrs = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
-
-      // Parse subtitle tracks from MegaPlay (present for sub streams)
-      var subtitles = [];
-      if (Array.isArray(data.tracks)) {
-        for (var t = 0; t < data.tracks.length; t++) {
-          var track = data.tracks[t];
-          if (track && track.file && track.kind !== "thumbnails") {
-            subtitles.push({ file: track.file, label: track.label || "Unknown" });
-          }
-        }
-      }
-
-      for (var i = 0; i < srcList.length; i++) {
-        var fileUrl = srcList[i].file || srcList[i].url;
-        if (!fileUrl) continue;
-        if (fileUrl.indexOf(".m3u8") >= 0) {
-          // Resolve master playlist → one stream per quality level
-          var variants = await this._resolveHlsVariants(fileUrl, hdrs);
-          if (variants.length > 0) {
-            for (var v = 0; v < variants.length; v++) {
-              streams.push({ url: variants[v].url, originalUrl: fileUrl, quality: variants[v].label + " - " + audioLabel + " [MegaPlay]", headers: hdrs, subtitles: subtitles });
-            }
-          } else {
-            streams.push({ url: fileUrl, originalUrl: fileUrl, quality: audioLabel + " [MegaPlay]", headers: hdrs, subtitles: subtitles });
-          }
-        } else {
-          streams.push({ url: fileUrl, originalUrl: fileUrl, quality: audioLabel + " [MegaPlay]", headers: hdrs, subtitles: subtitles });
-        }
-      }
-    } catch (e) {}
-    return streams;
-  }
-
-  async _extractMegaplay(malId, epNum, audioType, audioLabel) {
-    var pageUrl = "https://megaplay.buzz/stream/mal/" + malId + "/" + epNum + "/" + audioType;
-    try {
-      var res = await this.client.get(pageUrl, { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" });
-      if (!res || !res.body) return [];
-      var m = res.body.match(/data-id="(\d+)"[^>]*id="megaplay-player"/) ||
-               res.body.match(/id="megaplay-player"[^>]*data-id="(\d+)"/) ||
-               res.body.match(/megaplay-player[\s\S]{0,200}?data-id="(\d+)"/);
-      if (m) return await this._fetchMegaplaySources(m[1], pageUrl, audioLabel);
-    } catch (e) {}
-    return [];
+    return null; // network/parse error
   }
 
   // Fetch malId + timestamp for an episode when the chapter URL is missing them.
@@ -646,22 +588,15 @@ class DefaultExtension extends MProvider {
 
     var subStreams = [], dubStreams = [];
 
-    // Server list — VidPlay / HD / Vidstream / VidCloud (sub+dub mixed, resolved per-server)
-    if (serverPref === "list" || serverPref === "all") {
+    // Server list — VidPlay (VidTube CDN) / HD (MegaPlay CDN) / Vidstream / VidCloud
+    // "megaplay" pref also routes here: MegaPlay streams are served via the HD server entry.
+    if (serverPref !== "mapper") {
       if (!ids) {
         var m2 = await this._fetchEpMeta(slug, epNum);
         if (m2 && m2.ids) ids = m2.ids;
       }
       var listStreams = await this._fetchServerListStreams(ids);
       subStreams = subStreams.concat(listStreams);
-    }
-
-    // MegaPlay via MAL ID
-    if (serverPref === "megaplay" || serverPref === "all") {
-      var mpSub = await this._extractMegaplay(malId, epNum, "sub", "Sub");
-      var mpDub = await this._extractMegaplay(malId, epNum, "dub", "Dub");
-      subStreams = subStreams.concat(mpSub);
-      dubStreams = dubStreams.concat(mpDub);
     }
 
     // Kiwi-Stream via mapper (legacy — mapper no longer returns streaming linkIds)
@@ -702,15 +637,13 @@ class DefaultExtension extends MProvider {
         key: "anikoto_pref_server",
         listPreference: {
           title: "Stream source",
-          summary: "Server List fetches streams from VidPlay/HD/Vidstream via VidTube. MegaPlay uses the MAL ID independently of AniKoto's servers. Kiwi-Stream is legacy and unlikely to work.",
+          summary: "Server List tries each AniKoto server in order (VidPlay → MegaPlay HD → Vidstream → VidCloud) and uses the first that returns a working stream. Kiwi-Stream is legacy and unlikely to work.",
           valueIndex: 0,
           entries: [
-            "MegaPlay (MAL ID)",
-            "Server List (VidPlay / HD / Vidstream)",
-            "All (Server List + MegaPlay)",
+            "Server List (MegaPlay / VidPlay)",
             "Kiwi-Stream (Mapper) [legacy]",
           ],
-          entryValues: ["megaplay", "list", "all", "mapper"],
+          entryValues: ["list", "mapper"],
         },
       },
       {
