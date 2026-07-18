@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.1",
+    "version": "0.3.2",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -426,10 +426,10 @@ class DefaultExtension extends MProvider {
       if (!data || !data.sources) return streams;
       var sourceList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
       var subtitles = [];
-      if (audioType !== "dub" && Array.isArray(data.tracks)) {
+      if (Array.isArray(data.tracks)) {
         for (var t = 0; t < data.tracks.length; t++) {
           var track = data.tracks[t];
-          if (track && track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
+          if (track && track.file && track.kind !== "thumbnails") {
             subtitles.push({ file: track.file, label: track.label || "Unknown" });
           }
         }
