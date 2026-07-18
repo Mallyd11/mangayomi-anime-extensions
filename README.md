@@ -13,8 +13,8 @@ This repository contains the available javascript extension catalogues for the M
 | MangaFire | 0.2.0 | en | 2026/07/14 |
 | ReadComicOnline | 0.3.1 | en | 2026/05/21 |
 | Weeb Central | 0.1.1 | en | 2026/05/21 |
-| Mangapill | 1.0.4 | en | 2026/05/21 |
 | WeLoMa | 1.0.0 | ja | 2026/05/21 |
+| Mangapill | 1.0.4 | en | 2026/05/21 |
 
 ## Anime
 
@@ -34,9 +34,9 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| bookReadFree | 0.0.1 | en | 2026/05/21 |
 | Novelbuddy | 0.0.9 | en | 2026/05/21 |
 | NovelFire | 0.0.1 | en | 2026/05/21 |
+| bookReadFree | 0.0.1 | en | 2026/05/21 |
 
 </details>
 
