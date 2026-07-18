@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.2",
+    "version": "0.3.3",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -425,13 +425,29 @@ class DefaultExtension extends MProvider {
       var data = JSON.parse(res.body);
       if (!data || !data.sources) return streams;
       var sourceList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
-      var subtitles = [];
+      var subtitleUrls = [];
       if (Array.isArray(data.tracks)) {
         for (var t = 0; t < data.tracks.length; t++) {
           var track = data.tracks[t];
           if (track && track.file && track.kind !== "thumbnails") {
-            subtitles.push({ file: track.file, label: track.label || "Unknown" });
+            subtitleUrls.push({ file: track.file, label: track.label || "Unknown" });
           }
+        }
+      }
+      var subtitles = [];
+      for (var su = 0; su < subtitleUrls.length; su++) {
+        try {
+          var vttRes = await this.client.get(subtitleUrls[su].file, {
+            "User-Agent": this.ua,
+            "Referer": "https://megaplay.buzz/",
+          });
+          var vttBody = (vttRes.body || "").trimStart();
+          subtitles.push({
+            file: vttBody.startsWith("WEBVTT") ? vttBody : subtitleUrls[su].file,
+            label: subtitleUrls[su].label,
+          });
+        } catch (e) {
+          subtitles.push(subtitleUrls[su]);
         }
       }
       var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
