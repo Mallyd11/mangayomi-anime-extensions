@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "AnimePahe": {
+            "name": "AnimePahe",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1784412028.658264
+        },
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.2.5",
