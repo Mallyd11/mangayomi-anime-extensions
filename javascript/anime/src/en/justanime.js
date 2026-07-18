@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.2",
+    "version": "0.2.3",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -239,7 +239,7 @@ class DefaultExtension extends MProvider {
           for (var sti = 0; sti < tracks.length; sti++) {
             var track = tracks[sti];
             if (track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
-              subtitles.push({ url: track.file, label: track.label || "Unknown" });
+              subtitles.push({ file: track.file, label: track.label || "Unknown" });
             }
           }
 

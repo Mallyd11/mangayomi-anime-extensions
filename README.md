@@ -13,20 +13,20 @@ This repository contains the available javascript extension catalogues for the M
 | MangaFire | 0.2.0 | en | 2026/07/14 |
 | ReadComicOnline | 0.3.1 | en | 2026/05/21 |
 | Weeb Central | 0.1.1 | en | 2026/05/21 |
-| WeLoMa | 1.0.0 | ja | 2026/05/21 |
 | Mangapill | 1.0.4 | en | 2026/05/21 |
+| WeLoMa | 1.0.0 | ja | 2026/05/21 |
 
 ## Anime
 
 | Name | Version | Downloads | Sub/Dub | Last Updated |
 |------|---------|-----------|---------|--------------|
-| AniKoto | 0.4.0 | Yes | Sub+Dub | 2026/07/17 |
-| Anidap | 1.5.28 | No | Sub+Dub | 2026/07/15 |
+| AniKoto | 0.4.0 | Yes | Sub+Dub | 2026/07/18 |
+| Anidap | 1.5.28 | No | Sub+Dub | 2026/07/18 |
 | AnimeHeaven | 0.0.7 | Yes | Sub Only | 2026/06/15 |
 | AnimeParadise | 0.3.3 | No | Sub Only | 2026/06/15 |
 | Animetsu | 1.5.1 | No | Sub+Dub | 2026/07/09 |
 | HiAnime | 0.3.2 | Yes | Sub+Dub | 2026/07/18 |
-| JustAnime | 0.2.2 | Yes | Sub+Dub | 2026/07/14 |
+| JustAnime | 0.2.3 | Yes | Sub+Dub | 2026/07/18 |
 | Miruro | 6.1.0 | Yes | Sub+Dub | 2026/07/14 |
 | MyroniX | 0.2.3 | Yes | Sub+Dub | 2026/07/09 |
 
@@ -34,9 +34,9 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
+| bookReadFree | 0.0.1 | en | 2026/05/21 |
 | Novelbuddy | 0.0.9 | en | 2026/05/21 |
 | NovelFire | 0.0.1 | en | 2026/05/21 |
-| bookReadFree | 0.0.1 | en | 2026/05/21 |
 
 </details>
 
