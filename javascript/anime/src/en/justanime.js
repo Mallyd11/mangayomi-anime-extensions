@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.4",
+    "version": "0.2.5",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -258,8 +258,10 @@ class DefaultExtension extends MProvider {
               subtitles.push({ file: track.file, label: track.label || "Unknown" });
             }
           }
-          // Mark the first subtitle as default so the player activates it automatically
-          if (subtitles.length > 0) subtitles[0].default = true;
+          // Auto-enable the first subtitle if the user has toggled that preference
+          var autoSubs = false;
+          try { autoSubs = new SharedPreferences().get("justanime_pref_auto_subs") === "true"; } catch (e) {}
+          if (autoSubs && subtitles.length > 0) subtitles[0].default = true;
 
           var sources = typeData.sources;
           for (var si = 0; si < sources.length; si++) {
@@ -342,6 +344,14 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub first, Dub fallback", "Dub first, Sub fallback"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "justanime_pref_auto_subs",
+        checkBoxPreference: {
+          title: "Auto-enable subtitles",
+          summary: "Automatically activate English subtitles when playing an episode.",
+          value: false,
         },
       },
     ];
