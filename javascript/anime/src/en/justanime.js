@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.3",
+    "version": "0.2.4",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -233,15 +233,33 @@ class DefaultExtension extends MProvider {
             "Origin": "https://megaplay.buzz",
           };
 
-          // Collect subtitles
+          // Collect subtitles — sort so Crunchyroll > English 2 > other English > rest.
+          // Drop bare "English" when a Crunchyroll track exists (they share the same content).
+          var rawTracks = typeData.subtitles || typeData.tracks || [];
+          var hasCR = false;
+          for (var sti = 0; sti < rawTracks.length; sti++) {
+            if ((rawTracks[sti].label || "").toLowerCase().indexOf("crunchyroll") >= 0) { hasCR = true; break; }
+          }
           var subtitles = [];
-          var tracks = typeData.subtitles || typeData.tracks || [];
-          for (var sti = 0; sti < tracks.length; sti++) {
-            var track = tracks[sti];
-            if (track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
+          var trackOrder = ["crunchyroll", "english 2", "english", ""];
+          for (var oi = 0; oi < trackOrder.length; oi++) {
+            for (var sti = 0; sti < rawTracks.length; sti++) {
+              var track = rawTracks[sti];
+              if (!track.file) continue;
+              if (track.kind && track.kind !== "captions" && track.kind !== "subtitles") continue;
+              var lbl = (track.label || "").toLowerCase();
+              var tier = oi === 0 ? lbl.indexOf("crunchyroll") >= 0
+                       : oi === 1 ? lbl === "english 2"
+                       : oi === 2 ? lbl === "english"
+                       : lbl.indexOf("crunchyroll") < 0 && lbl !== "english 2" && lbl !== "english";
+              if (!tier) continue;
+              // skip bare "English" when Crunchyroll is present — same content, avoid duplicate
+              if (oi === 2 && hasCR) continue;
               subtitles.push({ file: track.file, label: track.label || "Unknown" });
             }
           }
+          // Mark the first subtitle as default so the player activates it automatically
+          if (subtitles.length > 0) subtitles[0].default = true;
 
           var sources = typeData.sources;
           for (var si = 0; si < sources.length; si++) {
