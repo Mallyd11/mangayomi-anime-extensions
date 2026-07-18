@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.3",
+    "version": "0.3.4",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -425,29 +425,26 @@ class DefaultExtension extends MProvider {
       var data = JSON.parse(res.body);
       if (!data || !data.sources) return streams;
       var sourceList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
-      var subtitleUrls = [];
-      if (Array.isArray(data.tracks)) {
+      // Only fetch VTT content for sub streams — dub subtitles are stripped at the
+      // getVideoList level since Mangayomi only auto-activates from the first stream.
+      var subtitles = [];
+      if (audioType === "sub" && Array.isArray(data.tracks)) {
         for (var t = 0; t < data.tracks.length; t++) {
           var track = data.tracks[t];
-          if (track && track.file && track.kind !== "thumbnails") {
-            subtitleUrls.push({ file: track.file, label: track.label || "Unknown" });
+          if (!track || !track.file || track.kind === "thumbnails") continue;
+          try {
+            var vttRes = await this.client.get(track.file, {
+              "User-Agent": this.ua,
+              "Referer": "https://megaplay.buzz/",
+            });
+            var vttBody = (vttRes.body || "").trimStart();
+            subtitles.push({
+              file: vttBody.startsWith("WEBVTT") ? vttBody : track.file,
+              label: track.label || "Unknown",
+            });
+          } catch (e) {
+            subtitles.push({ file: track.file, label: track.label || "Unknown" });
           }
-        }
-      }
-      var subtitles = [];
-      for (var su = 0; su < subtitleUrls.length; su++) {
-        try {
-          var vttRes = await this.client.get(subtitleUrls[su].file, {
-            "User-Agent": this.ua,
-            "Referer": "https://megaplay.buzz/",
-          });
-          var vttBody = (vttRes.body || "").trimStart();
-          subtitles.push({
-            file: vttBody.startsWith("WEBVTT") ? vttBody : subtitleUrls[su].file,
-            label: subtitleUrls[su].label,
-          });
-        } catch (e) {
-          subtitles.push(subtitleUrls[su]);
         }
       }
       var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
@@ -626,8 +623,11 @@ class DefaultExtension extends MProvider {
       hasSub ? getStreams("sub", "Sub") : Promise.resolve([]),
       hasDub ? getStreams("dub", "Dub") : Promise.resolve([]),
     ]);
-    if (pref === "dub") return results[1].concat(results[0]);
-    return results[0].concat(results[1]);
+    var allStreams = pref === "dub" ? results[1].concat(results[0]) : results[0].concat(results[1]);
+    // Mangayomi auto-activates subtitles only from the first stream (videos.first).
+    // Strip inline VTT content from every other stream to keep the response payload small.
+    for (var i = 1; i < allStreams.length; i++) allStreams[i].subtitles = [];
+    return allStreams;
   }
 
   getFilterList() {
