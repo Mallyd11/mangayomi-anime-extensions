@@ -18,26 +18,20 @@
             "langs": "en",
             "lastUpd": 1779415180.160092
         },
-        "Mangapill": {
-            "name": "Mangapill",
-            "version": "1.0.4",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
         "WeLoMa": {
             "name": "WeLoMa",
             "version": "1.0.0",
             "langs": "ja",
             "lastUpd": 1779410651.044824
+        },
+        "Mangapill": {
+            "name": "Mangapill",
+            "version": "1.0.4",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
         }
     },
     "anime": {
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.28",
-            "langs": "en",
-            "lastUpd": 1784410955.087323
-        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.0",
@@ -53,6 +47,12 @@
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.2.3",
+            "langs": "en",
+            "lastUpd": 1784410955.087323
+        },
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.5.28",
             "langs": "en",
             "lastUpd": 1784410955.087323
         },
@@ -88,12 +88,6 @@
         }
     },
     "novel": {
-        "bookReadFree": {
-            "name": "bookReadFree",
-            "version": "0.0.1",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
         "Novelbuddy": {
             "name": "Novelbuddy",
             "version": "0.0.9",
@@ -102,6 +96,12 @@
         },
         "NovelFire": {
             "name": "NovelFire",
+            "version": "0.0.1",
+            "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "bookReadFree": {
+            "name": "bookReadFree",
             "version": "0.0.1",
             "langs": "en",
             "lastUpd": 1779410651.044824
