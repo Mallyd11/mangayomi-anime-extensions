@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.pw",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.2.1",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -32,8 +32,22 @@ const mangayomiSources = [
 class DefaultExtension extends MProvider {
   constructor() {
     super();
-    // Cap rhttp so a stalled Cloudflare/kwik host can't hit the 40s isolate deadline.
-    this.client = new Client({ timeout: 20 });
+    // animepahe.pw + kwik.cx fingerprint-gate Cloudflare: the app's default
+    // rhttp (Rust) stack can be stalled/blocked with no CF-signature response,
+    // so tabs silently fail. Cap rhttp at 12s so a stall fails fast, and keep a
+    // Dart-stack client as a fallback (its TLS fingerprint differs from rhttp's).
+    this.client = new Client({ timeout: 12 });
+    this.fallbackClient = new Client({ useDartHttpClient: true });
+  }
+
+  // GET via rhttp first, then the Dart HTTP stack. Both share the app's
+  // cookie/Cloudflare interceptors; only the transport (TLS fingerprint) differs.
+  async _get(url, headers) {
+    try {
+      var res = await this.client.get(url, headers);
+      if (res && res.body) return res;
+    } catch (e) {}
+    return await this.fallbackClient.get(url, headers);
   }
 
   get ua() {
@@ -58,7 +72,7 @@ class DefaultExtension extends MProvider {
 
   async getJson(path) {
     var url = path.startsWith("http") ? path : this.source.baseUrl + path;
-    var res = await this.client.get(url, this.apiHeaders);
+    var res = await this._get(url, this.apiHeaders);
     try { return JSON.parse(res.body); } catch (e) { return null; }
   }
 
@@ -142,7 +156,7 @@ class DefaultExtension extends MProvider {
     // Metadata page + first episode page in parallel.
     var animeUrl = this.source.baseUrl + "/anime/" + session;
     var [pageRes, firstRelease] = await Promise.all([
-      this.client.get(animeUrl, this.headers),
+      this._get(animeUrl, this.headers),
       this.getJson("/api?m=release&id=" + session + "&sort=episode_asc&page=1"),
     ]);
     var doc = new Document(pageRes.body);
@@ -284,7 +298,7 @@ class DefaultExtension extends MProvider {
   // Resolve a kwik /e/ embed URL to its HLS source URL.
   async resolveKwik(embedUrl) {
     try {
-      var res = await this.client.get(embedUrl, {
+      var res = await this._get(embedUrl, {
         "User-Agent": this.ua,
         "Referer": this.source.baseUrl + "/",
       });
@@ -301,7 +315,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getVideoList(url) {
-    var res = await this.client.get(url, this.headers);
+    var res = await this._get(url, this.headers);
     if (!res || !res.body) return [];
     var doc = new Document(res.body);
 
