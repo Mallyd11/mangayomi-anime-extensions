@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.pw",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -42,12 +42,18 @@ class DefaultExtension extends MProvider {
 
   // GET via rhttp first, then the Dart HTTP stack. Both share the app's
   // cookie/Cloudflare interceptors; only the transport (TLS fingerprint) differs.
+  // Fall back on a stall/throw AND on a Cloudflare block status (403/503) — a
+  // hard block returns a body, so checking only `res.body` would never retry.
   async _get(url, headers) {
     try {
       var res = await this.client.get(url, headers);
-      if (res && res.body) return res;
+      if (res && res.body && res.statusCode >= 200 && res.statusCode < 400) return res;
     } catch (e) {}
-    return await this.fallbackClient.get(url, headers);
+    try {
+      return await this.fallbackClient.get(url, headers);
+    } catch (e) {
+      return { body: "", statusCode: 0 };
+    }
   }
 
   get ua() {
