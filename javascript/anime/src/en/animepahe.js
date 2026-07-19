@@ -3,15 +3,15 @@ const mangayomiSources = [
     "name": "AnimePahe",
     "id": 728456139,
     "lang": "en",
-    "baseUrl": "https://animepahe.ch",
-    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
+    "baseUrl": "https://animepahe.pw",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.pw",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
-    "hasCloudflare": false,
+    "hasCloudflare": true,
     "isFullData": false,
     "appMinVerReq": "0.5.0",
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/animepahe.js",
@@ -23,15 +23,17 @@ const mangayomiSources = [
   },
 ];
 
-// animepahe.ch — WordPress site on the Themesia AnimeStream theme.
-// Series list: /series/?page=N&order=popular|update (article.bs cards).
-// Search: /?s=q (page 2+ is /page/N/?s=q). Detail: /series/{slug}/ with
-// .eplister episode list. Episode posts embed a MegaPlay iframe
-// (megaplay.buzz/stream/s-2/{id}/{sub|dub}) — same extractor as HiAnime.
+// animepahe.pw — the real AnimePahe (Laravel app + JSON API), behind Cloudflare.
+// Metadata comes from /api (m=airing|search|release). Streams come from the
+// /play/{animeSession}/{episodeSession} page, which embeds kwik.cx players.
+// Each kwik /e/{id} page carries a P.A.C.K.E.R-obfuscated script; unpacking it
+// exposes `const source='https://vault-NN.uwucdn.top/.../uwu.m3u8'` — an
+// AES-128 HLS playlist that plays once served with a kwik.cx Referer.
 class DefaultExtension extends MProvider {
   constructor() {
     super();
-    this.client = new Client({ timeout: 12 });
+    // Cap rhttp so a stalled Cloudflare/kwik host can't hit the 40s isolate deadline.
+    this.client = new Client({ timeout: 20 });
   }
 
   get ua() {
@@ -45,42 +47,39 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  async fetchPage(path) {
-    var url = path.startsWith("http") ? path : this.source.baseUrl + path;
-    var res = await this.client.get(url, this.headers);
-    return { doc: new Document(res.body), html: res.body };
+  get apiHeaders() {
+    return {
+      "User-Agent": this.ua,
+      "Referer": this.source.baseUrl + "/",
+      "Accept": "application/json",
+      "X-Requested-With": "XMLHttpRequest",
+    };
   }
 
-  // Parse article.bs cards on list/search pages
-  parseList(doc) {
+  async getJson(path) {
+    var url = path.startsWith("http") ? path : this.source.baseUrl + path;
+    var res = await this.client.get(url, this.apiHeaders);
+    try { return JSON.parse(res.body); } catch (e) { return null; }
+  }
+
+  // ---- Browse / search -------------------------------------------------
+
+  // The airing feed is per-episode; collapse to one card per anime.
+  animeListFromAiring(data) {
     var list = [];
-    var items = doc.select("article.bs");
-    for (var i = 0; i < items.length; i++) {
-      var anchor = items[i].selectFirst(".bsx a");
-      if (!anchor) continue;
-      var link = anchor.attr("href") || "";
-      var name = (anchor.attr("title") || "").trim();
-      if (!name) {
-        var tt = items[i].selectFirst(".tt");
-        if (tt) name = tt.text.trim();
-      }
-      var img = items[i].selectFirst("img");
-      var imageUrl = "";
-      if (img) imageUrl = img.attr("data-src") || img.attr("src") || "";
-      if (name && link) list.push({ name: name, imageUrl: imageUrl, link: link });
+    var seen = {};
+    var rows = (data && data.data) ? data.data : [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r.anime_session || seen[r.anime_id]) continue;
+      seen[r.anime_id] = true;
+      list.push({
+        name: r.anime_title,
+        imageUrl: r.snapshot || "",
+        link: this.source.baseUrl + "/anime/" + r.anime_session,
+      });
     }
     return list;
-  }
-
-  hasNextPage(doc, html, listLength) {
-    // Series listing uses .hpage with a "Next" anchor (class r)
-    var next = doc.selectFirst(".hpage a.r");
-    if (next) return true;
-    // WP search pagination
-    if (html && html.indexOf('class="next page-numbers"') >= 0) return true;
-    if (doc.selectFirst("a.next")) return true;
-    // Full listing pages carry 30 cards; search pages 10
-    return (listLength || 0) >= 10;
   }
 
   get supportsLatest() {
@@ -89,108 +88,103 @@ class DefaultExtension extends MProvider {
 
   async getPopular(page) {
     try {
-      var p = await this.fetchPage("/series/?page=" + page + "&order=popular");
-      var list = this.parseList(p.doc);
-      return { list: list, hasNextPage: this.hasNextPage(p.doc, p.html, list.length) };
+      var data = await this.getJson("/api?m=airing&page=" + page);
+      var list = this.animeListFromAiring(data);
+      return { list: list, hasNextPage: data ? page < (data.last_page || 1) : false };
     } catch (e) {
       return { list: [], hasNextPage: false };
     }
   }
 
   async getLatestUpdates(page) {
-    try {
-      var p = await this.fetchPage("/series/?page=" + page + "&order=update");
-      var list = this.parseList(p.doc);
-      return { list: list, hasNextPage: this.hasNextPage(p.doc, p.html, list.length) };
-    } catch (e) {
-      return { list: [], hasNextPage: false };
-    }
+    return await this.getPopular(page);
   }
 
   async search(query, page, filters) {
     try {
-      var path = page > 1
-        ? "/page/" + page + "/?s=" + encodeURIComponent(query)
-        : "/?s=" + encodeURIComponent(query);
-      var p = await this.fetchPage(path);
-      var list = this.parseList(p.doc);
-      return { list: list, hasNextPage: this.hasNextPage(p.doc, p.html, list.length) };
+      var data = await this.getJson("/api?m=search&q=" + encodeURIComponent(query));
+      var rows = (data && data.data) ? data.data : [];
+      var list = [];
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        if (!r.session) continue;
+        list.push({
+          name: r.title,
+          imageUrl: r.poster || "",
+          link: this.source.baseUrl + "/anime/" + r.session,
+        });
+      }
+      return { list: list, hasNextPage: false };
     } catch (e) {
       return { list: [], hasNextPage: false };
     }
   }
 
+  // ---- Detail ----------------------------------------------------------
+
   statusCode(status) {
     var s = (status || "").toLowerCase();
-    if (s.includes("completed") || s.includes("finished")) return 1;
-    if (s.includes("upcoming") || s.includes("not yet")) return 4;
-    if (s.includes("ongoing") || s.includes("airing") || s.includes("releasing")) return 0;
-    if (s.includes("hiatus")) return 2;
+    if (s.includes("finished") || s.includes("completed")) return 1;
+    if (s.includes("currently") || s.includes("airing") || s.includes("ongoing") || s.includes("releasing")) return 0;
+    if (s.includes("not yet") || s.includes("upcoming")) return 4;
     return 5;
   }
 
-  // "March 25, 2026" -> epoch millis string (QuickJS Date.parse is unreliable
-  // for this format, so parse by hand)
-  parseDate(text) {
-    try {
-      var m = (text || "").trim().match(/^(\w+)\s+(\d{1,2}),\s*(\d{4})$/);
-      if (!m) return null;
-      var months = { january:0, february:1, march:2, april:3, may:4, june:5,
-        july:6, august:7, september:8, october:9, november:10, december:11 };
-      var mo = months[m[1].toLowerCase()];
-      if (mo === undefined) return null;
-      return String(new Date(parseInt(m[3], 10), mo, parseInt(m[2], 10)).getTime());
-    } catch (e) {
-      return null;
-    }
+  sessionFromUrl(url) {
+    var m = url.match(/\/anime\/([^\/?#]+)/);
+    return m ? m[1] : "";
   }
 
   async getDetail(url) {
-    var res = await this.client.get(url, this.headers);
-    var html = res.body;
-    var doc = new Document(html);
+    var session = this.sessionFromUrl(url);
+    if (!session) throw new Error("Could not parse anime session from: " + url);
+
+    // Metadata page + first episode page in parallel.
+    var animeUrl = this.source.baseUrl + "/anime/" + session;
+    var [pageRes, firstRelease] = await Promise.all([
+      this.client.get(animeUrl, this.headers),
+      this.getJson("/api?m=release&id=" + session + "&sort=episode_asc&page=1"),
+    ]);
+    var doc = new Document(pageRes.body);
 
     var name = "";
-    var nameEl = doc.selectFirst("h1.entry-title");
-    if (nameEl) name = nameEl.text.trim();
+    var ogTitle = doc.selectFirst("meta[property='og:title']");
+    if (ogTitle) name = (ogTitle.attr("content") || "").trim();
+    if (!name) {
+      var h1 = doc.selectFirst("h1");
+      if (h1) {
+        name = h1.text.trim();
+        // The h1 renders the title twice; halve it if it is an exact doubling.
+        var half = name.length / 2;
+        if (name.length % 2 === 0 && name.slice(0, half) === name.slice(half)) {
+          name = name.slice(0, half);
+        }
+      }
+    }
 
     var imageUrl = "";
     var ogImage = doc.selectFirst("meta[property='og:image']");
     if (ogImage) imageUrl = ogImage.attr("content") || "";
-    if (!imageUrl) {
-      var thumbImg = doc.selectFirst(".thumb img, img.ts-post-image");
-      if (thumbImg) imageUrl = thumbImg.attr("data-src") || thumbImg.attr("src") || "";
-    }
 
     var description = "";
-    var descEl = doc.selectFirst(".entry-content[itemprop='description'], .entry-content");
-    if (descEl) description = descEl.text.trim();
+    var syn = doc.selectFirst(".anime-synopsis");
+    if (syn) description = syn.text.trim();
 
     var genre = [];
-    var genreEls = doc.select(".genxed a");
-    for (var i = 0; i < genreEls.length; i++) {
-      var g = genreEls[i].text.trim();
-      if (g) genre.push(g);
+    var genreEls = doc.select(".anime-genre a");
+    for (var g = 0; g < genreEls.length; g++) {
+      var gt = genreEls[g].text.trim();
+      if (gt) genre.push(gt);
     }
 
     var status = 5;
-    var statusMatch = html.match(/Status:<\/b>\s*([A-Za-z ]+)/);
-    if (statusMatch) status = this.statusCode(statusMatch[1]);
-
-    var chapters = [];
-    var epEls = doc.select(".eplister ul li a");
-    for (var j = 0; j < epEls.length; j++) {
-      var ep = epEls[j];
-      var href = ep.attr("href");
-      if (!href) continue;
-      var numEl = ep.selectFirst(".epl-num");
-      var epNum = numEl ? numEl.text.trim() : "";
-      var label = epNum ? "Episode " + epNum : "Episode " + (epEls.length - j);
-      var dateEl = ep.selectFirst(".epl-date");
-      var dateUpload = dateEl ? this.parseDate(dateEl.text) : null;
-      chapters.push({ name: label, url: href, dateUpload: dateUpload });
+    var infoEls = doc.select(".anime-info p");
+    for (var p = 0; p < infoEls.length; p++) {
+      var t = infoEls[p].text.replace(/\s+/g, " ").trim();
+      if (/^Status:/i.test(t)) { status = this.statusCode(t); break; }
     }
-    // .eplister is already newest-first, which matches Mangayomi's convention
+
+    var chapters = await this.buildChapters(session, firstRelease);
 
     return {
       name: name,
@@ -198,130 +192,171 @@ class DefaultExtension extends MProvider {
       description: description,
       genre: genre,
       status: status,
-      link: url,
+      link: animeUrl,
       chapters: chapters,
     };
   }
 
-  // Fetch a MegaPlay embed URL, pull the player data-id, then call getSources.
-  async extractMegaplayFromPageUrl(pageUrl, referer) {
-    try {
-      var res = await this.client.get(pageUrl, { "User-Agent": this.ua, "Referer": referer });
-      if (!res || !res.body) return [];
-      var m = res.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
-      if (m) return await this.fetchMegaplaySourcesById(m[1], pageUrl);
-    } catch (e) {}
-    return [];
-  }
-
-  async fetchMegaplaySourcesById(dataId, refererUrl) {
-    var streams = [];
-    try {
-      var res = await this.client.get("https://megaplay.buzz/stream/getSources?id=" + dataId, {
-        "User-Agent": this.ua,
-        "Referer": refererUrl,
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "application/json",
-      });
-      var data = JSON.parse(res.body);
-      if (!data || !data.sources) return streams;
-      var sourceList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
-      var subtitles = [];
-      if (Array.isArray(data.tracks)) {
-        for (var t = 0; t < data.tracks.length; t++) {
-          var track = data.tracks[t];
-          if (track && track.file && track.kind !== "thumbnails") {
-            subtitles.push({ file: track.file, label: track.label || "Unknown" });
-          }
-        }
+  // Episodes come from the paginated release API. Fetch page 1 (already have it),
+  // then the rest in parallel, and return newest-first.
+  async buildChapters(session, firstRelease) {
+    var pages = [firstRelease];
+    var lastPage = firstRelease ? (firstRelease.last_page || 1) : 1;
+    if (lastPage > 1) {
+      var reqs = [];
+      for (var pg = 2; pg <= lastPage; pg++) {
+        reqs.push(this.getJson("/api?m=release&id=" + session + "&sort=episode_asc&page=" + pg));
       }
-      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
-      for (var s = 0; s < sourceList.length; s++) {
-        var src = sourceList[s];
-        var fileUrl = src.file || src.url;
-        if (!fileUrl) continue;
-        if (fileUrl.indexOf(".m3u8") >= 0) {
-          var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
-          if (resolved.kind === "master") {
-            for (var v = 0; v < resolved.variants.length; v++) {
-              streams.push({ url: resolved.variants[v].url, originalUrl: fileUrl, quality: resolved.variants[v].label + " - MegaPlay", headers: streamHeaders, subtitles: subtitles });
-            }
-          } else if (resolved.kind === "flat") {
-            streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "MegaPlay", headers: streamHeaders, subtitles: subtitles });
-          }
-        } else {
-          streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "MegaPlay", headers: streamHeaders, subtitles: subtitles });
+      var rest = await Promise.all(reqs);
+      pages = pages.concat(rest);
+    }
+
+    var chapters = [];
+    for (var i = 0; i < pages.length; i++) {
+      var rows = (pages[i] && pages[i].data) ? pages[i].data : [];
+      for (var j = 0; j < rows.length; j++) {
+        var ep = rows[j];
+        if (!ep.session) continue;
+        var epLabel = "Episode " + ep.episode;
+        if (ep.title && ep.title.trim()) epLabel += ": " + ep.title.trim();
+        var dateUpload = null;
+        if (ep.created_at) {
+          var ms = Date.parse(ep.created_at.replace(" ", "T") + "Z");
+          if (!isNaN(ms)) dateUpload = String(ms);
         }
-      }
-    } catch (e) {}
-    return streams;
-  }
-
-  // Resolve an HLS playlist URL to one stream entry per variant (same approach
-  // as hianime.js — resolving to absolute variant URLs avoids Mangayomi's
-  // cross-domain Referer propagation failure on master playlists).
-  async resolveHlsPlaylist(playlistUrl, baseHeaders) {
-    var body = null;
-    try {
-      var hlsRes = await this.client.get(playlistUrl, baseHeaders);
-      if (hlsRes && hlsRes.body) body = hlsRes.body;
-    } catch (e) {}
-    if (!body) return { kind: "fetch-failed" };
-
-    var hasStreamInf = body.indexOf("#EXT-X-STREAM-INF") >= 0;
-    var hasExtinf = body.indexOf("#EXTINF") >= 0;
-
-    if (hasExtinf && !hasStreamInf) return { kind: "flat" };
-    if (!hasStreamInf) return { kind: "empty-master" };
-
-    var lastSlash = playlistUrl.lastIndexOf("/");
-    var baseDir = lastSlash > 0 ? playlistUrl.substring(0, lastSlash + 1) : playlistUrl;
-    var variants = [];
-    var lines = body.split("\n");
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
-      var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-      var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-      var resolution = resMatch ? resMatch[2] + "p" : null;
-      for (var j = i + 1; j < lines.length; j++) {
-        var u = lines[j].trim();
-        if (!u) continue;
-        if (u.charAt(0) === "#") continue;
-        var variantUrl = u.indexOf("http") === 0 ? u : baseDir + u;
-        variants.push({
-          url: variantUrl,
-          label: resolution || (bwMatch ? Math.round(bwMatch[1] / 1000) + "kbps" : "Auto"),
+        chapters.push({
+          name: epLabel,
+          url: this.source.baseUrl + "/play/" + session + "/" + ep.session,
+          dateUpload: dateUpload,
+          scanlator: ep.audio === "eng" ? "Dub" : "Sub",
         });
-        break;
       }
     }
-    if (variants.length === 0) return { kind: "empty-master" };
+    chapters.reverse(); // newest first (Mangayomi convention)
+    return chapters;
+  }
 
-    variants.sort(function(a, b) {
-      var aRes = parseInt((a.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
-      var bRes = parseInt((b.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
-      return bRes - aRes;
-    });
-    return { kind: "master", variants: variants };
+  // ---- Streams ---------------------------------------------------------
+
+  // Deobfuscate kwik's P.A.C.K.E.R script by *running* the packer (with its
+  // eval calls redirected to a capture hook) rather than reversing it by regex.
+  // Kwik's payload contains "}(" sequences that break naive arg-extraction, so
+  // regex unpackers (including the app's built-in unpackJs) yield the wrong
+  // layer and never expose `const source`. Running the packer is exact.
+  // A global capture is used (not an `eval`-named parameter) so it stays valid
+  // under strict mode.
+  runPacker(scriptText) {
+    try {
+      globalThis.__kwikOut = "";
+      globalThis.__kwikCap = function (c) { globalThis.__kwikOut = String(c); return c; };
+      var patched = scriptText.replace(/\beval\(/g, "globalThis.__kwikCap(");
+      (new Function(patched))();
+      return globalThis.__kwikOut || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  unpack(scriptText) {
+    var out = this.runPacker(scriptText);
+    // Last-resort: the app's regex unpacker, in case Function is unavailable.
+    if (!out || out.indexOf("source") < 0) {
+      try { var u = unpackJs(scriptText); if (u && u.indexOf("source") >= 0) out = u; } catch (e) {}
+    }
+    return out;
+  }
+
+  // Pull the <script> element that carries the P.A.C.K.E.R payload from raw HTML.
+  extractPackerScript(html) {
+    try {
+      var doc = new Document(html);
+      var scripts = doc.select("script");
+      for (var i = 0; i < scripts.length; i++) {
+        var t = scripts[i].text;
+        if (t && t.indexOf("eval(function(p,a,c,k,e,d)") >= 0) return t.trim();
+      }
+    } catch (e) {}
+    // Fallback: isolate a single <script> block by non-greedy scan.
+    var m = html.match(/<script[^>]*>((?:(?!<\/script>)[\s\S])*?eval\(function\(p,a,c,k,e,d\)(?:(?!<\/script>)[\s\S])*?)<\/script>/);
+    return m ? m[1].trim() : "";
+  }
+
+  // Resolve a kwik /e/ embed URL to its HLS source URL.
+  async resolveKwik(embedUrl) {
+    try {
+      var res = await this.client.get(embedUrl, {
+        "User-Agent": this.ua,
+        "Referer": this.source.baseUrl + "/",
+      });
+      if (!res || !res.body) return null;
+      var scriptText = this.extractPackerScript(res.body);
+      if (!scriptText) return null;
+      var unpacked = this.unpack(scriptText);
+      var srcMatch = unpacked.match(/source\s*=\s*'([^']+\.m3u8[^']*)'/) ||
+                     unpacked.match(/source\s*=\s*"([^"]+\.m3u8[^"]*)"/);
+      return srcMatch ? srcMatch[1] : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   async getVideoList(url) {
-    // url is the episode post URL; the page embeds a MegaPlay iframe
     var res = await this.client.get(url, this.headers);
     if (!res || !res.body) return [];
-    var streams = [];
-    var seen = {};
-    var re = /<iframe[^>]+src="((?:https?:)?\/\/megaplay\.[^"]+)"/g;
-    var m;
-    while ((m = re.exec(res.body)) !== null) {
-      var embedUrl = m[1];
-      if (embedUrl.indexOf("//") === 0) embedUrl = "https:" + embedUrl;
-      if (seen[embedUrl]) continue;
-      seen[embedUrl] = true;
-      var s = await this.extractMegaplayFromPageUrl(embedUrl, url);
-      streams = streams.concat(s);
+    var doc = new Document(res.body);
+
+    var audioPref = "sub";
+    try { audioPref = new SharedPreferences().get("animepahe_pref_audio") || "sub"; } catch (e) {}
+
+    // Collect kwik buttons: data-src (embed), data-resolution, data-audio, data-fansub.
+    var buttons = doc.select("button[data-src]");
+    var entries = [];
+    for (var i = 0; i < buttons.length; i++) {
+      var src = buttons[i].attr("data-src");
+      if (!src || src.indexOf("kwik") < 0) continue;
+      entries.push({
+        src: src.indexOf("http") === 0 ? src : "https:" + src,
+        res: parseInt(buttons[i].attr("data-resolution") || "0", 10),
+        audio: buttons[i].attr("data-audio") || "jpn",
+        fansub: buttons[i].attr("data-fansub") || "",
+      });
     }
+
+    // Resolve all kwik embeds in parallel.
+    var self = this;
+    var resolved = await Promise.all(entries.map(function (e) {
+      return self.resolveKwik(e.src).then(function (m3u8) {
+        return m3u8 ? { entry: e, url: m3u8 } : null;
+      });
+    }));
+
+    var streamHeaders = { "User-Agent": this.ua, "Referer": "https://kwik.cx/" };
+    var streams = [];
+    for (var s = 0; s < resolved.length; s++) {
+      if (!resolved[s]) continue;
+      var e = resolved[s].entry;
+      var audioLabel = e.audio === "eng" ? "Dub" : "Sub";
+      var quality = e.res + "p " + audioLabel + (e.fansub ? " · " + e.fansub : "") + " - Kwik";
+      streams.push({
+        url: resolved[s].url,
+        originalUrl: resolved[s].url,
+        quality: quality,
+        headers: streamHeaders,
+        _res: e.res,
+        _isDub: e.audio === "eng",
+      });
+    }
+
+    // Sort: preferred audio first, then resolution high → low.
+    var wantDub = audioPref === "dub";
+    streams.sort(function (a, b) {
+      if (a._isDub !== b._isDub) {
+        if (wantDub) return a._isDub ? -1 : 1;
+        return a._isDub ? 1 : -1;
+      }
+      return b._res - a._res;
+    });
+    for (var k = 0; k < streams.length; k++) { delete streams[k]._res; delete streams[k]._isDub; }
     return streams;
   }
 
@@ -330,6 +365,17 @@ class DefaultExtension extends MProvider {
   }
 
   getSourcePreferences() {
-    return [];
+    return [
+      {
+        key: "animepahe_pref_audio",
+        listPreference: {
+          title: "Preferred audio",
+          summary: "Which audio track is listed first for streaming and downloads",
+          valueIndex: 0,
+          entries: ["Sub (Japanese)", "Dub (English)"],
+          entryValues: ["sub", "dub"],
+        },
+      },
+    ];
   }
 }
