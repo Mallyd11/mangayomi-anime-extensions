@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.4",
+    "version": "0.3.5",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -412,6 +412,64 @@ class DefaultExtension extends MProvider {
     return [];
   }
 
+  // Convert a WebVTT string to SRT format.
+  // lostproject.club VTTs use MM:SS.mmm timestamps (no hours prefix); libmpv's
+  // WebVTT parser misbehaves with this two-part format for standalone subtitle
+  // files. SRT's explicit HH:MM:SS,mmm format is unambiguous and well-tested.
+  _vttTsToSrt(ts) {
+    // "MM:SS.mmm" or "HH:MM:SS.mmm" → "HH:MM:SS,mmm"
+    var dotIdx = ts.lastIndexOf('.');
+    var ms = ts.substring(dotIdx + 1);
+    var parts = ts.substring(0, dotIdx).split(':');
+    while (parts.length < 3) parts.unshift('00');
+    return parts.join(':') + ',' + ms;
+  }
+
+  vttToSrt(vtt) {
+    var lines = vtt.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    var srt = '';
+    var cueNum = 1;
+    var i = 0;
+    // Skip WEBVTT header block (lines until the first blank line)
+    while (i < lines.length && lines[i].trim() !== '') i++;
+    while (i < lines.length) {
+      // Skip blank lines between cues
+      while (i < lines.length && lines[i].trim() === '') i++;
+      if (i >= lines.length) break;
+      var line = lines[i];
+      // Skip NOTE / STYLE / REGION blocks
+      if (/^(NOTE|STYLE|REGION)\b/.test(line)) {
+        while (i < lines.length && lines[i].trim() !== '') i++;
+        continue;
+      }
+      // Skip optional cue identifier (not a timestamp line)
+      if (line.indexOf('-->') < 0) {
+        i++;
+        if (i >= lines.length) break;
+        line = lines[i];
+      }
+      if (line.indexOf('-->') < 0) { i++; continue; }
+      // Parse VTT timestamps — both MM:SS.mmm and HH:MM:SS.mmm
+      var m = line.match(/([\d:]+\.\d{3})\s*-->\s*([\d:]+\.\d{3})/);
+      if (!m) { i++; continue; }
+      var start = this._vttTsToSrt(m[1]);
+      var end = this._vttTsToSrt(m[2]);
+      i++;
+      var textLines = [];
+      while (i < lines.length && lines[i].trim() !== '') {
+        // Strip VTT inline timing tags (<00:01:00.000>), keep <i>/<b>/<u>
+        var t = lines[i].replace(/<[\d:]+\.\d{3}>/g, '');
+        textLines.push(t);
+        i++;
+      }
+      if (textLines.length > 0) {
+        srt += cueNum + '\n' + start + ' --> ' + end + '\n' + textLines.join('\n') + '\n\n';
+        cueNum++;
+      }
+    }
+    return srt || vtt;
+  }
+
   // Call the MegaPlay getSources API for a known data-id and build stream list
   async fetchMegaplaySourcesById(dataId, refererUrl, audioType, audioLabel) {
     var streams = [];
@@ -439,7 +497,7 @@ class DefaultExtension extends MProvider {
             });
             var vttBody = (vttRes.body || "").trimStart();
             subtitles.push({
-              file: vttBody.startsWith("WEBVTT") ? vttBody : track.file,
+              file: vttBody.startsWith("WEBVTT") ? this.vttToSrt(vttBody) : track.file,
               label: track.label || "Unknown",
             });
           } catch (e) {
