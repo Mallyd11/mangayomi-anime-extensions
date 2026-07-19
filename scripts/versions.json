@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "Playback Diagnostic": {
+            "name": "Playback Diagnostic",
+            "version": "0.0.1",
+            "langs": "en",
+            "lastUpd": 1784496598.310292
+        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.3.5",
