@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.0",
+    "version": "0.3.1",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -26,8 +26,11 @@ const mangayomiSources = [
 // animepahe.ch — WordPress site on the Themesia AnimeStream theme.
 // Series list: /series/?page=N&order=popular|update (article.bs cards).
 // Search: /?s=q (page 2+ is /page/N/?s=q). Detail: /series/{slug}/ with
-// .eplister episode list. Episode posts embed a MegaPlay iframe
+// .eplister episode list. Episode posts embed a MegaPlay player
 // (megaplay.buzz/stream/s-2/{id}/{sub|dub}) — same extractor as HiAnime.
+// The player may be an inline <iframe>, a lazy-loaded data-src, or one of the
+// base64-encoded options in the "mirror" server switcher (getVideoList scans
+// all three so titles that default to a non-MegaPlay server still resolve).
 class DefaultExtension extends MProvider {
   constructor() {
     super();
@@ -214,10 +217,19 @@ class DefaultExtension extends MProvider {
     return [];
   }
 
+  // Origin ("https://host") of a URL, defaulting to megaplay.buzz.
+  originOf(u) {
+    var m = String(u || "").match(/^(https?:\/\/[^/]+)/);
+    return m ? m[1] : "https://megaplay.buzz";
+  }
+
   async fetchMegaplaySourcesById(dataId, refererUrl) {
     var streams = [];
     try {
-      var res = await this.client.get("https://megaplay.buzz/stream/getSources?id=" + dataId, {
+      // Derive the MegaPlay origin from the embed URL so a rotated domain
+      // (megaplay.buzz -> megaplay.<tld>) still resolves against the right host.
+      var origin = this.originOf(refererUrl);
+      var res = await this.client.get(origin + "/stream/getSources?id=" + dataId, {
         "User-Agent": this.ua,
         "Referer": refererUrl,
         "X-Requested-With": "XMLHttpRequest",
@@ -235,7 +247,7 @@ class DefaultExtension extends MProvider {
           }
         }
       }
-      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
+      var streamHeaders = { "User-Agent": this.ua, "Referer": origin + "/", "Origin": origin };
       for (var s = 0; s < sourceList.length; s++) {
         var src = sourceList[s];
         var fileUrl = src.file || src.url;
@@ -306,20 +318,70 @@ class DefaultExtension extends MProvider {
     return { kind: "master", variants: variants };
   }
 
+  // Pure-JS base64 decoder — atob() is not available in Mangayomi's QuickJS
+  // runtime. Used to decode AnimeStream "mirror" server options.
+  _b64decode(s) {
+    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var output = "";
+    s = String(s).replace(/[^A-Za-z0-9+/]/g, "");
+    for (var i = 0; i < s.length; i += 4) {
+      var c0 = chars.indexOf(s.charAt(i));
+      var c1 = chars.indexOf(s.charAt(i + 1));
+      var c2 = chars.indexOf(s.charAt(i + 2));
+      var c3 = chars.indexOf(s.charAt(i + 3));
+      var n = (c0 << 18) | (c1 << 12) | ((c2 & 0x3f) << 6) | (c3 & 0x3f);
+      output += String.fromCharCode((n >> 16) & 0xff);
+      if (c2 !== -1) output += String.fromCharCode((n >> 8) & 0xff);
+      if (c3 !== -1) output += String.fromCharCode(n & 0xff);
+    }
+    return output;
+  }
+
+  // Collect every MegaPlay stream-embed URL referenced by an episode page.
+  // The AnimeStream theme only renders one server inline (as an <iframe>);
+  // the rest live as base64-encoded values in the "mirror" server switcher.
+  // For some titles the inline default is a non-MegaPlay server, so scanning
+  // only the raw iframe missed the MegaPlay embed entirely (empty video list).
+  collectMegaplayEmbeds(html) {
+    var seen = {};
+    var out = [];
+    // Match MegaPlay embeds regardless of quoting, attribute (src / data-src),
+    // or a rotated megaplay.<tld> domain.
+    var urlRe = /(?:https?:)?\/\/(?:www\.)?megaplay\.[a-z0-9.-]+\/stream\/[^"'\\\s<>)]+/gi;
+    var add = function (u) {
+      if (!u) return;
+      u = u.replace(/&amp;/g, "&");
+      if (u.indexOf("//") === 0) u = "https:" + u;
+      if (u.indexOf("http") !== 0) return;
+      if (u.indexOf("/getSources") >= 0) return; // AJAX endpoint, not an embed
+      if (seen[u]) return;
+      seen[u] = true;
+      out.push(u);
+    };
+    var m;
+    while ((m = urlRe.exec(html)) !== null) add(m[0]);
+    // Server switcher options carry base64-encoded embed markup. Decode each
+    // candidate and pull any MegaPlay URLs out of the decoded HTML.
+    var b64Re = /(?:value|data-em|data-embed)="([A-Za-z0-9+/=]{24,})"/g;
+    while ((m = b64Re.exec(html)) !== null) {
+      var decoded = "";
+      try { decoded = this._b64decode(m[1]); } catch (e) {}
+      if (!decoded || decoded.indexOf("megaplay") < 0) continue;
+      var im;
+      urlRe.lastIndex = 0;
+      while ((im = urlRe.exec(decoded)) !== null) add(im[0]);
+    }
+    return out;
+  }
+
   async getVideoList(url) {
-    // url is the episode post URL; the page embeds a MegaPlay iframe
+    // url is the episode post URL; the page embeds one or more MegaPlay players.
     var res = await this.client.get(url, this.headers);
     if (!res || !res.body) return [];
+    var embeds = this.collectMegaplayEmbeds(res.body);
     var streams = [];
-    var seen = {};
-    var re = /<iframe[^>]+src="((?:https?:)?\/\/megaplay\.[^"]+)"/g;
-    var m;
-    while ((m = re.exec(res.body)) !== null) {
-      var embedUrl = m[1];
-      if (embedUrl.indexOf("//") === 0) embedUrl = "https:" + embedUrl;
-      if (seen[embedUrl]) continue;
-      seen[embedUrl] = true;
-      var s = await this.extractMegaplayFromPageUrl(embedUrl, url);
+    for (var i = 0; i < embeds.length; i++) {
+      var s = await this.extractMegaplayFromPageUrl(embeds[i], url);
       streams = streams.concat(s);
     }
     return streams;
