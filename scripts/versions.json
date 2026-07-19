@@ -34,9 +34,9 @@
     "anime": {
         "AnimePahe": {
             "name": "AnimePahe",
-            "version": "0.2.1",
+            "version": "0.2.2",
             "langs": "en",
-            "lastUpd": 1784468290.228916
+            "lastUpd": 1784468483.589617
         },
         "HiAnime": {
             "name": "HiAnime",
