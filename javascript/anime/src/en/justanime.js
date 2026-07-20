@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.5",
+    "version": "0.2.6",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -165,13 +165,90 @@ class DefaultExtension extends MProvider {
 
   // ── HLS helpers ───────────────────────────────────────────────────────────
 
+  // Ad CDNs seen injecting fake segments. Fast path only — the host-mismatch
+  // rule below is the general check and catches hosts not listed here.
+  get AD_SEGMENT_HOSTS() {
+    return ["ibyteimg.com", "byteimg.com", "ipstatp.com", "doubleclick.net", "googlesyndication.com"];
+  }
+
+  // Last two labels of a hostname. Coarse, but enough to tell "same CDN,
+  // different shard" from "an entirely unrelated advertiser".
+  _rootDomain(host) {
+    var parts = (host || "").toLowerCase().split(".");
+    return parts.length >= 2 ? parts.slice(-2).join(".") : (host || "").toLowerCase();
+  }
+
+  // A well-formed playlist is not the same thing as a playable one.
+  //
+  // The MegaPlay/nekostream upstream returns valid m3u8 whose segments are
+  // mostly 1x1 PNGs padded to ~500 KB on an ad CDN — measured at ~55s of real
+  // video against ~1375s of junk, with no #EXT-X-DISCONTINUITY marking it.
+  // The player decodes the few real segments at the head, fails to demux the
+  // rest, races to #EXT-X-ENDLIST, and Mangayomi treats the episode as finished
+  // and auto-advances — seen by the user as the player skipping through a whole
+  // season without playing anything, marking it watched as it goes.
+  //
+  // Judge by duration, not segment count: a few long real segments among many
+  // short ad ones is still watchable, and the reverse is not.
+  _playlistIsPoisoned(body, playlistUrl) {
+    var hostM = (playlistUrl || "").match(/^https?:\/\/([^/]+)/);
+    if (!hostM) return false;
+    var ownRoot = this._rootDomain(hostM[1]);
+    var adHosts = this.AD_SEGMENT_HOSTS;
+    var lines = String(body).split("\n");
+    var realSec = 0, foreignSec = 0;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line.indexOf("#EXTINF:") !== 0) continue;
+      var dur = parseFloat(line.slice(8)) || 0;
+      var uri = "";
+      for (var j = i + 1; j < lines.length; j++) {
+        var cand = lines[j].trim();
+        if (!cand || cand.charAt(0) === "#") continue;
+        uri = cand;
+        break;
+      }
+      if (!uri) continue;
+      // Relative URIs resolve against the playlist, so they are always own-host.
+      if (uri.indexOf("http") !== 0) { realSec += dur; continue; }
+      var segHostM = uri.match(/^https?:\/\/([^/]+)/);
+      if (!segHostM) { realSec += dur; continue; }
+      var segRoot = this._rootDomain(segHostM[1]);
+      var isAd = segRoot !== ownRoot;
+      if (!isAd) {
+        for (var a = 0; a < adHosts.length; a++) {
+          if (segRoot === adHosts[a]) { isAd = true; break; }
+        }
+      }
+      if (isAd) foreignSec += dur; else realSec += dur;
+    }
+
+    var total = realSec + foreignSec;
+    if (total <= 0) return false; // nothing parseable — let the player decide
+    // A CDN that legitimately shards segments across domains would trip the
+    // host-mismatch rule on its own, so also require that too little real video
+    // remains to be an episode at all. Poisoned streams leave ~1 minute; a
+    // genuinely ad-heavy but watchable stream keeps its full runtime.
+    if (realSec >= 300) return false;
+    // Loose on purpose: legitimate mid-roll or a domain-sharded CDN stays well
+    // under this, while the observed poisoning runs ~96%.
+    return (foreignSec / total) > 0.5;
+  }
+
   // Fetch a master HLS playlist and return absolute variant URLs with quality.
   // Returns [] if the URL is already a flat playlist (no #EXT-X-STREAM-INF).
+  // Returns null if the stream is ad-poisoned — callers skip the source rather
+  // than falling through and emitting it as a flat playlist.
   async resolveMasterPlaylist(masterUrl, headers) {
     try {
       var res = await new Client().get(masterUrl, headers);
       var body = res.body || "";
-      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return [];
+      if (body.indexOf("#EXT-X-STREAM-INF") < 0) {
+        // Flat playlist — segments are in hand, so check without refetching.
+        if (body.indexOf("#EXTINF") >= 0 && this._playlistIsPoisoned(body, masterUrl)) return null;
+        return [];
+      }
 
       var base = masterUrl.substring(0, masterUrl.lastIndexOf("/") + 1);
       var variants = [];
@@ -192,6 +269,19 @@ class DefaultExtension extends MProvider {
       variants.sort(function(a, b) {
         return (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0);
       });
+
+      // Poisoning lives in the media playlists, not the master. Sample one
+      // variant — injection is per stream, not per rendition, so the top
+      // variant speaks for all of them. One extra GET, which matters against
+      // the app's 40s isolate deadline.
+      if (variants.length > 0) {
+        try {
+          var probe = await new Client().get(variants[0].url, headers);
+          var probeBody = (probe && probe.body) || "";
+          if (probeBody.indexOf("#EXTM3U") >= 0 &&
+              this._playlistIsPoisoned(probeBody, variants[0].url)) return null;
+        } catch (e) {} // probe failure is not proof of poisoning — let it through
+      }
       return variants;
     } catch (e) {
       return [];
@@ -274,6 +364,9 @@ class DefaultExtension extends MProvider {
             // cross-domain Referer propagation issue (mewstream → ovexa).
             if (s.isM3U8 || streamUrl.indexOf(".m3u8") >= 0) {
               var variants = await this.resolveMasterPlaylist(streamUrl, streamHeaders);
+              // null = ad-poisoned. Skip the source entirely rather than
+              // falling through to emit it as a flat playlist.
+              if (variants === null) continue;
               if (variants.length > 0) {
                 for (var vi = 0; vi < variants.length; vi++) {
                   var v = variants[vi];

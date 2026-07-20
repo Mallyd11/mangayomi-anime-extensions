@@ -10,7 +10,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.3",
+    "version": "0.3.4",
     "pkgPath": "anime/src/en/animeparadise.js",
   },
 ];
@@ -167,14 +167,35 @@ class DefaultExtension extends MProvider {
       if (response.statusCode == 200) {
         const body = response.body;
         const lines = body.split("\n");
+        // Origin without trailing slash — variant URIs below are root-relative.
+        var proxyOrigin = proxyBase.replace(/\/+$/, "");
+        // Base for resolving upstream-relative URIs, used only when the master
+        // hands back an absolute upstream URL rather than a proxy path.
         var baseUrl = url.substring(0, url.lastIndexOf("/") + 1);
 
         for (let i = 0; i < lines.length; i++) {
           if (lines[i].startsWith("#EXT-X-STREAM-INF:")) {
-            var resolution = lines[i].match(/RESOLUTION=(\d+x\d+)/)[1];
-            var nextLine = lines[i + 1].trim();
-            var absoluteUrl = nextLine.startsWith("http") ? nextLine : baseUrl + nextLine;
-            var m3u8Url = proxyBase + "m3u8?url=" + absoluteUrl;
+            var resMatch = lines[i].match(/RESOLUTION=(\d+x\d+)/);
+            // I-frame and audio-only renditions carry no RESOLUTION; skipping
+            // them avoids a null deref that killed the whole variant loop.
+            if (!resMatch) continue;
+            var resolution = resMatch[1];
+            var nextLine = (lines[i + 1] || "").trim();
+            if (!nextLine || nextLine.startsWith("#")) continue;
+
+            // The proxy rewrites variant URIs to its own root-relative paths
+            // ("/m3u8?url=<token>"), so they are already proxied. Wrapping them
+            // in another "m3u8?url=" produced a nested URL that resolved to an
+            // error page — every non-Auto quality was broken.
+            var m3u8Url;
+            if (nextLine.startsWith("http")) {
+              m3u8Url = proxyBase + "m3u8?url=" + nextLine;
+            } else if (nextLine.charAt(0) === "/") {
+              m3u8Url = proxyOrigin + nextLine;
+            } else {
+              m3u8Url = proxyBase + "m3u8?url=" + baseUrl + nextLine;
+            }
+
             streams.push({
               url: m3u8Url,
               originalUrl: m3u8Url,

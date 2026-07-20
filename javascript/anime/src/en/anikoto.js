@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.0",
+    "version": "0.4.1",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -456,15 +456,95 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
+  // Ad CDNs seen injecting fake segments. Fast path only — the host-mismatch
+  // rule below is the general check and catches hosts not listed here.
+  get AD_SEGMENT_HOSTS() {
+    return ["ibyteimg.com", "byteimg.com", "doubleclick.net", "googlesyndication.com"];
+  }
+
+  // Last two labels of a hostname. Coarse, but enough to tell "same CDN,
+  // different shard" (9hjkrt.nekostream.site vs cdn.nekostream.site) from
+  // "an entirely unrelated advertiser".
+  _rootDomain(host) {
+    var parts = (host || "").toLowerCase().split(".");
+    return parts.length >= 2 ? parts.slice(-2).join(".") : (host || "").toLowerCase();
+  }
+
+  // A well-formed playlist is not the same thing as a playable one.
+  //
+  // Under ad-injection this upstream returns a valid m3u8 whose segments are
+  // mostly 1x1 PNGs padded to ~500 KB and hosted on an ad CDN — observed at
+  // ~55s of real video against ~1375s of junk, with no #EXT-X-DISCONTINUITY to
+  // mark it. The player decodes the few real segments at the head, fails to
+  // demux the rest, races to #EXT-X-ENDLIST, and Mangayomi concludes the
+  // episode finished and auto-advances — which surfaces to the user as the
+  // player skipping through the whole season without playing anything.
+  //
+  // Judge by duration rather than segment count: a handful of long real
+  // segments among many short ad ones is still watchable, and vice versa.
+  _playlistIsPoisoned(body, playlistUrl) {
+    var hostM = (playlistUrl || "").match(/^https?:\/\/([^/]+)/);
+    if (!hostM) return false;
+    var ownRoot = this._rootDomain(hostM[1]);
+    var adHosts = this.AD_SEGMENT_HOSTS;
+    var lines = String(body).split("\n");
+    var realSec = 0, foreignSec = 0;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line.indexOf("#EXTINF:") !== 0) continue;
+      var dur = parseFloat(line.slice(8)) || 0;
+      // The segment URI is the next non-comment, non-empty line.
+      var uri = "";
+      for (var j = i + 1; j < lines.length; j++) {
+        var cand = lines[j].trim();
+        if (!cand || cand.charAt(0) === "#") continue;
+        uri = cand;
+        break;
+      }
+      if (!uri) continue;
+      // Relative URIs resolve against the playlist, so they are always own-host.
+      if (uri.indexOf("http") !== 0) { realSec += dur; continue; }
+      var segHostM = uri.match(/^https?:\/\/([^/]+)/);
+      if (!segHostM) { realSec += dur; continue; }
+      var segRoot = this._rootDomain(segHostM[1]);
+      var isAd = segRoot !== ownRoot;
+      if (!isAd) {
+        for (var a = 0; a < adHosts.length; a++) {
+          if (segRoot === adHosts[a]) { isAd = true; break; }
+        }
+      }
+      if (isAd) foreignSec += dur; else realSec += dur;
+    }
+
+    var total = realSec + foreignSec;
+    if (total <= 0) return false; // nothing parseable — let the player decide
+    // A CDN that legitimately shards segments across domains would trip the
+    // host-mismatch rule on its own, so also require that too little real video
+    // remains to be an episode at all. Poisoned streams leave ~1 minute; a
+    // genuinely ad-heavy but watchable stream keeps its full runtime.
+    if (realSec >= 300) return false;
+    // Threshold is deliberately loose. Legitimate mid-roll or a CDN that shards
+    // across domains should stay well under it; the observed poisoning is ~96%.
+    return (foreignSec / total) > 0.5;
+  }
+
   // Fetch a master HLS playlist and return one entry per quality variant.
   // Returns [] if the URL is a flat media playlist (no #EXT-X-STREAM-INF, use as-is).
-  // Returns null if the response is not a valid m3u8 (Cloudflare block, error page, or fetch failure).
+  // Returns null if the response is not a valid m3u8 (Cloudflare block, error
+  // page, or fetch failure) OR if the stream is ad-poisoned. Callers treat null
+  // as "skip this server", so a poisoned upstream falls through to the next one
+  // instead of being handed to the player as a stream that cannot play.
   async _resolveHlsVariants(masterUrl, headers) {
     try {
       var res = await this.client.get(masterUrl, headers);
       var body = res.body || "";
       if (body.indexOf("#EXTM3U") < 0) return null; // not a valid m3u8 (blocked or error)
-      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return []; // flat media playlist, use master URL as-is
+      if (body.indexOf("#EXT-X-STREAM-INF") < 0) {
+        // Flat media playlist — segments are in hand, so check without refetching.
+        if (this._playlistIsPoisoned(body, masterUrl)) return null;
+        return []; // use master URL as-is
+      }
       var lastSlash = masterUrl.lastIndexOf("/");
       var baseDir = lastSlash > 0 ? masterUrl.substring(0, lastSlash + 1) : masterUrl;
       var lines = body.split("\n");
@@ -483,6 +563,20 @@ class DefaultExtension extends MProvider {
         }
       }
       variants.sort(function(a, b) { return (parseInt(b.label) || 0) - (parseInt(a.label) || 0); });
+
+      // Poisoning lives in the media playlists, not the master, so the master
+      // alone cannot be judged. Sample one variant — injection is applied per
+      // stream, not per rendition, so the top variant speaks for all of them.
+      // One extra GET per server, which matters against the app's 40s isolate
+      // deadline; sampling further would risk the timeout for no more signal.
+      if (variants.length > 0) {
+        try {
+          var probe = await this.client.get(variants[0].url, headers);
+          var probeBody = probe.body || "";
+          if (probeBody.indexOf("#EXTM3U") >= 0 &&
+              this._playlistIsPoisoned(probeBody, variants[0].url)) return null;
+        } catch (e) {} // probe failure is not proof of poisoning — let it through
+      }
       return variants;
     } catch (e) {}
     return null; // network/parse error
@@ -555,7 +649,10 @@ class DefaultExtension extends MProvider {
         var svName = (el.text || "").trim().slice(0, 20) || "Srv" + (i + 1);
         var resolved = await this._resolveStreams(linkId, svName);
         streams = streams.concat(resolved);
-        if (streams.length > 0) break; // stop at first server that returns streams
+        // Stop at the first server that returns streams which passed the
+        // ad-poisoning check — a poisoned server resolves to [] and falls
+        // through here rather than winning by being first in the list.
+        if (streams.length > 0) break;
       }
     } catch (e) {}
     return streams;
