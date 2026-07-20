@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.5",
+    "version": "0.2.6",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -210,8 +210,9 @@ class DefaultExtension extends MProvider {
     var dubVideos = [];
     var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
 
-    // miruro streams are Cloudflare-blocked and its API call hangs on slow networks
-    var providers = ["megaplay"];
+    // megaplay: HLS via nekostream CDN (poisoned with ads on Windows but fallback exists)
+    // animegg: direct MP4, 360p, no HLS poisoning — reliable fallback for Windows
+    var providers = ["megaplay", "animegg"];
 
     for (var pi = 0; pi < providers.length; pi++) {
       var provider = providers[pi];
@@ -225,13 +226,11 @@ class DefaultExtension extends MProvider {
           var typeData = data[type];
           if (!typeData || !typeData.sources) continue;
 
-          // MegaPlay CDN (mewstream.buzz / ovexa.buzz) requires these exact headers
-          // for both streaming and segment downloads; reading from API returns wrong Referer
-          var streamHeaders = {
-            "User-Agent": ua,
-            "Referer": "https://megaplay.buzz/",
-            "Origin": "https://megaplay.buzz",
-          };
+          // MegaPlay CDN requires hardcoded headers; other providers use what the API returns
+          var apiHeaders = typeData.headers || {};
+          var streamHeaders = provider === "megaplay"
+            ? { "User-Agent": ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" }
+            : { "User-Agent": ua, "Referer": apiHeaders["Referer"] || "https://justanime.to/" };
 
           // Collect subtitles — sort so Crunchyroll > English 2 > other English > rest.
           // Drop bare "English" when a Crunchyroll track exists (they share the same content).
