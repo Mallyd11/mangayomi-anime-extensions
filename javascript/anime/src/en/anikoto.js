@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.2",
+    "version": "0.4.3",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -327,6 +327,40 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
+  _b64enc(str) {
+    var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var out = "", i = 0, n = str.length;
+    while (i < n) {
+      var a = str.charCodeAt(i++);
+      out += t[a >> 2];
+      if (i === n) { out += t[(a & 3) << 4] + "=="; break; }
+      var b = str.charCodeAt(i++);
+      out += t[((a & 3) << 4) | (b >> 4)];
+      if (i === n) { out += t[(b & 15) << 2] + "="; break; }
+      var c = str.charCodeAt(i++);
+      out += t[((b & 15) << 2) | (c >> 6)];
+      out += t[c & 63];
+    }
+    return out;
+  }
+
+  // Rewrite a media playlist so every segment carries #EXT-X-BYTERANGE:N@70,
+  // telling ExoPlayer to send Range: bytes=70- and skip the 70-byte PNG wrapper
+  // that nekostream CDN prepends to every MPEG-TS segment. Returns a data URI.
+  _rewriteWithByterange(body) {
+    var lines = String(body).split("\n");
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var trimmed = line.trim();
+      if (trimmed && trimmed.charAt(0) !== "#") {
+        out.push("#EXT-X-BYTERANGE:99999999@70");
+      }
+      out.push(line);
+    }
+    return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
+  }
+
   // Resolve a server linkId → embed URL → array of playable streams.
   async _resolveStreams(linkId, audioLabel) {
     var embedUrl = "";
@@ -555,10 +589,10 @@ class DefaultExtension extends MProvider {
 
   // Fetch a master HLS playlist and return one entry per quality variant.
   // Returns [] if the URL is a flat media playlist (no #EXT-X-STREAM-INF, use as-is).
-  // Returns null if the response is not a valid m3u8 (Cloudflare block, error
-  // page, or fetch failure) OR if the stream is ad-poisoned. Callers treat null
-  // as "skip this server", so a poisoned upstream falls through to the next one
-  // instead of being handed to the player as a stream that cannot play.
+  // Returns null if the response is not a valid m3u8 (Cloudflare block, error, or fetch failure).
+  // When segments are PNG-wrapped (nekostream CDN), rewrites the playlist with
+  // #EXT-X-BYTERANGE:N@70 so ExoPlayer sends Range: bytes=70- and skips the header,
+  // then returns a data URI instead of the original URL.
   async _resolveHlsVariants(masterUrl, headers) {
     try {
       var res = await this.client.get(masterUrl, headers);
@@ -566,7 +600,9 @@ class DefaultExtension extends MProvider {
       if (body.indexOf("#EXTM3U") < 0) return null; // not a valid m3u8 (blocked or error)
       if (body.indexOf("#EXT-X-STREAM-INF") < 0) {
         // Flat media playlist — segments are in hand, so check without refetching.
-        if (this._playlistIsPoisoned(body, masterUrl)) return null;
+        if (this._playlistIsPoisoned(body, masterUrl)) {
+          return [{ url: this._rewriteWithByterange(body), label: "Auto" }];
+        }
         return []; // use master URL as-is
       }
       var lastSlash = masterUrl.lastIndexOf("/");
@@ -598,7 +634,9 @@ class DefaultExtension extends MProvider {
           var probe = await this.client.get(variants[0].url, headers);
           var probeBody = probe.body || "";
           if (probeBody.indexOf("#EXTM3U") >= 0 &&
-              this._playlistIsPoisoned(probeBody, variants[0].url)) return null;
+              this._playlistIsPoisoned(probeBody, variants[0].url)) {
+            return [{ url: this._rewriteWithByterange(probeBody), label: variants[0].label }];
+          }
         } catch (e) {} // probe failure is not proof of poisoning — let it through
       }
       return variants;
