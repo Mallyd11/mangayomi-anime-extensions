@@ -178,3 +178,7 @@ prev_*.json
 # Remove extension
 removed/
 .claude/worktrees/hungry-burnell-13546d/
+
+# Local-only testing tooling — never commit to GitHub
+tools/debugger/
+tools/dev-server/
