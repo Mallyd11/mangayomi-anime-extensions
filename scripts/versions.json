@@ -34,27 +34,27 @@
     "anime": {
         "AniKoto": {
             "name": "AniKoto",
-            "version": "0.4.1",
+            "version": "0.4.2",
             "langs": "en",
-            "lastUpd": 1784564001.048408
+            "lastUpd": 1784565026.256296
         },
         "HiAnime": {
             "name": "HiAnime",
-            "version": "0.3.7",
+            "version": "0.3.8",
             "langs": "en",
-            "lastUpd": 1784564001.048408
+            "lastUpd": 1784565026.256296
         },
         "JustAnime": {
             "name": "JustAnime",
-            "version": "0.2.6",
+            "version": "0.2.7",
             "langs": "en",
-            "lastUpd": 1784564001.048408
+            "lastUpd": 1784565026.256296
         },
         "Miruro": {
             "name": "Miruro",
-            "version": "6.1.1",
+            "version": "6.1.2",
             "langs": "en",
-            "lastUpd": 1784564001.048408
+            "lastUpd": 1784565026.256296
         },
         "AnimeParadise": {
             "name": "AnimeParadise",
