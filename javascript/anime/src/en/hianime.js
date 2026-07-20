@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.8",
+    "version": "0.3.9",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -527,111 +527,12 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  // Ad CDNs seen injecting fake segments. Fast path only — the host-mismatch
-  // rule below is the general check and catches hosts not listed here.
-  get AD_SEGMENT_HOSTS() {
-    return ["ibyteimg.com", "byteimg.com", "ipstatp.com", "doubleclick.net", "googlesyndication.com"];
-  }
-
-  // Last two labels of a hostname. Coarse, but enough to tell "same CDN,
-  // different shard" from "an entirely unrelated advertiser".
-  _isAdHost(domain) {
-    var adHosts = this.AD_SEGMENT_HOSTS;
-    for (var i = 0; i < adHosts.length; i++) if (domain === adHosts[i]) return true;
-    return false;
-  }
-
-  _rootDomain(host) {
-    var parts = (host || "").toLowerCase().split(".");
-    return parts.length >= 2 ? parts.slice(-2).join(".") : (host || "").toLowerCase();
-  }
-
-  // A well-formed playlist is not the same thing as a playable one.
-  //
-  // The MegaPlay/nekostream upstream returns valid m3u8 whose segments are
-  // mostly 1x1 PNGs padded to ~500 KB on an ad CDN — measured at ~55s of real
-  // video against ~1375s of junk, with no #EXT-X-DISCONTINUITY marking it.
-  // The player decodes the few real segments at the head, fails to demux the
-  // rest, races to #EXT-X-ENDLIST, and Mangayomi treats the episode as finished
-  // and auto-advances — which the user sees as the player skipping through an
-  // entire season without playing anything, marking it watched on the way.
-  //
-  // Judge by duration, not segment count: a few long real segments among many
-  // short ad ones is still watchable, and the reverse is not.
-  _playlistIsPoisoned(body, playlistUrl) {
-    var hostM = (playlistUrl || "").match(/^https?:\/\/([^/]+)/);
-    if (!hostM) return false;
-    var ownRoot = this._rootDomain(hostM[1]);
-    var lines = String(body).split("\n");
-    var segs = [];
-
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (line.indexOf("#EXTINF:") !== 0) continue;
-      var dur = parseFloat(line.slice(8)) || 0;
-      var uri = "";
-      for (var j = i + 1; j < lines.length; j++) {
-        var cand = lines[j].trim();
-        if (!cand || cand.charAt(0) === "#") continue;
-        uri = cand;
-        break;
-      }
-      if (!uri) continue;
-      // Relative URIs resolve against the playlist, so they are own-host.
-      var dom = ownRoot;
-      if (uri.indexOf("http") === 0) {
-        var segHostM = uri.match(/^https?:\/\/([^/]+)/);
-        if (segHostM) dom = this._rootDomain(segHostM[1]);
-      }
-      segs.push({ dur: dur, dom: dom });
-    }
-    if (segs.length === 0) return false;
-
-    // Which domain carries the actual episode? NOT necessarily the playlist's
-    // own host — plenty of providers serve the playlist from one domain and
-    // every segment from a CDN on another. Assuming otherwise made a clean
-    // stream look 100% foreign and rejected it outright.
-    var byDom = {};
-    for (var k = 0; k < segs.length; k++) {
-      if (!byDom[segs[k].dom]) byDom[segs[k].dom] = 0;
-      byDom[segs[k].dom] += segs[k].dur;
-    }
-    var contentDom = null;
-    if (byDom[ownRoot]) {
-      contentDom = ownRoot;                       // playlist host present → that is the content
-    } else if (!this._isAdHost(segs[0].dom)) {
-      contentDom = segs[0].dom;                   // else the lead segment; playlists open with content
-    } else {
-      var best = -1;                              // ad pre-roll: fall back to the largest non-ad domain
-      for (var d in byDom) {
-        if (!this._isAdHost(d) && byDom[d] > best) { best = byDom[d]; contentDom = d; }
-      }
-    }
-    if (contentDom === null) return true;         // every domain present is a known ad host
-
-    var realSec = 0, foreignSec = 0;
-    for (var k2 = 0; k2 < segs.length; k2++) {
-      var foreign = segs[k2].dom !== contentDom || this._isAdHost(segs[k2].dom);
-      if (foreign) foreignSec += segs[k2].dur; else realSec += segs[k2].dur;
-    }
-
-    var total = realSec + foreignSec;
-    if (total <= 0) return false; // nothing parseable — let the player decide
-    // Keep a stream that still contains a plausible episode, however much ad
-    // padding sits alongside it. Poisoned streams leave about a minute.
-    if (realSec >= 300) return false;
-    return (foreignSec / total) > 0.5;
-  }
-
   // Resolve an HLS playlist URL to one stream entry per variant.
   // Returns one of:
   //   { kind: "master", variants: [{url, label}, ...] }  — fan out to one stream per quality
   //   { kind: "flat" }                                    — already-flat playlist; caller emits URL as-is
   //   { kind: "fetch-failed" }                            — could not fetch the playlist
   //   { kind: "empty-master" }                            — master with no parseable variants
-  //   { kind: "poisoned" }                                — ad-injected; caller emits nothing
-  // The caller only emits streams for "master" and "flat", so "poisoned" drops
-  // the source rather than handing the player something that cannot play.
   async resolveHlsPlaylist(playlistUrl, baseHeaders) {
     var body = null;
     try {
@@ -643,11 +544,7 @@ class DefaultExtension extends MProvider {
     var hasStreamInf = body.indexOf("#EXT-X-STREAM-INF") >= 0;
     var hasExtinf = body.indexOf("#EXTINF") >= 0;
 
-    // Flat playlist — segments are already in hand, so check without refetching.
-    if (hasExtinf && !hasStreamInf) {
-      if (this._playlistIsPoisoned(body, playlistUrl)) return { kind: "poisoned" };
-      return { kind: "flat" };
-    }
+    if (hasExtinf && !hasStreamInf) return { kind: "flat" };
     if (!hasStreamInf) return { kind: "empty-master" };
 
     // Master playlist: parse every variant.
@@ -681,19 +578,6 @@ class DefaultExtension extends MProvider {
       var bRes = parseInt((b.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
       return bRes - aRes;
     });
-
-    // Poisoning lives in the media playlists, not the master, so the master
-    // alone cannot be judged. Sample one variant — injection is applied per
-    // stream rather than per rendition, so the top variant speaks for all of
-    // them. One extra GET, which matters against the app's 40s isolate
-    // deadline; sampling more would risk the timeout for no more signal.
-    try {
-      var probe = await this.client.get(variants[0].url, baseHeaders);
-      var probeBody = (probe && probe.body) || "";
-      if (probeBody.indexOf("#EXTM3U") >= 0 &&
-          this._playlistIsPoisoned(probeBody, variants[0].url)) return { kind: "poisoned" };
-    } catch (e) {} // probe failure is not proof of poisoning — let it through
-
     return { kind: "master", variants: variants };
   }
 
