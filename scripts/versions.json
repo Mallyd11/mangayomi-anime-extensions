@@ -32,11 +32,35 @@
         }
     },
     "anime": {
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.4.1",
+            "langs": "en",
+            "lastUpd": 1784564001.048408
+        },
         "HiAnime": {
             "name": "HiAnime",
-            "version": "0.3.6",
+            "version": "0.3.7",
             "langs": "en",
-            "lastUpd": 1784562532.90763
+            "lastUpd": 1784564001.048408
+        },
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.2.6",
+            "langs": "en",
+            "lastUpd": 1784564001.048408
+        },
+        "Miruro": {
+            "name": "Miruro",
+            "version": "6.1.1",
+            "langs": "en",
+            "lastUpd": 1784564001.048408
+        },
+        "AnimeParadise": {
+            "name": "AnimeParadise",
+            "version": "0.3.4",
+            "langs": "en",
+            "lastUpd": 1784564001.048408
         },
         "Playback Diagnostic": {
             "name": "Playback Diagnostic",
@@ -44,29 +68,11 @@
             "langs": "en",
             "lastUpd": 1784496598.310292
         },
-        "JustAnime": {
-            "name": "JustAnime",
-            "version": "0.2.5",
-            "langs": "en",
-            "lastUpd": 1784411590.535283
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.4.0",
-            "langs": "en",
-            "lastUpd": 1784410955.087323
-        },
         "Anidap": {
             "name": "Anidap",
             "version": "1.5.28",
             "langs": "en",
             "lastUpd": 1784410955.087323
-        },
-        "Miruro": {
-            "name": "Miruro",
-            "version": "6.1.0",
-            "langs": "en",
-            "lastUpd": 1784060668.375547
         },
         "Animetsu": {
             "name": "Animetsu",
@@ -83,12 +89,6 @@
         "AnimeHeaven": {
             "name": "AnimeHeaven",
             "version": "0.0.7",
-            "langs": "en",
-            "lastUpd": 1781556784.385987
-        },
-        "AnimeParadise": {
-            "name": "AnimeParadise",
-            "version": "0.3.3",
             "langs": "en",
             "lastUpd": 1781556784.385987
         }
