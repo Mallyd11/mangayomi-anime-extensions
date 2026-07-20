@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.7",
+    "version": "0.3.8",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -535,6 +535,12 @@ class DefaultExtension extends MProvider {
 
   // Last two labels of a hostname. Coarse, but enough to tell "same CDN,
   // different shard" from "an entirely unrelated advertiser".
+  _isAdHost(domain) {
+    var adHosts = this.AD_SEGMENT_HOSTS;
+    for (var i = 0; i < adHosts.length; i++) if (domain === adHosts[i]) return true;
+    return false;
+  }
+
   _rootDomain(host) {
     var parts = (host || "").toLowerCase().split(".");
     return parts.length >= 2 ? parts.slice(-2).join(".") : (host || "").toLowerCase();
@@ -556,9 +562,8 @@ class DefaultExtension extends MProvider {
     var hostM = (playlistUrl || "").match(/^https?:\/\/([^/]+)/);
     if (!hostM) return false;
     var ownRoot = this._rootDomain(hostM[1]);
-    var adHosts = this.AD_SEGMENT_HOSTS;
     var lines = String(body).split("\n");
-    var realSec = 0, foreignSec = 0;
+    var segs = [];
 
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i].trim();
@@ -572,29 +577,49 @@ class DefaultExtension extends MProvider {
         break;
       }
       if (!uri) continue;
-      // Relative URIs resolve against the playlist, so they are always own-host.
-      if (uri.indexOf("http") !== 0) { realSec += dur; continue; }
-      var segHostM = uri.match(/^https?:\/\/([^/]+)/);
-      if (!segHostM) { realSec += dur; continue; }
-      var segRoot = this._rootDomain(segHostM[1]);
-      var isAd = segRoot !== ownRoot;
-      if (!isAd) {
-        for (var a = 0; a < adHosts.length; a++) {
-          if (segRoot === adHosts[a]) { isAd = true; break; }
-        }
+      // Relative URIs resolve against the playlist, so they are own-host.
+      var dom = ownRoot;
+      if (uri.indexOf("http") === 0) {
+        var segHostM = uri.match(/^https?:\/\/([^/]+)/);
+        if (segHostM) dom = this._rootDomain(segHostM[1]);
       }
-      if (isAd) foreignSec += dur; else realSec += dur;
+      segs.push({ dur: dur, dom: dom });
+    }
+    if (segs.length === 0) return false;
+
+    // Which domain carries the actual episode? NOT necessarily the playlist's
+    // own host — plenty of providers serve the playlist from one domain and
+    // every segment from a CDN on another. Assuming otherwise made a clean
+    // stream look 100% foreign and rejected it outright.
+    var byDom = {};
+    for (var k = 0; k < segs.length; k++) {
+      if (!byDom[segs[k].dom]) byDom[segs[k].dom] = 0;
+      byDom[segs[k].dom] += segs[k].dur;
+    }
+    var contentDom = null;
+    if (byDom[ownRoot]) {
+      contentDom = ownRoot;                       // playlist host present → that is the content
+    } else if (!this._isAdHost(segs[0].dom)) {
+      contentDom = segs[0].dom;                   // else the lead segment; playlists open with content
+    } else {
+      var best = -1;                              // ad pre-roll: fall back to the largest non-ad domain
+      for (var d in byDom) {
+        if (!this._isAdHost(d) && byDom[d] > best) { best = byDom[d]; contentDom = d; }
+      }
+    }
+    if (contentDom === null) return true;         // every domain present is a known ad host
+
+    var realSec = 0, foreignSec = 0;
+    for (var k2 = 0; k2 < segs.length; k2++) {
+      var foreign = segs[k2].dom !== contentDom || this._isAdHost(segs[k2].dom);
+      if (foreign) foreignSec += segs[k2].dur; else realSec += segs[k2].dur;
     }
 
     var total = realSec + foreignSec;
     if (total <= 0) return false; // nothing parseable — let the player decide
-    // A CDN that legitimately shards segments across domains would trip the
-    // host-mismatch rule on its own, so also require that too little real video
-    // remains to be an episode at all. Poisoned streams leave ~1 minute; a
-    // genuinely ad-heavy but watchable stream keeps its full runtime.
+    // Keep a stream that still contains a plausible episode, however much ad
+    // padding sits alongside it. Poisoned streams leave about a minute.
     if (realSec >= 300) return false;
-    // Loose on purpose: legitimate mid-roll or a domain-sharded CDN stays well
-    // under this, while the observed poisoning runs ~96%.
     return (foreignSec / total) > 0.5;
   }
 
