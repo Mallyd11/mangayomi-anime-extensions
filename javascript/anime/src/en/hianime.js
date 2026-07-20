@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.5",
+    "version": "0.3.6",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -602,6 +602,91 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
+  // Decode a vidnest/megaplay encrypted API response.
+  // APIs return {encrypted:true, data:"<custom_b64_string>"} where the alphabet is
+  // "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/="
+  _decodeVidnestResponse(json) {
+    if (!json.encrypted) return json;
+    var alpha = "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/=";
+    var lookup = {};
+    for (var i = 0; i < alpha.length; i++) lookup[alpha[i]] = i;
+    var enc = json.data || "";
+    var result = [];
+    for (var i = 0; i < enc.length; i += 4) {
+      var chunk = enc.substring(i, i + 4);
+      var vals = [64, 64, 64, 64];
+      for (var c = 0; c < 4; c++) {
+        var ch = chunk[c] || "=";
+        vals[c] = lookup[ch] !== undefined ? lookup[ch] : 64;
+      }
+      result.push((vals[0] << 2) | (vals[1] >> 4));
+      if (vals[2] !== 64) result.push(((vals[1] & 15) << 4) | (vals[2] >> 2));
+      if (vals[3] !== 64) result.push(((vals[2] & 3) << 6) | vals[3]);
+    }
+    var str = "";
+    for (var j = 0; j < result.length; j++) str += String.fromCharCode(result[j]);
+    return JSON.parse(str);
+  }
+
+  // VidNest fallback: used for older anime that MegaPlay doesn't carry.
+  // Hits new.vidnest.fun which backends against the same nekostream/lostproject
+  // CDN as MegaPlay — same stream quality, different routing.
+  async fetchVidnestSources(anilistId, epNum, audioType, audioLabel) {
+    var streams = [];
+    if (!anilistId || !epNum) return streams;
+    try {
+      var apiUrl = "https://new.vidnest.fun/hianime/anime/" + anilistId + "/" + epNum + "/" + audioType;
+      var res = await this.client.get(apiUrl, {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+        "Accept": "*/*",
+        "Origin": "https://megaplay.buzz",
+        "Referer": "https://megaplay.buzz/",
+      });
+      var data = this._decodeVidnestResponse(JSON.parse(res.body));
+      if (!data || !data.sources || !data.sources.length) return streams;
+      // Subtitles: same flow as MegaPlay — fetch VTT and convert to SRT
+      var subtitles = [];
+      if (audioType === "sub" && Array.isArray(data.tracks)) {
+        for (var t = 0; t < data.tracks.length; t++) {
+          var track = data.tracks[t];
+          if (!track || !track.file || track.kind === "thumbnails") continue;
+          try {
+            var vttRes = await this.client.get(track.file, {
+              "User-Agent": this.ua,
+              "Referer": "https://megaplay.buzz/",
+            });
+            var vttBody = (vttRes.body || "").trimStart();
+            subtitles.push({
+              file: vttBody.startsWith("WEBVTT") ? this.vttToSrt(vttBody) : track.file,
+              label: track.label || "Unknown",
+            });
+          } catch (e) {
+            subtitles.push({ file: track.file, label: track.label || "Unknown" });
+          }
+        }
+      }
+      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
+      for (var s = 0; s < data.sources.length; s++) {
+        var src = data.sources[s];
+        var fileUrl = src.file || src.url;
+        if (!fileUrl) continue;
+        if (fileUrl.indexOf(".m3u8") >= 0) {
+          var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
+          if (resolved.kind === "master") {
+            for (var v = 0; v < resolved.variants.length; v++) {
+              streams.push({ url: resolved.variants[v].url, originalUrl: fileUrl, quality: resolved.variants[v].label + " - VidNest [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
+            }
+          } else if (resolved.kind === "flat") {
+            streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "VidNest [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
+          }
+        } else {
+          streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "VidNest [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
+        }
+      }
+    } catch (e) {}
+    return streams;
+  }
+
   // API approach: use HiAnime's own AJAX to discover servers and get embed URLs
   async getStreamsViaHiAnimeApi(hiAnimeEpId, audioType, audioLabel) {
     var streams = [];
@@ -659,22 +744,28 @@ class DefaultExtension extends MProvider {
     try { server = new SharedPreferences().get("hianime_pref_server") || "auto"; } catch (e) {}
 
     var getStreams = async (audioType, audioLabel) => {
+      var streams;
       if (server === "ani") {
         // ani URL only (stream-token based)
-        return await this.extractMegaplayFromPageUrl(
+        streams = await this.extractMegaplayFromPageUrl(
           "https://megaplay.buzz/stream/ani/" + realEpId + "/" + audioType,
           this.source.baseUrl + "/", audioType, audioLabel
         );
-      }
-      if (server === "mal") {
+      } else if (server === "mal") {
         // mal URL only (MAL ID + episode number based — reliable)
-        return await this.extractMegaplayFromPageUrl(
+        streams = await this.extractMegaplayFromPageUrl(
           "https://megaplay.buzz/stream/mal/" + malId + "/" + episodeNum + "/" + audioType,
           this.source.baseUrl + "/", audioType, audioLabel
         );
+      } else {
+        // "auto": try ani first, fall back to mal
+        streams = await this.extractMegaplaySources(realEpId, audioType, audioLabel, malId, episodeNum);
       }
-      // "auto": try ani first, fall back to mal
-      return await this.extractMegaplaySources(realEpId, audioType, audioLabel, malId, episodeNum);
+      // VidNest fallback: older anime that MegaPlay doesn't carry (e.g. Shiki, 2010)
+      if (streams.length === 0 && anilistId && episodeNum) {
+        streams = await this.fetchVidnestSources(anilistId, episodeNum, audioType, audioLabel);
+      }
+      return streams;
     };
 
     var results = await Promise.all([
