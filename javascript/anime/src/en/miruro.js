@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.1.5",
+    "version": "6.1.6",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -36,178 +36,6 @@ class DefaultExtension extends MProvider {
 
   pref(key) {
     return new SharedPreferences().get(key);
-  }
-
-  // ── Base64url ──────────────────────────────────────────────────────────────
-
-  b64dec(s) {
-    s = s.replace(/-/g, "+").replace(/_/g, "/");
-    while (s.length % 4) s += "=";
-    var alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var lut = {};
-    for (var i = 0; i < alpha.length; i++) lut[alpha[i]] = i;
-    var out = [];
-    for (var i = 0; i < s.length; i += 4) {
-      var a = lut[s[i]] | 0, b = lut[s[i+1]] | 0;
-      var c2 = s[i+2], c3 = s[i+3];
-      var c = c2 !== "=" ? lut[c2] | 0 : 0;
-      var d = c3 !== "=" ? lut[c3] | 0 : 0;
-      out.push((a << 2) | (b >> 4));
-      if (c2 !== "=") out.push(((b & 0xF) << 4) | (c >> 2));
-      if (c3 !== "=") out.push(((c & 3) << 6) | d);
-    }
-    return out;
-  }
-
-  b64enc(bytes) {
-    var alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var out = "";
-    for (var i = 0; i < bytes.length; i += 3) {
-      var b0 = bytes[i], b1 = i+1 < bytes.length ? bytes[i+1] : 0, b2 = i+2 < bytes.length ? bytes[i+2] : 0;
-      out += alpha[b0 >> 2];
-      out += alpha[((b0 & 3) << 4) | (b1 >> 4)];
-      out += i+1 < bytes.length ? alpha[((b1 & 0xF) << 2) | (b2 >> 6)] : "=";
-      out += i+2 < bytes.length ? alpha[b2 & 0x3F] : "=";
-    }
-    return out.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-  }
-
-  // ── UTF-8 ──────────────────────────────────────────────────────────────────
-
-  strToBytes(str) {
-    var out = [];
-    for (var i = 0; i < str.length; i++) {
-      var c = str.charCodeAt(i);
-      if (c < 0x80) { out.push(c); }
-      else if (c < 0x800) { out.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F)); }
-      else { out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 0x3F), 0x80 | (c & 0x3F)); }
-    }
-    return out;
-  }
-
-  bytesToStr(bytes) {
-    var parts = [], i = 0, CHUNK = 2048;
-    while (i < bytes.length) {
-      var chunk = [], end = Math.min(i + CHUNK, bytes.length);
-      while (i < end) {
-        var b = bytes[i++];
-        if (b < 0x80) { chunk.push(b); }
-        else if ((b & 0xE0) === 0xC0) { chunk.push(((b & 0x1F) << 6) | (bytes[i++] & 0x3F)); }
-        else if ((b & 0xF0) === 0xE0) { var b2 = bytes[i++], b3 = bytes[i++]; chunk.push(((b & 0xF) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)); }
-        else { var b2 = bytes[i++], b3 = bytes[i++], b4 = bytes[i++]; var cp = (((b & 7) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)) - 0x10000; chunk.push(0xD800 | (cp >> 10), 0xDC00 | (cp & 0x3FF)); }
-      }
-      parts.push(String.fromCharCode.apply(null, chunk));
-    }
-    return parts.join("");
-  }
-
-  // ── gzip inflate ──────────────────────────────────────────────────────────
-
-  inflate(data) {
-    if (data[0] !== 0x1F || data[1] !== 0x8B) throw new Error("not gzip");
-    var flg = data[3], pos = 10;
-    if (flg & 4)  { var xl = data[pos] | (data[pos+1] << 8); pos += 2 + xl; }
-    if (flg & 8)  { while (data[pos++] !== 0) {} }
-    if (flg & 16) { while (data[pos++] !== 0) {} }
-    if (flg & 2)  { pos += 2; }
-    var out = [], bp = pos, bb = 0, bl = 0;
-    function bit() { if (!bl) { bb = data[bp++]; bl = 8; } var v = bb & 1; bb >>>= 1; bl--; return v; }
-    function bits(n) { var v = 0; for (var i = 0; i < n; i++) v |= bit() << i; return v; }
-    function tree(lens) {
-      var mx = 0; for (var i = 0; i < lens.length; i++) if (lens[i] > mx) mx = lens[i];
-      if (!mx) return { t: {}, m: 0 };
-      var bc = []; for (var i = 0; i <= mx; i++) bc.push(0);
-      for (var i = 0; i < lens.length; i++) if (lens[i]) bc[lens[i]]++;
-      var nc = []; for (var i = 0; i <= mx+1; i++) nc.push(0);
-      var code = 0; for (var b = 1; b <= mx; b++) { code = (code + bc[b-1]) << 1; nc[b] = code; }
-      var t = {};
-      for (var i = 0; i < lens.length; i++) { var l = lens[i]; if (l) { if (!t[l]) t[l] = {}; t[l][nc[l]] = i; nc[l]++; } }
-      return { t: t, m: mx };
-    }
-    function sym(tr) { var code = 0; for (var l = 1; l <= tr.m; l++) { code = (code << 1) | bit(); if (tr.t[l] !== undefined && tr.t[l][code] !== undefined) return tr.t[l][code]; } throw new Error("bad sym"); }
-    var LB=[3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
-    var LE=[0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
-    var DB=[1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
-    var DE=[0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
-    function block(lt, dt) {
-      while (true) {
-        var s = sym(lt);
-        if (s < 256) { out.push(s); }
-        else if (s === 256) { break; }
-        else { var idx = s-257, len = LB[idx]+bits(LE[idx]), ds = sym(dt), dist = DB[ds]+bits(DE[ds]), st = out.length-dist; for (var k = 0; k < len; k++) out.push(out[st+k]); }
-      }
-    }
-    var done = false;
-    while (!done) {
-      var fin = bit(), type = bits(2);
-      if (type === 0) {
-        bl = 0; var ln = data[bp] | (data[bp+1] << 8); bp += 4; for (var i = 0; i < ln; i++) out.push(data[bp++]);
-      } else if (type === 1) {
-        var ll = []; for (var i=0;i<=143;i++) ll.push(8); for(var i=144;i<=255;i++) ll.push(9); for(var i=256;i<=279;i++) ll.push(7); for(var i=280;i<=287;i++) ll.push(8);
-        var dl=[]; for(var i=0;i<30;i++) dl.push(5); block(tree(ll), tree(dl));
-      } else if (type === 2) {
-        var hlit=bits(5)+257, hdist=bits(5)+1, hclen=bits(4)+4;
-        var co=[16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15], cl=[];
-        for(var i=0;i<19;i++) cl.push(0); for(var i=0;i<hclen;i++) cl[co[i]]=bits(3);
-        var ct=tree(cl), all=[];
-        while(all.length < hlit+hdist) { var s=sym(ct); if(s<16){all.push(s);}else if(s===16){var n=bits(2)+3,pv=all.length?all[all.length-1]:0;for(var i=0;i<n;i++)all.push(pv);}else if(s===17){var n=bits(3)+3;for(var i=0;i<n;i++)all.push(0);}else{var n=bits(7)+11;for(var i=0;i<n;i++)all.push(0);} }
-        block(tree(all.slice(0,hlit)), tree(all.slice(hlit)));
-      } else { throw new Error("bad block"); }
-      if (fin) done = true;
-    }
-    return out;
-  }
-
-  // ── Miruro pipe API ────────────────────────────────────────────────────────
-  // GET /api/secure/pipe?e=base64url(JSON) → base64url(XOR(key, gzip(JSON)))
-  // Works from residential IPs without CF cookies.
-
-  async pipe(query) {
-    var req = JSON.stringify({ path: "sources", method: "GET", query: query, body: null, version: "0.2.0" });
-    var e = this.b64enc(this.strToBytes(req));
-    var keyHex = "71951034f8fbcf53d89db52ceb3dc22c";
-    var obfKey = [];
-    for (var i = 0; i < keyHex.length; i += 2) obfKey.push(parseInt(keyHex.slice(i, i+2), 16));
-
-    var res = await this.client.get("https://www.miruro.to/api/secure/pipe?e=" + e, {
-      "User-Agent": this.ua,
-      "Referer": "https://www.miruro.to/",
-      "Origin": "https://www.miruro.to",
-      "Accept": "*/*",
-      "sec-fetch-dest": "empty",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-site": "same-origin",
-    });
-    if (!res || res.statusCode !== 200) throw new Error("HTTP " + (res && res.statusCode));
-    var body = (typeof res.body === "string" ? res.body : String(res.body)).replace(/[^A-Za-z0-9+\/=\-_]/g, "");
-    if (body.length < 4) throw new Error("empty body");
-    var raw = this.b64dec(body);
-    var bytes = raw.slice();
-    for (var i = 0; i < bytes.length; i++) bytes[i] ^= obfKey[i % obfKey.length];
-    try { return JSON.parse(this.bytesToStr(this.inflate(bytes))); } catch (ex) {}
-    try { return JSON.parse(this.bytesToStr(this.inflate(raw))); } catch (ex2) {}
-    return JSON.parse(this.bytesToStr(bytes));
-  }
-
-  // ── AllAnime showId lookup ─────────────────────────────────────────────────
-
-  async getAllAnimeId(anilistId, title) {
-    try {
-      var res = await this.client.post(
-        "https://api.allanime.day/api",
-        { "Content-Type": "application/json", "Accept": "application/json",
-          "Origin": "https://allanime.to", "Referer": "https://allanime.to/", "User-Agent": this.ua },
-        { query: "query($q:String!){shows(search:{query:$q,allowAdult:false,allowUnknown:false},limit:20,page:1,translationType:sub){edges{_id aniListId}}}",
-          variables: { q: title } }
-      );
-      if (!res || res.statusCode !== 200) return null;
-      var d = JSON.parse(res.body);
-      var edges = (d.data && d.data.shows && d.data.shows.edges) || [];
-      for (var i = 0; i < edges.length; i++) {
-        if (String(edges[i].aniListId) === String(anilistId)) return edges[i]._id;
-      }
-      return null;
-    } catch (e) { return null; }
   }
 
   // ── AniList GraphQL ────────────────────────────────────────────────────────
@@ -254,7 +82,13 @@ class DefaultExtension extends MProvider {
   async getLatestUpdates(page) {
     try {
       var n = page || 1;
-      var d = await this.anilist("{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(status:RELEASING,sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}");
+      var month = new Date().getMonth() + 1;
+      var year = new Date().getFullYear();
+      var season = month <= 3 ? "WINTER" : month <= 6 ? "SPRING" : month <= 9 ? "SUMMER" : "FALL";
+      var d = await this.anilist(
+        "query($p:Int,$yr:Int){Page(page:$p,perPage:20){pageInfo{hasNextPage}media(season:" + season + ",seasonYear:$yr,sort:[POPULARITY_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}",
+        { p: n, yr: year }
+      );
       var pg = d.Page || {};
       var self = this;
       return { list: (pg.media || []).map(function(m) { return self.mediaToItem(m); }), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
@@ -443,55 +277,6 @@ class DefaultExtension extends MProvider {
         }
       }
     } catch (e) {}
-
-    if (streams.length > 0) return streams;
-
-    // ── 2. Miruro pipe fallback (vault01.ultracloud.cc, works on residential IPs) ──
-    // Lazy lookup: AniList title → AllAnime showId (only when megaplay has no coverage).
-    var allAnimeId = null;
-    try {
-      var titleData = await this.anilist("{Media(id:" + id + ",type:ANIME){title{english romaji}}}");
-      var tm = titleData.Media;
-      var titleStr = tm ? (tm.title.english || tm.title.romaji || "") : "";
-      if (titleStr) allAnimeId = await this.getAllAnimeId(id, titleStr);
-    } catch (e) {}
-    if (!allAnimeId) return [];
-
-    // Only try "ally" — avoids multi-minute hang when pipe is CF-blocked (one timeout max).
-    var pipeBlocked = false;
-    for (var ai = 0; ai < audioList.length && !pipeBlocked; ai++) {
-      var cat = audioList[ai];
-      try {
-        var episodeId = this.b64enc(this.strToBytes("allmanga:" + allAnimeId + ":" + num));
-        var pipeData = await this.pipe({ episodeId: episodeId, provider: "ally", category: cat });
-        var sources = pipeData.streams || pipeData.sources || [];
-
-        var rawSubs = pipeData.subtitles || [];
-        var subtitles = rawSubs.map(function(s) {
-          return { file: s.file || s.url || "", label: s.label || s.lang || "Sub", default: !!(s.default || s.isDefault) };
-        });
-        if (cat === "sub" && subtitles.length > 0 && !subtitles.some(function(s) { return s.default; })) {
-          subtitles[0].default = true;
-        }
-
-        for (var si = 0; si < sources.length; si++) {
-          var s = sources[si];
-          if (s.type === "embed" || s.isActive === false) continue;
-          var su = s.url || s.file;
-          if (!su || su.length < 8) continue;
-          var referer = s.referer || "https://www.miruro.to/";
-          streams.push({
-            url: su,
-            originalUrl: su,
-            quality: (s.quality || "Auto") + " [" + cat.toUpperCase() + " · ally]",
-            headers: { "User-Agent": self.ua, "Referer": referer, "Origin": referer.replace(/\/$/, "") },
-            subtitles: subtitles,
-          });
-        }
-      } catch (e) {
-        pipeBlocked = true;
-      }
-    }
 
     return streams;
   }
