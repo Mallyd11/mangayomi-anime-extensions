@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.1.4",
+    "version": "6.1.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -254,7 +254,7 @@ class DefaultExtension extends MProvider {
   async getLatestUpdates(page) {
     try {
       var n = page || 1;
-      var d = await this.anilist("{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}");
+      var d = await this.anilist("{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(status:RELEASING,sort:[UPDATED_AT_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}");
       var pg = d.Page || {};
       var self = this;
       return { list: (pg.media || []).map(function(m) { return self.mediaToItem(m); }), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
