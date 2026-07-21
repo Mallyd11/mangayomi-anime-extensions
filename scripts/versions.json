@@ -34,9 +34,9 @@
     "anime": {
         "JustAnime": {
             "name": "JustAnime",
-            "version": "0.2.6",
+            "version": "0.2.7",
             "langs": "en",
-            "lastUpd": 1784649172.14297
+            "lastUpd": 1784650814.915065
         },
         "AniKoto": {
             "name": "AniKoto",
@@ -52,7 +52,7 @@
         },
         "Miruro": {
             "name": "Miruro",
-            "version": "6.1.7",
+            "version": "6.1.8",
             "langs": "en",
             "lastUpd": 1784565026.256296
         },
