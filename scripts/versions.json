@@ -34,9 +34,9 @@
     "anime": {
         "JustAnime": {
             "name": "JustAnime",
-            "version": "0.2.6",
+            "version": "0.2.7",
             "langs": "en",
-            "lastUpd": 1784647993.767304
+            "lastUpd": 1784649156.596168
         },
         "AniKoto": {
             "name": "AniKoto",
@@ -73,12 +73,6 @@
             "version": "1.5.28",
             "langs": "en",
             "lastUpd": 1784410955.087323
-        },
-        "Animetsu": {
-            "name": "Animetsu",
-            "version": "1.5.1",
-            "langs": "en",
-            "lastUpd": 1783632992.765798
         },
         "MyroniX": {
             "name": "MyroniX",
