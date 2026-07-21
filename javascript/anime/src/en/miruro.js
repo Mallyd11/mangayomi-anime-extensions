@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.1.6",
+    "version": "6.1.7",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -72,7 +72,7 @@ class DefaultExtension extends MProvider {
   async getPopular(page) {
     try {
       var n = page || 1;
-      var d = await this.anilist("{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[TRENDING_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}");
+      var d = await this.anilist("{Page(page:" + n + ",perPage:20){pageInfo{hasNextPage}media(sort:[POPULARITY_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}");
       var pg = d.Page || {};
       var self = this;
       return { list: (pg.media || []).map(function(m) { return self.mediaToItem(m); }), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
@@ -82,16 +82,24 @@ class DefaultExtension extends MProvider {
   async getLatestUpdates(page) {
     try {
       var n = page || 1;
-      var month = new Date().getMonth() + 1;
-      var year = new Date().getFullYear();
-      var season = month <= 3 ? "WINTER" : month <= 6 ? "SPRING" : month <= 9 ? "SUMMER" : "FALL";
       var d = await this.anilist(
-        "query($p:Int,$yr:Int){Page(page:$p,perPage:20){pageInfo{hasNextPage}media(season:" + season + ",seasonYear:$yr,sort:[POPULARITY_DESC],type:ANIME,isAdult:false){id title{romaji english}coverImage{large}}}}",
-        { p: n, yr: year }
+        "query($p:Int){Page(page:$p,perPage:40){pageInfo{hasNextPage}airingSchedules(notYetAired:false,sort:[TIME_DESC]){media{id title{romaji english}coverImage{large}}}}}",
+        { p: n }
       );
       var pg = d.Page || {};
+      var seen = {};
+      var list = [];
       var self = this;
-      return { list: (pg.media || []).map(function(m) { return self.mediaToItem(m); }), hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
+      var schedules = pg.airingSchedules || [];
+      for (var i = 0; i < schedules.length; i++) {
+        var m = schedules[i].media;
+        if (m && !seen[m.id]) {
+          seen[m.id] = true;
+          list.push(self.mediaToItem(m));
+          if (list.length >= 20) break;
+        }
+      }
+      return { list: list, hasNextPage: !!(pg.pageInfo && pg.pageInfo.hasNextPage) };
     } catch (e) { return { list: [], hasNextPage: false }; }
   }
 
@@ -219,64 +227,71 @@ class DefaultExtension extends MProvider {
 
     var streams = [];
     var self = this;
+    var providers = ["megaplay", "animegg"];
 
-    // ── 1. JustAnime megaplay (fast path, CF-free CDN) ─────────────────────
-    try {
-      var res = await this.client.get(
-        "https://core.justanime.to/api/watch/" + id + "/episode/" + num + "/megaplay",
-        { "User-Agent": this.ua, "Origin": "https://justanime.to", "Referer": "https://justanime.to/", "Accept": "application/json" }
-      );
-      if (res && res.statusCode === 200) {
+    for (var pi = 0; pi < providers.length; pi++) {
+      var provider = providers[pi];
+      try {
+        var res = await this.client.get(
+          "https://core.justanime.to/api/watch/" + id + "/episode/" + num + "/" + provider,
+          { "User-Agent": this.ua, "Origin": "https://justanime.to", "Referer": "https://justanime.to/", "Accept": "application/json" }
+        );
+        if (!res || res.statusCode !== 200) continue;
         var data = JSON.parse(res.body);
-        if (data && !data.error) {
-          for (var ti = 0; ti < audioList.length; ti++) {
-            var type = audioList[ti];
-            var typeData = data[type];
-            if (!typeData || !typeData.sources) continue;
+        if (!data || data.error) continue;
+
+        for (var ti = 0; ti < audioList.length; ti++) {
+          var type = audioList[ti];
+          var typeData = data[type];
+          if (!typeData || !typeData.sources) continue;
+
+          var streamHeaders;
+          if (provider === "megaplay") {
             var rhdrs = typeData.headers || {};
-            var streamHeaders = {
-              "User-Agent": this.ua,
-              "Referer": rhdrs["Referer"] || "https://megaplay.buzz/",
-            };
+            streamHeaders = { "User-Agent": this.ua, "Referer": rhdrs["Referer"] || "https://megaplay.buzz/" };
             if (rhdrs["Origin"]) streamHeaders["Origin"] = rhdrs["Origin"];
+          } else {
+            streamHeaders = { "User-Agent": this.ua, "Referer": "https://justanime.to/" };
+          }
 
-            var subtitles = [];
-            var tracks = typeData.subtitles || typeData.tracks || [];
-            for (var sti = 0; sti < tracks.length; sti++) {
-              var track = tracks[sti];
-              var tUrl = track.file || track.src || track.url;
-              if (tUrl && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
-                subtitles.push({ file: tUrl, label: track.label || "Unknown", default: !!(track.default || track.isDefault) });
-              }
-            }
-            if (type === "sub" && subtitles.length > 0 && !subtitles.some(function(s) { return s.default; })) {
-              subtitles[0].default = true;
-            }
-
-            var sources = typeData.sources;
-            for (var si = 0; si < sources.length; si++) {
-              var s = sources[si];
-              var streamUrl = s.url || s.file;
-              if (!streamUrl) continue;
-              if ((s.isM3U8 || streamUrl.indexOf(".m3u8") >= 0) && (!s.quality || s.quality === "auto")) {
-                var variants = await this.resolveMasterPlaylist(streamUrl, streamHeaders);
-                if (variants.length > 0) {
-                  for (var vi = 0; vi < variants.length; vi++) {
-                    streams.push({ url: variants[vi].url, originalUrl: streamUrl,
-                      quality: variants[vi].quality + " [" + type.toUpperCase() + " · mega]",
-                      headers: streamHeaders, subtitles: subtitles });
-                  }
-                  continue;
-                }
-              }
-              streams.push({ url: streamUrl, originalUrl: streamUrl,
-                quality: (s.quality || "auto") + " [" + type.toUpperCase() + " · mega]",
-                headers: streamHeaders, subtitles: subtitles });
+          var subtitles = [];
+          var tracks = typeData.subtitles || typeData.tracks || [];
+          for (var sti = 0; sti < tracks.length; sti++) {
+            var track = tracks[sti];
+            var tUrl = track.file || track.src || track.url;
+            if (tUrl && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
+              subtitles.push({ file: tUrl, label: track.label || "Unknown", default: !!(track.default || track.isDefault) });
             }
           }
+          if (type === "sub" && subtitles.length > 0 && !subtitles.some(function(s) { return s.default; })) {
+            subtitles[0].default = true;
+          }
+
+          var sources = typeData.sources;
+          for (var si = 0; si < sources.length; si++) {
+            var s = sources[si];
+            var streamUrl = s.url || s.file;
+            if (!streamUrl) continue;
+            if (provider === "megaplay" && (s.isM3U8 || streamUrl.indexOf(".m3u8") >= 0) && (!s.quality || s.quality === "auto")) {
+              var variants = await self.resolveMasterPlaylist(streamUrl, streamHeaders);
+              if (variants.length > 0) {
+                for (var vi = 0; vi < variants.length; vi++) {
+                  streams.push({ url: variants[vi].url, originalUrl: streamUrl,
+                    quality: variants[vi].quality + " [" + type.toUpperCase() + " · mega]",
+                    headers: streamHeaders, subtitles: subtitles });
+                }
+                continue;
+              }
+            }
+            streams.push({ url: streamUrl, originalUrl: streamUrl,
+              quality: (s.quality || "auto") + " [" + type.toUpperCase() + " · " + provider + "]",
+              headers: streamHeaders, subtitles: subtitles });
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+
+      if (streams.length > 0) break;
+    }
 
     return streams;
   }
