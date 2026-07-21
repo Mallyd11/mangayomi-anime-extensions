@@ -26,7 +26,7 @@ This repository contains the available javascript extension catalogues for the M
 | AnimeParadise | 0.3.4 | No | Sub Only | 2026/07/20 |
 | HiAnime | 0.3.9 | Yes | Sub+Dub | 2026/07/20 |
 | JustAnime | 0.2.6 | Yes | Sub+Dub | 2026/07/21 |
-| Miruro | 6.1.8 | Yes | Sub+Dub | 2026/07/20 |
+| Miruro | 6.1.9 | Yes | Sub+Dub | 2026/07/20 |
 | MyroniX | 0.2.3 | Yes | Sub+Dub | 2026/07/09 |
 | Playback Diagnostic | 0.0.1 | ? | ? | 2026/07/19 |
 
