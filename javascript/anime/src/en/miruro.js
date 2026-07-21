@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.1.3",
+    "version": "6.1.4",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -410,9 +410,13 @@ class DefaultExtension extends MProvider {
             var tracks = typeData.subtitles || typeData.tracks || [];
             for (var sti = 0; sti < tracks.length; sti++) {
               var track = tracks[sti];
-              if (track.file && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
-                subtitles.push({ file: track.file, label: track.label || "Unknown" });
+              var tUrl = track.file || track.src || track.url;
+              if (tUrl && (track.kind === "captions" || track.kind === "subtitles" || !track.kind)) {
+                subtitles.push({ file: tUrl, label: track.label || "Unknown", default: !!(track.default || track.isDefault) });
               }
+            }
+            if (type === "sub" && subtitles.length > 0 && !subtitles.some(function(s) { return s.default; })) {
+              subtitles[0].default = true;
             }
 
             var sources = typeData.sources;
@@ -464,8 +468,11 @@ class DefaultExtension extends MProvider {
 
         var rawSubs = pipeData.subtitles || [];
         var subtitles = rawSubs.map(function(s) {
-          return { file: s.file || s.url || "", label: s.label || s.lang || "Sub" };
+          return { file: s.file || s.url || "", label: s.label || s.lang || "Sub", default: !!(s.default || s.isDefault) };
         });
+        if (cat === "sub" && subtitles.length > 0 && !subtitles.some(function(s) { return s.default; })) {
+          subtitles[0].default = true;
+        }
 
         for (var si = 0; si < sources.length; si++) {
           var s = sources[si];
