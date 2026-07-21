@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.1.8",
+    "version": "6.1.9",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -227,7 +227,7 @@ class DefaultExtension extends MProvider {
 
     var streams = [];
     var self = this;
-    var providers = ["megaplay", "gogoanime", "vidstreaming", "animegg"];
+    var providers = ["animegg", "gogoanime", "vidstreaming", "megaplay"];
 
     for (var pi = 0; pi < providers.length; pi++) {
       var provider = providers[pi];
