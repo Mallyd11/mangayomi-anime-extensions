@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.3",
+    "version": "0.4.4",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -935,28 +935,52 @@ class DefaultExtension extends MProvider {
     return this.normalizeSubtitles(ordered);
   }
 
-  // Mangayomi loads a subtitle `file` as a URL, so SRT text inlined into that
-  // field never renders — only the publicly fetchable ones (anizara, via the
-  // HD-2 API) actually show up. Share those across every sub stream so the
-  // choice of quality stops deciding whether subtitles work, and mark the first
-  // one default so they switch on by themselves.
+  // Make English turn on by itself.
+  //
+  // The player only auto-selects from the *first* video in this list, and picks
+  // with `subtitles.firstWhere(sub => sub.label == <app's default subtitle
+  // language>, orElse: subtitles.first)`. So two things decide the outcome, and
+  // neither is a flag: the English track has to be labelled exactly "English"
+  // for the match to hit, and it has to be first so the fallback lands on it
+  // too. Mangayomi's Track model carries only `file` and `label`, so a
+  // `default: true` property would be dropped on the way in.
+  //
+  // Providers label the same track inconsistently ("English", "eng-2",
+  // "English (US)"), hence the relabelling rather than a plain sort.
   normalizeSubtitles(streams) {
-    var isUrl = function(s) {
-      return s && s.subtitles && s.subtitles.length && /^https?:\/\//.test(String(s.subtitles[0].file));
+    var hasUrl = function(subs) {
+      return subs && subs.length && /^https?:\/\//.test(String(subs[0].file));
     };
+    // Prefer a set backed by real URLs — those are the ones proven to load.
     var shared = null;
     for (var i = 0; i < streams.length; i++) {
-      if (isUrl(streams[i])) { shared = streams[i].subtitles; break; }
+      if (hasUrl(streams[i].subtitles)) { shared = this.englishFirst(streams[i].subtitles); break; }
     }
     for (var j = 0; j < streams.length; j++) {
       var s = streams[j];
       // Dub streams carry no subtitles by design; leave them alone.
       if (s.quality.indexOf("[Dub]") >= 0) continue;
-      // Inlined SRT cannot render, so replace it whenever a real URL exists.
-      if (shared && !isUrl(s)) s.subtitles = shared;
-      if (s.subtitles && s.subtitles.length) s.subtitles[0].default = true;
+      if (shared && !hasUrl(s.subtitles)) s.subtitles = shared;
+      else s.subtitles = this.englishFirst(s.subtitles);
     }
     return streams;
+  }
+
+  // Put the English track first and give it the exact label the player matches on.
+  englishFirst(subs) {
+    if (!subs || !subs.length) return subs || [];
+    var english = [], other = [];
+    for (var i = 0; i < subs.length; i++) {
+      var label = String(subs[i].label || "");
+      // "English", "eng-2", "English (US)" — but not "Englishsub"-style dub tags,
+      // and not the romance languages that merely contain "es"/"en" substrings.
+      if (/^(eng|english)\b|^eng-|\benglish\b/i.test(label)) {
+        english.push({ file: subs[i].file, label: "English" });
+      } else {
+        other.push(subs[i]);
+      }
+    }
+    return english.concat(other);
   }
 
   getFilterList() {
