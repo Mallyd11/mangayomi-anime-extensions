@@ -32,17 +32,17 @@
         }
     },
     "anime": {
-        "JustAnime": {
-            "name": "JustAnime",
-            "version": "0.2.6",
-            "langs": "en",
-            "lastUpd": 1785080168.647181
-        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.4.4",
             "langs": "en",
             "lastUpd": 1785080637.804122
+        },
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.2.6",
+            "langs": "en",
+            "lastUpd": 1785080168.647181
         },
         "AniKoto": {
             "name": "AniKoto",
