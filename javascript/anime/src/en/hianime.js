@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.9",
+    "version": "0.4.2",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -31,6 +31,11 @@ class DefaultExtension extends MProvider {
 
   get ua() {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+  }
+
+  // shirayuki's HLS proxy — strips the PNG wrapper off segments (see wrapProxyStream).
+  get tsProxy() {
+    return "http://shirayuki.eastasia.cloudapp.azure.com:1818/api/v2/hianime/proxy";
   }
 
   get headers() {
@@ -470,6 +475,90 @@ class DefaultExtension extends MProvider {
     return srt || vtt;
   }
 
+  // Most HiAnime CDNs (vivibebe.site, megap.kotocdn.site, and the ibyteimg hosts
+  // their playlists point at) do not serve plain MPEG-TS: every segment is a
+  // 70-byte PNG header (1x1 image) with the real TS bytes appended after it.
+  // Apple's AVPlayer scans forward for the 0x47 sync byte and plays these anyway,
+  // which is why iOS works, but libmpv on Windows treats each segment as an
+  // undecodable image of zero duration and races to the end of the episode.
+  //
+  // The extension hands the player a playlist URL and the player fetches the
+  // segments itself, so we cannot strip the header in here. shirayuki exposes a
+  // proxy that does it for us — /proxy/m3u8 rewrites a playlist so its segments
+  // point at /proxy/ts, which serves the same bytes with the PNG header removed
+  // and a correct video/MP2T content type.
+  //
+  // The proxy costs real throughput (measured ~0.9 MB/s vs ~15 MB/s direct), so
+  // these are offered as extra entries alongside the direct ones rather than as
+  // a replacement — see the "Stream routing" preference for the ordering.
+  wrapProxyStream(stream) {
+    return {
+      url: this.tsProxy + "/m3u8?url=" + encodeURIComponent(stream.url),
+      originalUrl: stream.originalUrl || stream.url,
+      quality: stream.quality + " ⟨unwrapped⟩",
+      // The proxy fetches upstream itself, so no Referer/Origin is needed here.
+      headers: { "User-Agent": this.ua },
+      subtitles: stream.subtitles || [],
+    };
+  }
+
+  // Whether a stream both needs the proxy and can actually be served by it.
+  //   vivibebe.site        PNG-wrapped, and the proxy can fetch it  -> wrap
+  //   vibevibe.workers.dev already raw MPEG-TS                      -> leave alone
+  //   megap.kotocdn.site   PNG-wrapped, but the proxy does not send the
+  //                        Referer that CDN demands and gets a 403, so wrapping
+  //                        it would only produce a dead entry            -> skip
+  canUnwrap(url) {
+    return (url || "").indexOf("vivibebe.site") >= 0;
+  }
+
+  // This CDN serves plain MPEG-TS, so libmpv can already decode it as-is.
+  servesRawTs(url) {
+    return (url || "").indexOf("vibevibe.workers.dev") >= 0;
+  }
+
+  // Resolve a playlist URI that may be absolute or relative to its playlist.
+  resolveUrl(uri, playlistUrl) {
+    if (uri.indexOf("http") === 0) return uri;
+    var lastSlash = playlistUrl.lastIndexOf("/");
+    var baseDir = lastSlash > 0 ? playlistUrl.substring(0, lastSlash + 1) : playlistUrl;
+    return baseDir + uri;
+  }
+
+  // Download MegaPlay/VidNest subtitle tracks and inline them as SRT text.
+  // The VTTs live on lostproject.club, which 403s without a megaplay.buzz Referer —
+  // so a track that fails to download here must be dropped, not emitted as a URL
+  // for the player to retry (the player sends no Referer and would 403 too).
+  async inlineMegaplayTracks(tracks) {
+    if (!Array.isArray(tracks)) return [];
+    var pending = [];
+    for (var t = 0; t < tracks.length; t++) {
+      var track = tracks[t];
+      if (!track || !track.file || track.kind === "thumbnails") continue;
+      pending.push(this._inlineOneTrack(track));
+    }
+    var fetched = await Promise.all(pending);
+    var subtitles = [];
+    for (var r = 0; r < fetched.length; r++) {
+      if (fetched[r]) subtitles.push(fetched[r]);
+    }
+    return subtitles;
+  }
+
+  async _inlineOneTrack(track) {
+    try {
+      var res = await this.client.get(track.file, {
+        "User-Agent": this.ua,
+        "Referer": "https://megaplay.buzz/",
+      });
+      var body = (res.body || "").trimStart();
+      if (!body.startsWith("WEBVTT")) return null;
+      return { file: this.vttToSrt(body), label: track.label || "Unknown" };
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Call the MegaPlay getSources API for a known data-id and build stream list
   async fetchMegaplaySourcesById(dataId, refererUrl, audioType, audioLabel) {
     var streams = [];
@@ -483,28 +572,7 @@ class DefaultExtension extends MProvider {
       var data = JSON.parse(res.body);
       if (!data || !data.sources) return streams;
       var sourceList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
-      // Only fetch VTT content for sub streams — dub subtitles are stripped at the
-      // getVideoList level since Mangayomi only auto-activates from the first stream.
-      var subtitles = [];
-      if (audioType === "sub" && Array.isArray(data.tracks)) {
-        for (var t = 0; t < data.tracks.length; t++) {
-          var track = data.tracks[t];
-          if (!track || !track.file || track.kind === "thumbnails") continue;
-          try {
-            var vttRes = await this.client.get(track.file, {
-              "User-Agent": this.ua,
-              "Referer": "https://megaplay.buzz/",
-            });
-            var vttBody = (vttRes.body || "").trimStart();
-            subtitles.push({
-              file: vttBody.startsWith("WEBVTT") ? this.vttToSrt(vttBody) : track.file,
-              label: track.label || "Unknown",
-            });
-          } catch (e) {
-            subtitles.push({ file: track.file, label: track.label || "Unknown" });
-          }
-        }
-      }
+      var subtitles = audioType === "sub" ? await this.inlineMegaplayTracks(data.tracks) : [];
       var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
       for (var s = 0; s < sourceList.length; s++) {
         var src = sourceList[s];
@@ -548,8 +616,6 @@ class DefaultExtension extends MProvider {
     if (!hasStreamInf) return { kind: "empty-master" };
 
     // Master playlist: parse every variant.
-    var lastSlash = playlistUrl.lastIndexOf("/");
-    var baseDir = lastSlash > 0 ? playlistUrl.substring(0, lastSlash + 1) : playlistUrl;
     var variants = [];
     var lines = body.split("\n");
     for (var i = 0; i < lines.length; i++) {
@@ -562,7 +628,7 @@ class DefaultExtension extends MProvider {
         var u = lines[j].trim();
         if (!u) continue;
         if (u.charAt(0) === "#") continue;
-        var variantUrl = u.indexOf("http") === 0 ? u : baseDir + u;
+        var variantUrl = this.resolveUrl(u, playlistUrl);
         variants.push({
           url: variantUrl,
           label: resolution || (bwMatch ? Math.round(bwMatch[1] / 1000) + "kbps" : "Auto"),
@@ -644,27 +710,7 @@ class DefaultExtension extends MProvider {
       });
       var data = this._decodeVidnestResponse(JSON.parse(res.body));
       if (!data || !data.sources || !data.sources.length) return streams;
-      // Subtitles: same flow as MegaPlay — fetch VTT and convert to SRT
-      var subtitles = [];
-      if (audioType === "sub" && Array.isArray(data.tracks)) {
-        for (var t = 0; t < data.tracks.length; t++) {
-          var track = data.tracks[t];
-          if (!track || !track.file || track.kind === "thumbnails") continue;
-          try {
-            var vttRes = await this.client.get(track.file, {
-              "User-Agent": this.ua,
-              "Referer": "https://megaplay.buzz/",
-            });
-            var vttBody = (vttRes.body || "").trimStart();
-            subtitles.push({
-              file: vttBody.startsWith("WEBVTT") ? this.vttToSrt(vttBody) : track.file,
-              label: track.label || "Unknown",
-            });
-          } catch (e) {
-            subtitles.push({ file: track.file, label: track.label || "Unknown" });
-          }
-        }
-      }
+      var subtitles = audioType === "sub" ? await this.inlineMegaplayTracks(data.tracks) : [];
       var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
       for (var s = 0; s < data.sources.length; s++) {
         var src = data.sources[s];
@@ -683,6 +729,87 @@ class DefaultExtension extends MProvider {
           streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "VidNest [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
         }
       }
+    } catch (e) {}
+    return streams;
+  }
+
+  // HD-2 source via the MyroniX/shirayuki API. The API hands back a shirayuki
+  // proxy URL wrapping the real CDN URL; we pull the inner URL out and hit the
+  // CDN directly, which is ~17x faster than going through the proxy.
+  // Two CDNs appear here and they differ in segment format (see wrapProxyStream):
+  // vibevibe.workers.dev serves raw MPEG-TS, vivibebe.site serves PNG-wrapped TS.
+  async fetchBibiembSources(anilistId, epNum, audioType, audioLabel) {
+    var streams = [];
+    if (!anilistId || !epNum) return streams;
+    try {
+      var apiHeaders = {
+        "User-Agent": this.ua,
+        "Accept": "application/json",
+        "Referer": "https://myronix.strangled.net/",
+      };
+      var sourcesUrl = "https://myronix.strangled.net/api/v2/shirayuki/hianime/episode/sources" +
+        "?animeEpisodeId=" + encodeURIComponent(anilistId) +
+        "&ep=" + encodeURIComponent(epNum) +
+        "&server=hd-2&category=" + audioType + "&provider=anilist";
+      var res = await this.client.get(sourcesUrl, apiHeaders);
+      var data = JSON.parse(res.body);
+      if (!data || !data.success || !data.data || !data.data.sources || !data.data.sources.length) return streams;
+
+      var src = data.data.sources[0];
+      // src.source is a shirayuki proxy URL of the form:
+      //   http://shirayuki.eastasia.cloudapp.azure.com:1818/api/v2/hianime/proxy/m3u8?url={encoded_cdn_url}
+      // Extract the inner CDN URL from the proxy URL's `url=` param.
+      var urlMatch = (src.source || "").match(/[?&]url=([^&]+)/);
+      if (!urlMatch) return streams;
+      var vibeUrl = decodeURIComponent(urlMatch[1]);
+
+      // Subtitles from MyroniX (anizara.store VTTs — standard WebVTT format)
+      var subtitles = [];
+      if (audioType === "sub" && Array.isArray(data.data.tracks)) {
+        for (var t = 0; t < data.data.tracks.length; t++) {
+          var track = data.data.tracks[t];
+          if (!track || !track.file || (track.kind && track.kind === "thumbnails")) continue;
+          subtitles.push({ file: track.file, label: track.label || "Unknown" });
+        }
+      }
+
+      // Fetch the CDN master m3u8 directly (no shirayuki proxy)
+      var vibeHeaders = {
+        "User-Agent": this.ua,
+        "Referer": "https://bibiemb.xyz/",
+        "Origin": "https://bibiemb.xyz",
+      };
+      var masterRes = await this.client.get(vibeUrl, vibeHeaders);
+      var masterLines = (masterRes.body || "").split('\n');
+
+      // Parse EXT-X-STREAM-INF → URL pairs. vibevibe lists absolute variant URLs
+      // but vivibebe lists them relative to the master, so resolve either form.
+      var curLabel = null;
+      var curHeight = 0;
+      for (var l = 0; l < masterLines.length; l++) {
+        var line = masterLines[l].trim();
+        if (line.startsWith('#EXT-X-STREAM-INF:')) {
+          var nm = line.match(/NAME="([^"]+)"/);
+          curLabel = nm ? nm[1] : "Unknown";
+          var rm = line.match(/RESOLUTION=\d+x(\d+)/);
+          curHeight = rm ? parseInt(rm[1], 10) : 0;
+        } else if (line && !line.startsWith('#') && curLabel) {
+          var variantUrl = this.resolveUrl(line, vibeUrl);
+          streams.push({
+            url: variantUrl,
+            originalUrl: variantUrl,
+            quality: curLabel + " - HD2 [" + audioLabel + "]",
+            headers: vibeHeaders,
+            subtitles: subtitles,
+            height: curHeight,
+          });
+          curLabel = null;
+        }
+      }
+      // Best quality first — these masters list 360p before 1080p, and whatever
+      // lands at index 0 is what the player starts with.
+      streams.sort(function(a, b) { return b.height - a.height; });
+      for (var s = 0; s < streams.length; s++) delete streams[s].height;
     } catch (e) {}
     return streams;
   }
@@ -744,39 +871,66 @@ class DefaultExtension extends MProvider {
     try { server = new SharedPreferences().get("hianime_pref_server") || "auto"; } catch (e) {}
 
     var getStreams = async (audioType, audioLabel) => {
-      var streams;
-      if (server === "ani") {
-        // ani URL only (stream-token based)
-        streams = await this.extractMegaplayFromPageUrl(
-          "https://megaplay.buzz/stream/ani/" + realEpId + "/" + audioType,
-          this.source.baseUrl + "/", audioType, audioLabel
-        );
-      } else if (server === "mal") {
-        // mal URL only (MAL ID + episode number based — reliable)
-        streams = await this.extractMegaplayFromPageUrl(
-          "https://megaplay.buzz/stream/mal/" + malId + "/" + episodeNum + "/" + audioType,
-          this.source.baseUrl + "/", audioType, audioLabel
-        );
-      } else {
-        // "auto": try ani first, fall back to mal
-        streams = await this.extractMegaplaySources(realEpId, audioType, audioLabel, malId, episodeNum);
-      }
-      // VidNest fallback: older anime that MegaPlay doesn't carry (e.g. Shiki, 2010)
-      if (streams.length === 0 && anilistId && episodeNum) {
-        streams = await this.fetchVidnestSources(anilistId, episodeNum, audioType, audioLabel);
-      }
-      return streams;
+      // MegaPlay / VidNest pipeline (may use ad-poisoned nekostream CDN)
+      var getMegaplayPipeline = async () => {
+        var streams;
+        if (server === "ani") {
+          streams = await this.extractMegaplayFromPageUrl(
+            "https://megaplay.buzz/stream/ani/" + realEpId + "/" + audioType,
+            this.source.baseUrl + "/", audioType, audioLabel
+          );
+        } else if (server === "mal") {
+          streams = await this.extractMegaplayFromPageUrl(
+            "https://megaplay.buzz/stream/mal/" + malId + "/" + episodeNum + "/" + audioType,
+            this.source.baseUrl + "/", audioType, audioLabel
+          );
+        } else {
+          streams = await this.extractMegaplaySources(realEpId, audioType, audioLabel, malId, episodeNum);
+        }
+        if (streams.length === 0 && anilistId && episodeNum) {
+          streams = await this.fetchVidnestSources(anilistId, episodeNum, audioType, audioLabel);
+        }
+        return streams;
+      };
+
+      // Run MegaPlay and HD-2/vibevibe pipelines in parallel.
+      // HD-2 uses vibevibe.workers.dev which is ad-free and works correctly on Windows.
+      var results = await Promise.all([
+        getMegaplayPipeline(),
+        (anilistId && episodeNum) ? this.fetchBibiembSources(anilistId, episodeNum, audioType, audioLabel) : Promise.resolve([]),
+      ]);
+      return results[0].concat(results[1]);
     };
 
     var results = await Promise.all([
       hasSub ? getStreams("sub", "Sub") : Promise.resolve([]),
       hasDub ? getStreams("dub", "Dub") : Promise.resolve([]),
     ]);
-    var allStreams = pref === "dub" ? results[1].concat(results[0]) : results[0].concat(results[1]);
-    // Mangayomi auto-activates subtitles only from the first stream (videos.first).
-    // Strip inline VTT content from every other stream to keep the response payload small.
-    for (var i = 1; i < allStreams.length; i++) allStreams[i].subtitles = [];
-    return allStreams;
+    var direct = pref === "dub" ? results[1].concat(results[0]) : results[0].concat(results[1]);
+
+    // Offer a proxy-unwrapped twin for every PNG-wrapped stream so libmpv
+    // (Windows/Android) has something it can actually decode. Ordering is a
+    // preference because the two routes trade decodability against throughput.
+    var routing = "proxy";
+    try { routing = new SharedPreferences().get("hianime_pref_routing") || "proxy"; } catch (e) {}
+    if (routing === "direct-only") return direct;
+
+    var unwrapped = [];
+    for (var i = 0; i < direct.length; i++) {
+      if (this.canUnwrap(direct[i].url)) unwrapped.push(this.wrapProxyStream(direct[i]));
+    }
+    if (routing === "proxy-only") return unwrapped.length ? unwrapped : direct;
+    if (routing === "direct") return direct.concat(unwrapped);
+
+    // Default: lead with whatever libmpv can actually decode — CDNs already
+    // serving raw MPEG-TS first, then the proxy-unwrapped twins — and keep the
+    // PNG-wrapped originals last for players that cope with them natively.
+    var raw = [], wrapped = [];
+    for (var j = 0; j < direct.length; j++) {
+      if (this.servesRawTs(direct[j].url)) raw.push(direct[j]);
+      else wrapped.push(direct[j]);
+    }
+    return raw.concat(unwrapped, wrapped);
   }
 
   getFilterList() {
@@ -803,6 +957,23 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Auto (ani → mal)", "stream/mal only", "stream/ani only"],
           entryValues: ["auto", "mal", "ani"],
+        },
+      },
+      {
+        key: "hianime_pref_routing",
+        listPreference: {
+          title: "Stream routing",
+          summary: "Most HiAnime CDNs disguise video segments as PNG images. iOS plays them anyway; " +
+            "Windows/Android skip straight to the last episode. The ⟨unwrapped⟩ entries fix that by " +
+            "routing through a proxy that strips the disguise, at the cost of speed (~0.9 vs ~15 MB/s).",
+          valueIndex: 0,
+          entries: [
+            "Unwrapped first (fixes Windows)",
+            "Direct first (faster, iOS)",
+            "Unwrapped only",
+            "Direct only",
+          ],
+          entryValues: ["proxy", "direct", "proxy-only", "direct-only"],
         },
       },
       {
