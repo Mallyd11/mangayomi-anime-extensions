@@ -1,18 +1,26 @@
 """
-Bidirectional sync between index JSON files and the Excel sheet.
+Sync between index JSON files and the Excel sheet.
 
-Anime  (Sheet1): syncs Downloads + Sub/Dub -> anime_metadata.json
-                 syncs versions bidirectionally with anime_index.json
-Manga  (Sheet2): syncs versions bidirectionally with index.json
-Novel  (Sheet3): syncs versions bidirectionally with novel_index.json
+Anime  (Sheet1): syncs Downloads + Sub/Dub -> anime_metadata.json, versions -> anime_index.json
+Manga  (Sheet2): syncs versions -> index.json
+Novel  (Sheet3): syncs versions -> novel_index.json
 
-Repo -> Excel: version updated when repo is newer, new rows added automatically
-Excel -> Repo: version updated when Excel is newer
+Versions flow one way: extension .js -> index JSON -> Excel.
+
+The .js file is authoritative because its `mangayomiSources` header is the
+version Mangayomi actually loads. A number typed into the sheet is a note, not
+a release: if it disagrees, the sheet is corrected from the source. Letting the
+sheet win instead published JustAnime as 0.2.7 in anime_index.json while
+justanime.js still said 0.2.6, so the app advertised an update that did not
+exist. Downloads and Sub/Dub still come *from* the sheet — that data has no
+other home.
 
 The pre-commit hook runs this automatically on every commit.
 """
 
 import json
+import re
+import subprocess
 import openpyxl
 from pathlib import Path
 
@@ -54,11 +62,38 @@ def canonical_name(raw, name_map=None):
     return raw.strip()
 
 
-def ver_tuple(v):
+def staged_text(rel_path):
+    """File content as it will exist in the commit, i.e. the git index.
+
+    Read from the index rather than the working tree so a half-finished version
+    bump sitting unstaged does not get published. For an unmodified file the
+    index matches HEAD, so this is the working tree minus uncommitted edits.
+    Returns None outside a repo or when the path is untracked.
+    """
     try:
-        return tuple(int(x) for x in str(v).split("."))
+        out = subprocess.run(["git", "show", f":{rel_path}"],
+                             cwd=main_dir, capture_output=True, timeout=15)
     except Exception:
-        return (0,)
+        return None
+    return out.stdout.decode("utf-8", "replace") if out.returncode == 0 else None
+
+
+def source_version(entry):
+    """Version declared in the extension's own .js — what Mangayomi loads.
+
+    Derived from sourceCodeUrl, which ends in the file's repo-relative path.
+    Returns None when the path cannot be resolved or the file is not tracked,
+    so an entry we cannot verify is left alone rather than blanked.
+    """
+    m = re.search(r"/(javascript/.+?\.js)$", entry.get("sourceCodeUrl") or "")
+    if not m:
+        return None
+    text = staged_text(m.group(1))
+    if text is None:
+        return None
+    # Match the header block's version, which is the first one in the file.
+    m = re.search(r'"version"\s*:\s*"([0-9][0-9.]*)"', text)
+    return m.group(1) if m else None
 
 
 def sync_sheet(ws, index, col_name, col_version,
@@ -69,7 +104,8 @@ def sync_sheet(ws, index, col_name, col_version,
 
     index_by_name = {e["name"]: e for e in index}
     excel_changed = False
-    reports = {"added": [], "repo_newer": [], "excel_newer": [], "unknown": [], "meta": []}
+    reports = {"added": [], "repo_newer": [], "unknown": [], "meta": [],
+               "source_wins": []}
 
     # Read existing Excel rows
     for row_idx in range(2, ws.max_row + 1):
@@ -100,17 +136,22 @@ def sync_sheet(ws, index, col_name, col_version,
             reports["unknown"].append(f"  {raw!r} — not in {label}, skipped")
             continue
 
+        # The .js header outranks both the index and the sheet — see module docstring.
+        src_ver = source_version(index_by_name[name])
+        if src_ver and src_ver != index_by_name[name]["version"]:
+            reports["source_wins"].append(
+                f"  {name}: index {index_by_name[name]['version']} -> {src_ver} (from .js)")
+            index_by_name[name]["version"] = src_ver
+
         repo_ver = index_by_name[name]["version"]
 
         if xl_ver and xl_ver != repo_ver:
-            if ver_tuple(xl_ver) > ver_tuple(repo_ver):
-                index_by_name[name]["version"] = xl_ver
-                reports["excel_newer"].append(f"  {name}: {repo_ver} -> {xl_ver}")
-            else:
-                ws.cell(row_idx, col_version).value = repo_ver
-                ws.cell(row_idx, col_name).value = name
-                reports["repo_newer"].append(f"  {name}: Excel {xl_ver} -> {repo_ver}")
-                excel_changed = True
+            # One-way: a differing number in the sheet is a stale edit, not a
+            # release, so correct the sheet rather than republishing the index.
+            ws.cell(row_idx, col_version).value = repo_ver
+            ws.cell(row_idx, col_name).value = name
+            reports["repo_newer"].append(f"  {name}: Excel {xl_ver} -> {repo_ver}")
+            excel_changed = True
         elif xl_ver is None:
             ws.cell(row_idx, col_version).value = repo_ver
             ws.cell(row_idx, col_name).value = name
@@ -234,12 +275,12 @@ def print_reports(label, rep):
     if rep["meta"]:
         print("  Metadata updated:")
         print("\n".join(rep["meta"]))
+    if rep["source_wins"]:
+        print("  Index corrected from extension source:")
+        print("\n".join(rep["source_wins"]))
     if rep["repo_newer"]:
         print("  Excel updated from repo:")
         print("\n".join(rep["repo_newer"]))
-    if rep["excel_newer"]:
-        print("  Repo updated from Excel:")
-        print("\n".join(rep["excel_newer"]))
     if rep["unknown"]:
         print("  Skipped (removed from repo):")
         print("\n".join(rep["unknown"]))
