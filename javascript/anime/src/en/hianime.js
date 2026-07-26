@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.2",
+    "version": "0.4.3",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -908,29 +908,55 @@ class DefaultExtension extends MProvider {
     ]);
     var direct = pref === "dub" ? results[1].concat(results[0]) : results[0].concat(results[1]);
 
-    // Offer a proxy-unwrapped twin for every PNG-wrapped stream so libmpv
-    // (Windows/Android) has something it can actually decode. Ordering is a
-    // preference because the two routes trade decodability against throughput.
-    var routing = "proxy";
-    try { routing = new SharedPreferences().get("hianime_pref_routing") || "proxy"; } catch (e) {}
-    if (routing === "direct-only") return direct;
-
-    var unwrapped = [];
+    // Split by what libmpv can actually decode: CDNs already serving raw
+    // MPEG-TS, versus PNG-wrapped ones that need the unwrap proxy.
+    var raw = [], wrapped = [], unwrapped = [];
     for (var i = 0; i < direct.length; i++) {
+      if (this.servesRawTs(direct[i].url)) raw.push(direct[i]);
+      else wrapped.push(direct[i]);
       if (this.canUnwrap(direct[i].url)) unwrapped.push(this.wrapProxyStream(direct[i]));
     }
-    if (routing === "proxy-only") return unwrapped.length ? unwrapped : direct;
-    if (routing === "direct") return direct.concat(unwrapped);
+    var playable = raw.concat(unwrapped);
 
-    // Default: lead with whatever libmpv can actually decode — CDNs already
-    // serving raw MPEG-TS first, then the proxy-unwrapped twins — and keep the
-    // PNG-wrapped originals last for players that cope with them natively.
-    var raw = [], wrapped = [];
-    for (var j = 0; j < direct.length; j++) {
-      if (this.servesRawTs(direct[j].url)) raw.push(direct[j]);
-      else wrapped.push(direct[j]);
+    var routing = "playable";
+    try { routing = new SharedPreferences().get("hianime_pref_routing") || "playable"; } catch (e) {}
+
+    var ordered;
+    if (routing === "direct") {
+      ordered = direct;
+    } else if (routing === "all") {
+      ordered = playable.concat(wrapped);
+    } else {
+      // Default. Offer *only* streams that decode, so the player cannot land on
+      // a PNG-wrapped one and race through the episode. Falls back to the
+      // undecodable ones when an episode has no other source at all.
+      ordered = playable.length ? playable : direct;
     }
-    return raw.concat(unwrapped, wrapped);
+    return this.normalizeSubtitles(ordered);
+  }
+
+  // Mangayomi loads a subtitle `file` as a URL, so SRT text inlined into that
+  // field never renders — only the publicly fetchable ones (anizara, via the
+  // HD-2 API) actually show up. Share those across every sub stream so the
+  // choice of quality stops deciding whether subtitles work, and mark the first
+  // one default so they switch on by themselves.
+  normalizeSubtitles(streams) {
+    var isUrl = function(s) {
+      return s && s.subtitles && s.subtitles.length && /^https?:\/\//.test(String(s.subtitles[0].file));
+    };
+    var shared = null;
+    for (var i = 0; i < streams.length; i++) {
+      if (isUrl(streams[i])) { shared = streams[i].subtitles; break; }
+    }
+    for (var j = 0; j < streams.length; j++) {
+      var s = streams[j];
+      // Dub streams carry no subtitles by design; leave them alone.
+      if (s.quality.indexOf("[Dub]") >= 0) continue;
+      // Inlined SRT cannot render, so replace it whenever a real URL exists.
+      if (shared && !isUrl(s)) s.subtitles = shared;
+      if (s.subtitles && s.subtitles.length) s.subtitles[0].default = true;
+    }
+    return streams;
   }
 
   getFilterList() {
@@ -963,17 +989,17 @@ class DefaultExtension extends MProvider {
         key: "hianime_pref_routing",
         listPreference: {
           title: "Stream routing",
-          summary: "Most HiAnime CDNs disguise video segments as PNG images. iOS plays them anyway; " +
-            "Windows/Android skip straight to the last episode. The ⟨unwrapped⟩ entries fix that by " +
-            "routing through a proxy that strips the disguise, at the cost of speed (~0.9 vs ~15 MB/s).",
+          summary: "Most HiAnime CDNs disguise video segments as PNG images. iOS plays them anyway, " +
+            "but Windows/Android skip straight to the last episode. Default lists only streams that " +
+            "decode everywhere, routing the disguised ones through an unwrap proxy (~0.9 vs ~15 MB/s). " +
+            "Pick Direct for full speed on iOS.",
           valueIndex: 0,
           entries: [
-            "Unwrapped first (fixes Windows)",
-            "Direct first (faster, iOS)",
-            "Unwrapped only",
-            "Direct only",
+            "Playable only (fixes Windows)",
+            "Direct only (fastest, iOS)",
+            "Everything",
           ],
-          entryValues: ["proxy", "direct", "proxy-only", "direct-only"],
+          entryValues: ["playable", "direct", "all"],
         },
       },
       {
