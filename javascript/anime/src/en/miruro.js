@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.1.10",
+    "version": "6.1.11",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -166,7 +166,7 @@ class DefaultExtension extends MProvider {
     for (var i = 1; i <= epCount; i++) {
       chapters.push({
         name: "Episode " + i,
-        url: JSON.stringify({ animeId: id, num: i }),
+        url: "https://www.miruro.to/watch/" + id + "/" + i,
         isFiller: false,
       });
     }
@@ -217,9 +217,14 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     if (!url || url === "n/a") return [];
-    var info;
-    try { info = JSON.parse(url); } catch (e) { return []; }
-    var id = info.animeId, num = info.num;
+    var id, num;
+    if (url.charAt(0) === "{") {
+      try { var info = JSON.parse(url); id = info.animeId; num = info.num; } catch (e) { return []; }
+    } else {
+      var parts = url.replace(/[?#].*$/, "").split("/");
+      num = parseInt(parts.pop(), 10);
+      id = parseInt(parts.pop(), 10);
+    }
     if (!id || !num) return [];
 
     var audioList = this.pref("miruro_audio");
