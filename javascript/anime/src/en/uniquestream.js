@@ -9,7 +9,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=256&domain=https://anime.uniquestream.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/uniquestream.js",
   },
 ];
@@ -727,6 +727,119 @@ class DefaultExtension extends MProvider {
     return { url: pick.playlist, label: pick.locale === "ja-JP" ? "Raw" : "Sub" };
   }
 
+  // Temporary playback diagnostic (v0.1.1). The nested-data: master buffers in
+  // the app, and from the extension side several causes are indistinguishable:
+  // the player may refuse a data: child playlist, refuse a data: key, or choke
+  // on the sheer length of a 125 KB URI. Each entry below changes exactly one
+  // of those variables, so whichever ones play identify the culprit. Remove
+  // this once the cause is known; see the repo's playbackdiag extension for the
+  // same isolate-one-variable approach.
+  async _buildDiagnostics(masterUrl, mediaId) {
+    var out = [];
+    var hdr = { "Referer": this.source.baseUrl + "/" };
+
+    // A: the untouched CDN master. Proves whether the player reaches the CDN
+    // and parses a normal master at all. Expect noise or an error, not clean
+    // video — the key is still the undecryptable one.
+    out.push({
+      url: masterUrl,
+      originalUrl: masterUrl,
+      quality: "DIAG A · raw CDN master (expect noise/fail)",
+      headers: hdr,
+      subtitles: [],
+    });
+
+    var res = await new Client().get(masterUrl, hdr);
+    var lines = String(res.body).replace(/\r/g, "").split("\n");
+    var variantUrl = null;
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].trim().indexOf("#EXT-X-STREAM-INF") === 0) {
+        var next = (lines[i + 1] || "").trim();
+        if (next && next.charAt(0) !== "#") {
+          variantUrl = this._resolve(masterUrl, next);
+          break;
+        }
+      }
+    }
+    if (!variantUrl) return out;
+
+    var vres = await new Client().get(variantUrl, hdr);
+    var body = String(vres.body);
+
+    // B: top-level data: playlist, key left pointing at the real key.bin.
+    // Isolates "does a data: playlist work" from "does a data: key work".
+    // Expect noise if it plays at all.
+    var bLines = String(body).replace(/\r/g, "").split("\n");
+    var bOut = [];
+    for (i = 0; i < bLines.length; i++) {
+      var t = bLines[i].trim();
+      if (!t) continue;
+      if (t.charAt(0) === "#") {
+        bOut.push(
+          t.indexOf("#EXT-X-KEY") === 0
+            ? t.replace(/URI="([^"]*)"/, (m, u) => 'URI="' + this._resolve(variantUrl, u) + '"')
+            : t
+        );
+      } else {
+        bOut.push(this._resolve(variantUrl, t));
+      }
+    }
+    out.push({
+      url: this._dataUri(bOut.join("\n")),
+      originalUrl: masterUrl,
+      quality: "DIAG B · data: playlist, real key (expect noise)",
+      headers: hdr,
+      subtitles: [],
+    });
+
+    // C: top-level data: playlist with the key inlined. No nesting anywhere.
+    // If this plays clean video with NO audio, the key handling is fine and
+    // nesting is what breaks — which points straight at a proxy as the fix.
+    var keyMatch = body.match(/#EXT-X-KEY[^\n]*URI="([^"]+)"/);
+    var keyB64 = null;
+    if (keyMatch) {
+      var key = await this._resolveKey(
+        this._resolve(variantUrl, keyMatch[1]),
+        mediaId
+      );
+      keyB64 = this._bytesToB64(key);
+    }
+    var full = this._rewriteMedia(body, variantUrl, keyB64);
+    out.push({
+      url: this._dataUri(full),
+      originalUrl: masterUrl,
+      quality: "DIAG C · data: playlist + inlined key, video only (expect clean video, no sound)",
+      headers: hdr,
+      subtitles: [],
+    });
+
+    // E: same as C but cut to a handful of segments, so the URI is ~2 KB
+    // instead of ~35 KB. If C fails and this plays, the limit is URI length.
+    var fLines = full.split("\n");
+    var short = [];
+    var segCount = 0;
+    for (i = 0; i < fLines.length; i++) {
+      var line = fLines[i];
+      if (line && line.charAt(0) !== "#") {
+        if (segCount >= 3) continue;
+        segCount++;
+      }
+      if (line.indexOf("#EXT-X-ENDLIST") === 0) continue;
+      if (segCount >= 3 && line.indexOf("#EXTINF") === 0) continue;
+      short.push(line);
+    }
+    short.push("#EXT-X-ENDLIST");
+    out.push({
+      url: this._dataUri(short.join("\n")),
+      originalUrl: masterUrl,
+      quality: "DIAG E · short data: playlist, 3 segments (expect ~25s of video)",
+      headers: hdr,
+      subtitles: [],
+    });
+
+    return out;
+  }
+
   async getVideoList(url) {
     var ref = this._parseLink(url);
     var kind = ref.kind === "movie" ? "movie" : "episode";
@@ -751,6 +864,25 @@ class DefaultExtension extends MProvider {
 
     var mediaId = this._guidFromUrl(chosen.url) || media.media_id;
     var streams = await this._buildStreams(chosen.url, mediaId, chosen.label);
+
+    // v0.1.1: append the isolation probes after the real streams. They are
+    // deliberately labelled DIAG so they are never mistaken for content, and
+    // come last so nothing auto-plays into them.
+    if (this.getPreference("uniquestream_pref_diag") !== "off") {
+      try {
+        var diag = await this._buildDiagnostics(chosen.url, mediaId);
+        streams = streams.concat(diag);
+      } catch (e) {
+        streams.push({
+          url: chosen.url,
+          originalUrl: chosen.url,
+          quality: "DIAG failed: " + e.message,
+          headers: { "Referer": this.source.baseUrl + "/" },
+          subtitles: [],
+        });
+      }
+    }
+
     if (!streams.length) throw new Error("Could not build a playable playlist");
     return streams;
   }
@@ -808,6 +940,17 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "uniquestream_pref_diag",
+        listPreference: {
+          title: "Playback diagnostics",
+          summary:
+            "Adds extra DIAG entries to the source list to isolate a playback failure. Turn off once playback works.",
+          valueIndex: 0,
+          entries: ["On", "Off"],
+          entryValues: ["on", "off"],
         },
       },
       {
