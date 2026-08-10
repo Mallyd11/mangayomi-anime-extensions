@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.3",
+    "version": "0.4.4",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -683,12 +683,15 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // Fetch all unique servers from /ajax/server/list?servers={ids} and resolve each.
-  // data-type is no longer present on server elements, so we can't split sub/dub here.
-  // We deduplicate by data-sv-id so each server type is tried only once.
-  async _fetchServerListStreams(ids) {
-    var streams = [];
-    if (!ids) return streams;
+  // Fetch servers from /ajax/server/list?servers={ids} and resolve sub and dub separately.
+  // The response groups servers in .type[data-type="sub/hsub/dub"] containers, each with
+  // its own li[data-link-id][data-sv-id] entries. We pick the first working server per type.
+  // resolveTypes: { sub: bool, dub: bool } — skip types the caller doesn't need (saves time).
+  async _fetchServerListStreams(ids, resolveTypes) {
+    var empty = { sub: [], dub: [] };
+    if (!ids) return empty;
+    var wantSub = !resolveTypes || resolveTypes.sub !== false;
+    var wantDub = !resolveTypes || resolveTypes.dub !== false;
     try {
       var res = await this.client.get(
         this.source.baseUrl + "/ajax/server/list?servers=" + ids,
@@ -698,9 +701,40 @@ class DefaultExtension extends MProvider {
       try { var parsed = JSON.parse(html); if (parsed && typeof parsed.result === "string") html = parsed.result; } catch (e) {}
 
       var doc = new Document(html);
+      var subStreams = [], dubStreams = [];
+
+      // Primary path: .type[data-type] containers group sub/hsub/dub servers.
+      var typeEls = doc.select(".type[data-type]");
+      if (typeEls.length > 0) {
+        for (var t = 0; t < typeEls.length; t++) {
+          var typeEl = typeEls[t];
+          var dataType = typeEl.attr("data-type") || "";
+          var isDub = dataType === "dub";
+          // sub and hsub both count as subtitled; skip if we already have that track
+          if (!isDub && (!wantSub || subStreams.length > 0)) continue;
+          if (isDub && (!wantDub || dubStreams.length > 0)) continue;
+          var audioLabel = isDub ? "Dub" : "Sub";
+          var typeServerEls = typeEl.select("li[data-link-id]");
+          var seenSvIds = {};
+          for (var i = 0; i < typeServerEls.length; i++) {
+            var el = typeServerEls[i];
+            var svId = el.attr("data-sv-id") || ("srv_" + t + "_" + i);
+            if (seenSvIds[svId]) continue;
+            seenSvIds[svId] = true;
+            var linkId = el.attr("data-link-id") || "";
+            if (!linkId) continue;
+            var svName = (el.text || "").trim().slice(0, 20) || "Srv";
+            var resolved = await this._resolveStreams(linkId, svName + " [" + audioLabel + "]");
+            if (isDub) { dubStreams = dubStreams.concat(resolved); if (dubStreams.length > 0) break; }
+            else       { subStreams = subStreams.concat(resolved); if (subStreams.length > 0) break; }
+          }
+        }
+        return { sub: subStreams, dub: dubStreams };
+      }
+
+      // Fallback: untyped list — treat all as sub.
       var serverEls = doc.select("li[data-link-id]");
       var seenSvIds = {};
-
       for (var i = 0; i < serverEls.length; i++) {
         var el = serverEls[i];
         var svId = el.attr("data-sv-id") || ("srv" + i);
@@ -710,14 +744,12 @@ class DefaultExtension extends MProvider {
         if (!linkId) continue;
         var svName = (el.text || "").trim().slice(0, 20) || "Srv" + (i + 1);
         var resolved = await this._resolveStreams(linkId, svName);
-        streams = streams.concat(resolved);
-        // Stop at the first server that returns streams which passed the
-        // ad-poisoning check — a poisoned server resolves to [] and falls
-        // through here rather than winning by being first in the list.
-        if (streams.length > 0) break;
+        subStreams = subStreams.concat(resolved);
+        if (subStreams.length > 0) break;
       }
+      return { sub: subStreams, dub: [] };
     } catch (e) {}
-    return streams;
+    return empty;
   }
 
   async getVideoList(url) {
@@ -754,8 +786,10 @@ class DefaultExtension extends MProvider {
         var m2 = await this._fetchEpMeta(slug, epNum);
         if (m2 && m2.ids) ids = m2.ids;
       }
-      var listStreams = await this._fetchServerListStreams(ids);
-      subStreams = subStreams.concat(listStreams);
+      var resolveTypes = { sub: audioPref !== "dub", dub: audioPref !== "sub" };
+      var listResult = await this._fetchServerListStreams(ids, resolveTypes);
+      subStreams = subStreams.concat(listResult.sub);
+      dubStreams = dubStreams.concat(listResult.dub);
     }
 
     // Kiwi-Stream via mapper (legacy — mapper no longer returns streaming linkIds)
