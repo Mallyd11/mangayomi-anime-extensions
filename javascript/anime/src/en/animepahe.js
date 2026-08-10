@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.1",
+    "version": "0.4.2",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -278,10 +278,13 @@ class DefaultExtension extends MProvider {
       "Origin": "https://kwik.cx",
     };
     // A placeholder URL so diagnostic entries are selectable without crashing;
-    // only the label matters for these.
+    // only the label matters. Each entry gets a UNIQUE fragment because Mangayomi
+    // dedupes the video list by url — without it, every trace line collapses into
+    // the first (learned the hard way; ReAnime hit the same thing).
     var DIAG = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
     var diag = function (label) {
-      trace.push({ url: DIAG, originalUrl: DIAG, quality: label, headers: {}, subtitles: [] });
+      var u = DIAG + "#s" + (trace.length + 1);
+      trace.push({ url: u, originalUrl: u, quality: label, headers: {}, subtitles: [] });
     };
 
     try {
