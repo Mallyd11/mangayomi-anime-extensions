@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.3",
+    "version": "0.4.4",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -319,36 +319,27 @@ class DefaultExtension extends MProvider {
       try { nfOk = (new Function("return 42"))() === 42; } catch (e) {}
       diag("3 newFunction=" + nfOk);
 
-      // Stage 4 — kwik /e/ embed fetch. Probe several header strategies, because
-      // kwik.cx has its OWN Cloudflare (separate from animepahe.ch). Per anidap's
-      // hard-won rule, the cf_clearance cookie is bound to the WebView's UA, so a
-      // custom User-Agent makes CF reject the cookie. Try each variant and report
-      // which yields the P.A.C.K.E.R page; the winner drives resolveKwik.
+      // Stage 4 — kwik /e/ embed fetch. SINGLE patient attempt: kwik.cx has its
+      // own interactive Cloudflare Turnstile, so the app must pop the challenge
+      // and let the user solve it — firing multiple fetches (as v0.4.3 did) just
+      // flashes the challenge repeatedly and the bypass fails. No custom UA: the
+      // cf_clearance cookie is bound to the WebView UA (anidap's rule).
       var embed = "https://kwik.cx/e/" + ids[0];
-      var attempts = [
-        ["4a customUA", { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" }],
-        ["4b noUA+ref", { "Referer": this.source.baseUrl + "/" }],
-        ["4c noHeaders", {}],
-        ["4d kwikRef", { "Referer": "https://kwik.cx/" }],
-      ];
       var kbody = "";
-      var winner = null;
-      for (var a = 0; a < attempts.length; a++) {
-        try {
-          var r = await this.client.get(embed, attempts[a][1]);
-          var b = (r && r.body) || "";
-          var st = (r && r.statusCode) || "?";
-          var cfc = /Just a moment|Attention Required|challenge-platform/i.test(b);
-          var pk = b.indexOf("eval(function(p,a,c,k,e,d)") >= 0;
-          diag(attempts[a][0] + ": HTTP=" + st + " len=" + b.length + " cf=" + cfc + " packer=" + pk);
-          if (pk && !winner) { winner = attempts[a][1]; kbody = b; }
-        } catch (e) {
-          diag(attempts[a][0] + ": ERR " + (e && (e.message || e.name || e.toString())));
-        }
+      try {
+        var r = await this.client.get(embed, { "Referer": this.source.baseUrl + "/" });
+        kbody = (r && r.body) || "";
+        var st = (r && r.statusCode) || "?";
+        var cfc = /Just a moment|Attention Required|challenge-platform/i.test(kbody);
+        var pk = kbody.indexOf("eval(function(p,a,c,k,e,d)") >= 0;
+        diag("4 kwikE: HTTP=" + st + " len=" + kbody.length + " cf=" + cfc + " packer=" + pk);
+        if (!pk) return trace;
+      } catch (e) {
+        diag("4 kwikE: ERR " + (e && (e.message || e.name || e.toString())));
+        return trace;
       }
-      if (!winner) return trace;
 
-      // Stage 5 — extract + unpack the packer (from the winning fetch)
+      // Stage 5 — extract + unpack the packer
       var scriptText = this.extractPackerScript(kbody);
       diag("5 packerScript: len=" + (scriptText ? scriptText.length : 0));
       if (!scriptText) return trace;
