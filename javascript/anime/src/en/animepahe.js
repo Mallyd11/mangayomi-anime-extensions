@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.0",
+    "version": "0.4.1",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -265,64 +265,105 @@ class DefaultExtension extends MProvider {
     }
   }
 
+  // DIAGNOSTIC BUILD (v0.4.1): every stage is reported as a picker entry whose
+  // `quality` label carries the result, so an on-device run reveals exactly where
+  // kwik resolution breaks (Node can never reach past kwik's Cloudflare). The real
+  // stream, if it resolves, is appended as normal playable entries. Remove the
+  // trace once the failure point is known.
   async getVideoList(url) {
-    var epUrl = url.startsWith("http") ? url : this.source.baseUrl + url;
-    var res = await this.client.get(epUrl, this.headers);
-    var html = (res && res.body) || "";
+    var trace = [];
+    var streamHeaders = {
+      "User-Agent": this.ua,
+      "Referer": "https://kwik.cx/",
+      "Origin": "https://kwik.cx",
+    };
+    // A placeholder URL so diagnostic entries are selectable without crashing;
+    // only the label matters for these.
+    var DIAG = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
+    var diag = function (label) {
+      trace.push({ url: DIAG, originalUrl: DIAG, quality: label, headers: {}, subtitles: [] });
+    };
 
-    // The `.soraddl` download box lists mirror servers as
-    //   <li><span class="q"><b>Pahe</b></span><span class="w">720</span>
-    //     <span class="e"><a href="https://kwik.cx/f/{id}">Download</a></span></li>
-    // Collect every kwik id, deduped. The /f/ (download) and /e/ (embed) forms
-    // share the id; the P.A.C.K.E.R m3u8 lives on /e/.
-    var ids = [];
-    var seen = {};
-    var re = /kwik\.cx\/[efd]\/([A-Za-z0-9]+)/g;
-    var m;
-    while ((m = re.exec(html)) !== null) {
-      if (!seen[m[1]]) {
-        seen[m[1]] = true;
-        ids.push(m[1]);
+    try {
+      var epUrl = url.startsWith("http") ? url : this.source.baseUrl + url;
+
+      // Stage 1 — episode page fetch
+      var res, html, epStatus, cf1;
+      try {
+        res = await this.client.get(epUrl, this.headers);
+        html = (res && res.body) || "";
+        epStatus = (res && res.statusCode) || "?";
+        cf1 = /Just a moment|Attention Required|challenge-platform/i.test(html);
+        diag("1 ep: HTTP=" + epStatus + " len=" + html.length + " kwik=" + (html.indexOf("kwik.cx") >= 0) + " cf=" + cf1);
+      } catch (e) {
+        diag("1 ep: FETCH-ERR " + (e && e.message));
+        return trace;
       }
-    }
-    if (ids.length === 0) return [];
 
-    var streams = [];
-    for (var i = 0; i < ids.length; i++) {
-      var embed = "https://kwik.cx/e/" + ids[i];
-      var m3u8 = await this.resolveKwik(embed);
-      if (!m3u8) continue;
+      // Stage 2 — kwik id extraction
+      var ids = [];
+      var seen = {};
+      var re = /kwik\.cx\/[efd]\/([A-Za-z0-9]+)/g;
+      var m;
+      while ((m = re.exec(html)) !== null) {
+        if (!seen[m[1]]) { seen[m[1]] = true; ids.push(m[1]); }
+      }
+      diag("2 ids: count=" + ids.length + " first=" + (ids[0] || "NONE"));
+      if (ids.length === 0) return trace;
 
-      var streamHeaders = {
-        "User-Agent": this.ua,
-        "Referer": "https://kwik.cx/",
-        "Origin": "https://kwik.cx",
-      };
+      // Stage 3 — is `new Function` usable in this runtime?
+      var nfOk = false;
+      try { nfOk = (new Function("return 42"))() === 42; } catch (e) {}
+      diag("3 newFunction=" + nfOk);
 
-      // Split the master into per-resolution entries so the app's quality picker
-      // has real choices; fall back to the master URL if it's a media playlist.
+      // Stage 4 — kwik /e/ embed fetch
+      var embed = "https://kwik.cx/e/" + ids[0];
+      var kres, kbody, kStatus, cf2, hasPacker;
+      try {
+        kres = await this.client.get(embed, { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" });
+        kbody = (kres && kres.body) || "";
+        kStatus = (kres && kres.statusCode) || "?";
+        cf2 = /Just a moment|Attention Required|challenge-platform/i.test(kbody);
+        hasPacker = kbody.indexOf("eval(function(p,a,c,k,e,d)") >= 0;
+        diag("4 kwikE: HTTP=" + kStatus + " len=" + kbody.length + " cf=" + cf2 + " packer=" + hasPacker);
+      } catch (e) {
+        diag("4 kwikE: FETCH-ERR " + (e && e.message));
+        return trace;
+      }
+
+      // Stage 5 — extract + unpack the packer
+      var scriptText = this.extractPackerScript(kbody);
+      diag("5 packerScript: len=" + (scriptText ? scriptText.length : 0));
+      if (!scriptText) return trace;
+
+      var unpacked = this.unpack(scriptText);
+      var hasSource = unpacked.indexOf("source") >= 0;
+      var m3u8Match = unpacked.match(/source\s*=\s*['"]([^'"]+\.m3u8[^'"]*)['"]/);
+      diag("6 unpack: len=" + unpacked.length + " source=" + hasSource + " m3u8=" + !!m3u8Match);
+      if (!m3u8Match) {
+        // Surface a snippet so a format drift is visible.
+        diag("6b snippet: " + unpacked.slice(0, 60).replace(/\s+/g, " "));
+        return trace;
+      }
+
+      // Stage 7 — real stream resolved: append playable entries
+      var m3u8 = m3u8Match[1];
+      diag("7 OK m3u8 host=" + (m3u8.split("/")[2] || "?"));
+      var streams = [];
       var variants = await this._parseHlsVariants(m3u8, streamHeaders);
       if (variants.length) {
         for (var v = 0; v < variants.length; v++) {
-          streams.push({
-            url: variants[v].url,
-            originalUrl: m3u8,
-            quality: variants[v].label + " - Kwik",
-            headers: streamHeaders,
-            subtitles: [],
-          });
+          streams.push({ url: variants[v].url, originalUrl: m3u8, quality: variants[v].label + " - Kwik", headers: streamHeaders, subtitles: [] });
         }
       } else {
-        streams.push({
-          url: m3u8,
-          originalUrl: m3u8,
-          quality: "Kwik",
-          headers: streamHeaders,
-          subtitles: [],
-        });
+        streams.push({ url: m3u8, originalUrl: m3u8, quality: "Kwik", headers: streamHeaders, subtitles: [] });
       }
+      // Real streams first, trace after.
+      return streams.concat(trace);
+    } catch (e) {
+      diag("FATAL " + (e && e.message));
+      return trace;
     }
-    return streams;
   }
 
   // Fetch a master playlist and return [{url,label}] for each RESOLUTION variant.
