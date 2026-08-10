@@ -38,6 +38,12 @@
             "langs": "en",
             "lastUpd": 1786390675.36435
         },
+        "UniqueStream": {
+            "name": "UniqueStream",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1786390675.36435
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.5",

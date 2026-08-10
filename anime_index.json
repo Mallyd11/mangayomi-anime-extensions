@@ -218,5 +218,27 @@
         "additionalParams": "",
         "sourceCodeLanguage": 1,
         "notes": ""
+    },
+    {
+        "name": "UniqueStream",
+        "id": 1616027577,
+        "baseUrl": "https://anime.uniquestream.net",
+        "lang": "en",
+        "typeSource": "single",
+        "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anime.uniquestream.net",
+        "dateFormat": "",
+        "dateFormatLocale": "",
+        "isNsfw": false,
+        "hasCloudflare": false,
+        "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/uniquestream.js",
+        "apiUrl": "https://anime.uniquestream.net/api/v1",
+        "version": "0.1.0",
+        "isManga": false,
+        "itemType": 1,
+        "isFullData": false,
+        "appMinVerReq": "0.5.0",
+        "additionalParams": "",
+        "sourceCodeLanguage": 1,
+        "notes": ""
     }
 ]
