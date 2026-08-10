@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.4",
+    "version": "0.4.5",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -361,6 +361,65 @@ class DefaultExtension extends MProvider {
     return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
   }
 
+  // Convert a WebVTT timestamp to SRT format.
+  // lostproject.club VTTs use MM:SS.mmm (no hours); libmpv rejects this two-part form.
+  _vttTsToSrt(ts) {
+    var dotIdx = ts.lastIndexOf(".");
+    var ms = ts.substring(dotIdx + 1);
+    var parts = ts.substring(0, dotIdx).split(":");
+    while (parts.length < 3) parts.unshift("00");
+    return parts.join(":") + "," + ms;
+  }
+
+  _vttToSrt(vtt) {
+    var lines = vtt.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    var srt = "", cueNum = 1, i = 0;
+    while (i < lines.length && lines[i].trim() !== "") i++;
+    while (i < lines.length) {
+      while (i < lines.length && lines[i].trim() === "") i++;
+      if (i >= lines.length) break;
+      var line = lines[i];
+      if (/^(NOTE|STYLE|REGION)\b/.test(line)) {
+        while (i < lines.length && lines[i].trim() !== "") i++;
+        continue;
+      }
+      if (line.indexOf("-->") < 0) { i++; if (i >= lines.length) break; line = lines[i]; }
+      if (line.indexOf("-->") < 0) { i++; continue; }
+      var m = line.match(/([\d:]+\.\d{3})\s*-->\s*([\d:]+\.\d{3})/);
+      if (!m) { i++; continue; }
+      var start = this._vttTsToSrt(m[1]), end = this._vttTsToSrt(m[2]);
+      i++;
+      var textLines = [];
+      while (i < lines.length && lines[i].trim() !== "") {
+        textLines.push(lines[i].replace(/<[\d:]+\.\d{3}>/g, ""));
+        i++;
+      }
+      if (textLines.length > 0) {
+        srt += cueNum + "\n" + start + " --> " + end + "\n" + textLines.join("\n") + "\n\n";
+        cueNum++;
+      }
+    }
+    return srt || vtt;
+  }
+
+  // Download subtitle tracks with the correct Referer (lostproject.club 403s without it),
+  // convert VTT→SRT so libmpv handles the timestamps correctly, return inline text.
+  async _inlineSubtitles(tracks, referer) {
+    if (!Array.isArray(tracks)) return [];
+    var subtitles = [];
+    for (var t = 0; t < tracks.length; t++) {
+      var track = tracks[t];
+      if (!track || !track.file || track.kind === "thumbnails") continue;
+      try {
+        var res = await this.client.get(track.file, { "User-Agent": this.ua, "Referer": referer });
+        var body = (res.body || "").replace(/^\s+/, "");
+        if (body.indexOf("WEBVTT") !== 0) continue;
+        subtitles.push({ file: this._vttToSrt(body), label: track.label || "Unknown" });
+      } catch (e) {}
+    }
+    return subtitles;
+  }
+
   // Resolve a server linkId → embed URL → array of playable streams.
   async _resolveStreams(linkId, audioLabel) {
     var embedUrl = "";
@@ -420,14 +479,8 @@ class DefaultExtension extends MProvider {
         else if (Array.isArray(srcData.sources) && srcData.sources.length) m3u8 = srcData.sources[0].file || srcData.sources[0].url || "";
       }
       if (!m3u8) return streams;
-      var subtitles = [];
-      if (Array.isArray(srcData.tracks)) {
-        for (var ti = 0; ti < srcData.tracks.length; ti++) {
-          var track = srcData.tracks[ti];
-          if (track && track.file && track.kind !== "thumbnails") subtitles.push({ file: track.file, label: track.label || "Unknown" });
-        }
-      }
       var hdrs = { "User-Agent": this.ua, "Referer": apiHost + "/" };
+      var subtitles = await this._inlineSubtitles(srcData.tracks, apiHost + "/");
       var variants = await this._resolveHlsVariants(m3u8, hdrs);
       if (variants === null) return streams; // CDN blocked (Cloudflare) — skip this server
       if (variants.length > 0) {
@@ -467,15 +520,7 @@ class DefaultExtension extends MProvider {
         else if (Array.isArray(srcData.sources) && srcData.sources.length) m3u8 = srcData.sources[0].file || srcData.sources[0].url || "";
       }
       if (!m3u8) return streams;
-
-      var subtitles = [];
-      if (Array.isArray(srcData.tracks)) {
-        for (var ti = 0; ti < srcData.tracks.length; ti++) {
-          var track = srcData.tracks[ti];
-          if (track && track.file && track.kind !== "thumbnails") subtitles.push({ file: track.file, label: track.label || "Unknown" });
-        }
-      }
-
+      var subtitles = await this._inlineSubtitles(srcData.tracks, "https://vidtube.site/");
       var hdrs = { "User-Agent": this.ua, "Referer": "https://vidtube.site/" };
       var variants = await this._resolveHlsVariants(m3u8, hdrs);
       if (variants === null) return streams; // CDN blocked (Cloudflare) — skip this server
