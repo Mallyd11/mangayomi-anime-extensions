@@ -34,9 +34,9 @@
     "anime": {
         "AniWave": {
             "name": "AniWave",
-            "version": "0.2.1",
+            "version": "0.2.2",
             "langs": "en",
-            "lastUpd": 1786468485.231572
+            "lastUpd": 1786469234.656965
         },
         "HiAnime": {
             "name": "HiAnime",

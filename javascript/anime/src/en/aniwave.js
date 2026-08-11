@@ -9,7 +9,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=256&domain=https://aniwaves.ru",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/aniwave.js",
     "isManga": false,
     "isNsfw": false,
@@ -549,7 +549,11 @@ class DefaultExtension extends MProvider {
           var embedUrl = srcJson && srcJson.result ? srcJson.result.url : null;
           if (!embedUrl) return [];
           var label = job.server + " [" + self.audioLabel(job.type) + "]";
-          return await self.extractEmbed(embedUrl, label);
+          var out = await self.extractEmbed(embedUrl, label);
+          // Tag the audio track so the routing filter below can work per track
+          // rather than across the whole list.
+          for (var s = 0; s < out.length; s++) out[s].audio = job.type;
+          return out;
         } catch (e) {
           return [];
         }
@@ -596,8 +600,14 @@ class DefaultExtension extends MProvider {
       // Stable sort, so the audio preference ordering survives within each group.
       streams.sort(function (a, b) { return (a.hls ? 1 : 0) - (b.hls ? 1 : 0); });
       if (routing !== "all") {
-        var direct = streams.filter(function (s) { return !s.hls; });
-        if (direct.length) streams = direct;
+        // Drop Vidplay per audio track, not across the whole list: DoodStream
+        // can carry Sub for an episode while Dub exists only on Vidplay, and a
+        // global filter there would leave a dub viewer with nothing at all.
+        var haveDirect = {};
+        for (var d = 0; d < streams.length; d++) {
+          if (!streams[d].hls) haveDirect[streams[d].audio] = true;
+        }
+        streams = streams.filter(function (s) { return !s.hls || !haveDirect[s.audio]; });
       }
     }
 
