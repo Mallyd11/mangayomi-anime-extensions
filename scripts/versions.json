@@ -32,17 +32,17 @@
         }
     },
     "anime": {
+        "UniqueStream": {
+            "name": "UniqueStream",
+            "version": "0.1.2",
+            "langs": "en",
+            "lastUpd": 1786408550.038399
+        },
         "Playback Diagnostic": {
             "name": "Playback Diagnostic",
             "version": "0.0.2",
             "langs": "en",
             "lastUpd": 1786407249.110207
-        },
-        "UniqueStream": {
-            "name": "UniqueStream",
-            "version": "0.1.1",
-            "langs": "en",
-            "lastUpd": 1786393068.094942
         },
         "AniWave": {
             "name": "AniWave",

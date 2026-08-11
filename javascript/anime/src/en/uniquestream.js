@@ -9,7 +9,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=256&domain=https://anime.uniquestream.net",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/uniquestream.js",
   },
 ];
@@ -836,6 +836,55 @@ class DefaultExtension extends MProvider {
       headers: hdr,
       subtitles: [],
     });
+
+    // G and H use Apple's UNENCRYPTED reference stream — the same one that
+    // already plays as a plain https URL in the playbackdiag extension. That
+    // removes UniqueStream, AES keys and this site's CDN from the picture, so
+    // whatever they do is purely a verdict on the data: URI itself.
+    try {
+      var appleUrl =
+        "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/gear1/prog_index.m3u8";
+      var ares = await new Client().get(appleUrl, {});
+      if (ares.statusCode === 200) {
+        var aLines = String(ares.body).replace(/\r/g, "").split("\n");
+        var abs = [];
+        for (var k = 0; k < aLines.length; k++) {
+          var al = aLines[k].trim();
+          if (!al) continue;
+          abs.push(al.charAt(0) === "#" ? al : this._resolve(appleUrl, al));
+        }
+
+        // G: the whole playlist as one top-level data: URI, no key, no
+        // children. If this plays, data: itself is fine and the blocker is
+        // the key fetch; if it buffers, data: is rejected outright.
+        out.push({
+          url: this._dataUri(abs.join("\n")),
+          originalUrl: appleUrl,
+          quality: "DIAG G · CONTROL unencrypted data: playlist (expect Apple test video)",
+          headers: {},
+          subtitles: [],
+        });
+
+        // H: a data: master whose only child is a normal https playlist.
+        // Separates "data: as the thing handed to the player" from "data: as
+        // something the player must fetch from inside a playlist".
+        out.push({
+          url: this._dataUri(
+            [
+              "#EXTM3U",
+              "#EXT-X-STREAM-INF:BANDWIDTH=200000,RESOLUTION=400x300",
+              appleUrl,
+            ].join("\n")
+          ),
+          originalUrl: appleUrl,
+          quality: "DIAG H · CONTROL data: master -> https child (expect Apple test video)",
+          headers: {},
+          subtitles: [],
+        });
+      }
+    } catch (e) {
+      // Controls are best-effort; their absence must not break the real probes.
+    }
 
     return out;
   }
