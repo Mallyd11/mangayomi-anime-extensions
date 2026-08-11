@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.9",
+    "version": "0.4.10",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -667,7 +667,12 @@ class DefaultExtension extends MProvider {
       var body = res.body || "";
       if (body.indexOf("#EXTM3U") < 0) return null; // not a valid m3u8 (blocked or error)
       if (body.indexOf("#EXT-X-STREAM-INF") < 0) {
-        // Flat media playlist.
+        // Flat media playlist — also detect by extension-less URL (CDN rotation).
+        if (!isNeko) {
+          var masterPath = (masterUrl || "").split("?")[0];
+          var masterLast = masterPath.split("/").pop();
+          if (masterLast && masterLast.indexOf(".") === -1) isNeko = true;
+        }
         if (isNeko) {
           var flatProxy = this._nekoproxy(masterUrl);
           return [{ url: flatProxy, label: "Auto" }];
@@ -695,6 +700,14 @@ class DefaultExtension extends MProvider {
         }
       }
       variants.sort(function(a, b) { return (parseInt(b.label) || 0) - (parseInt(a.label) || 0); });
+
+      // Fallback: extension-less variant URL is the other signature of CDNs whose
+      // segments libmpv rejects (extension_picky), regardless of hostname.
+      if (!isNeko && variants.length > 0) {
+        var samplePath = variants[0].url.split("?")[0];
+        var lastPart = samplePath.split("/").pop();
+        if (lastPart && lastPart.indexOf(".") === -1) isNeko = true;
+      }
 
       if (isNeko) {
         // nekostream.site: segments have no file extension (libmpv's extension_picky

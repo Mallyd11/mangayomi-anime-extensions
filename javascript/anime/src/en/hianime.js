@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.8",
+    "version": "0.4.9",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -494,9 +494,12 @@ class DefaultExtension extends MProvider {
   // a replacement — see the "Stream routing" preference for the ordering.
   wrapProxyStream(stream) {
     var proxyUrl = this.tsProxy + "/m3u8?url=" + encodeURIComponent(stream.url);
-    // nekostream.site playlists require Referer: megaplay.buzz for the CDN to
-    // serve them; pass it as a hint so the proxy can include it upstream.
-    if ((stream.url || "").indexOf("nekostream.site") >= 0) {
+    // The CDN backing megaplay/vidnest requires Referer: megaplay.buzz.
+    // Check the original source URL so this survives CDN hostname rotation.
+    var orig = stream.originalUrl || "";
+    if ((stream.url || "").indexOf("nekostream.site") >= 0 ||
+        orig.indexOf("megaplay.buzz") >= 0 ||
+        orig.indexOf("vidnest.fun") >= 0) {
       proxyUrl += "&referer=" + encodeURIComponent("https://megaplay.buzz/");
     }
     return {
@@ -509,16 +512,20 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Whether a stream both needs the proxy and can actually be served by it.
-  //   vivibebe.site        PNG-wrapped; proxy can fetch it without special headers.
-  //   nekostream.site      PNG-wrapped + extension-less segment URLs (libmpv's
-  //                        extension_picky rejects them); proxy strips the PNG
-  //                        wrapper and serves clean TS. Playlist fetch needs
-  //                        Referer: megaplay.buzz (passed via &referer= param).
+  // Whether a stream needs the proxy.
+  //   vivibebe.site        PNG-wrapped; proxy strips the header.
+  //   nekostream.site      PNG-wrapped + extension-less segment URLs.
+  //   megaplay/vidnest     CDN hostname rotates; detect by originalUrl instead.
   //   vibevibe.workers.dev already raw MPEG-TS — leave alone.
-  canUnwrap(url) {
-    return (url || "").indexOf("vivibebe.site") >= 0 ||
-           (url || "").indexOf("nekostream.site") >= 0;
+  canUnwrap(stream) {
+    var url = stream.url || "";
+    if (url.indexOf("vivibebe.site") >= 0) return true;
+    if (url.indexOf("nekostream.site") >= 0) return true;
+    if (!this.servesRawTs(url)) {
+      var orig = stream.originalUrl || "";
+      if (orig.indexOf("megaplay.buzz") >= 0 || orig.indexOf("vidnest.fun") >= 0) return true;
+    }
+    return false;
   }
 
   // This CDN serves plain MPEG-TS that libmpv can decode without intervention.
@@ -926,7 +933,7 @@ class DefaultExtension extends MProvider {
     for (var i = 0; i < direct.length; i++) {
       if (this.servesRawTs(direct[i].url)) raw.push(direct[i]);
       else wrapped.push(direct[i]);
-      if (this.canUnwrap(direct[i].url)) unwrapped.push(this.wrapProxyStream(direct[i]));
+      if (this.canUnwrap(direct[i])) unwrapped.push(this.wrapProxyStream(direct[i]));
     }
     var playable = raw.concat(unwrapped);
 
