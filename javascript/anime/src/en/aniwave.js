@@ -9,7 +9,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=256&domain=https://aniwaves.ru",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/aniwave.js",
     "isManga": false,
     "isNsfw": false,
@@ -331,6 +331,17 @@ class DefaultExtension extends MProvider {
     return baseUrl.substring(0, baseUrl.lastIndexOf("/") + 1) + u;
   }
 
+  // echovideo serves playlists with no file extension and Content-Type
+  // image/jpeg. ffmpeg refuses to even probe that ("Not detecting m3u8/hls with
+  // non standard extension and non standard mime type"), and players that sniff
+  // by extension (AVPlayer) refuse too. A dummy query makes the URL end in
+  // .m3u8; the server ignores the extra parameter. This is the same trick the
+  // site itself uses on its master playlist URL.
+  hintM3u8(url) {
+    if (!url || /\.m3u8($|[?#])/.test(url)) return url;
+    return url + (url.indexOf("?") >= 0 ? "&" : "?") + "t.m3u8";
+  }
+
   // Expand an HLS master into one stream per variant. Flat playlists (a single
   // rendition, which is what echovideo usually serves) come back as-is.
   async expandHls(playlistUrl, headers, label) {
@@ -343,10 +354,11 @@ class DefaultExtension extends MProvider {
 
     if (!body || body.indexOf("#EXT-X-STREAM-INF") < 0) {
       streams.push({
-        url: playlistUrl,
+        url: this.hintM3u8(playlistUrl),
         originalUrl: playlistUrl,
         quality: label,
         headers: headers,
+        hls: true,
       });
       return streams;
     }
@@ -374,7 +386,13 @@ class DefaultExtension extends MProvider {
     }
 
     if (variants.length === 0) {
-      streams.push({ url: playlistUrl, originalUrl: playlistUrl, quality: label, headers: headers });
+      streams.push({
+        url: this.hintM3u8(playlistUrl),
+        originalUrl: playlistUrl,
+        quality: label,
+        headers: headers,
+        hls: true,
+      });
       return streams;
     }
 
@@ -383,10 +401,11 @@ class DefaultExtension extends MProvider {
     });
     for (var v = 0; v < variants.length; v++) {
       streams.push({
-        url: variants[v].url,
+        url: this.hintM3u8(variants[v].url),
         originalUrl: playlistUrl,
         quality: variants[v].quality + " · " + label,
         headers: headers,
+        hls: true,
       });
     }
     return streams;
@@ -456,6 +475,7 @@ class DefaultExtension extends MProvider {
         originalUrl: videoUrl,
         quality: label,
         headers: { "User-Agent": this.ua, "Referer": origin + "/" },
+        hls: false,
       },
     ];
   }
@@ -541,7 +561,43 @@ class DefaultExtension extends MProvider {
       streams = streams.concat(results[r]);
     }
     if (streams.length === 0) throw new Error("No playable stream found for this episode");
-    return streams;
+
+    // Order matters more than it looks: Mangayomi auto-plays the *first* entry,
+    // and a first entry the player cannot demux reads to the user as "it skips
+    // straight through every episode".
+    //
+    // echovideo (Vidplay) serves HLS whose segment URLs carry no file
+    // extension. ffmpeg's HLS demuxer rejects those outright — its
+    // `extension_picky` check requires the detected format to match the URL
+    // extension, and "extension none" always fails. `allowed_extensions=ALL`
+    // does not lift it and neither option is reachable from an extension, so
+    // Vidplay simply cannot play in the libmpv builds Mangayomi ships on
+    // desktop/Android. Confirmed against Mangayomi's own libmpv-2.dll.
+    // DoodStream hands back a progressive MP4, which plays with no coaxing.
+    //
+    // Vidplay is still kept in the list: it is the only server with both audio
+    // tracks and multiple qualities, players that sniff by extension (iOS
+    // AVPlayer) accept it once the .m3u8 hint is on the URL, and DoodStream's
+    // host rejects some HTTP clients outright — when that happens Vidplay is
+    // all that is left.
+    var routing = this.getPreference("aniwave_pref_routing") || "playable";
+    if (routing !== "vidplay") {
+      // Stable sort, so the audio preference ordering survives within each group.
+      streams.sort(function (a, b) { return (a.hls ? 1 : 0) - (b.hls ? 1 : 0); });
+    }
+
+    // `hls` is bookkeeping for the sort above, not part of Mangayomi's stream
+    // model — hand back only the fields it expects.
+    return streams.map(function (s) {
+      var out = {
+        url: s.url,
+        originalUrl: s.originalUrl,
+        quality: s.quality,
+        headers: s.headers,
+      };
+      if (s.subtitles) out.subtitles = s.subtitles;
+      return out;
+    });
   }
 
   // ── Filters & preferences ─────────────────────────────────────────────────
@@ -649,6 +705,21 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "aniwave_pref_routing",
+        listPreference: {
+          title: "Stream routing",
+          summary:
+            "Vidplay serves HLS whose segments have no file extension, which ffmpeg refuses to load — " +
+            "on Windows and Android that shows up as the player skipping straight through every episode. " +
+            "The default puts DoodStream (a plain MP4) first so playback works, and keeps Vidplay below it " +
+            "as a fallback. Choose Vidplay first on iOS, where it plays fine and offers both audio tracks " +
+            "and more qualities.",
+          valueIndex: 0,
+          entries: ["DoodStream first (fixes Windows/Android)", "Vidplay first (iOS)"],
+          entryValues: ["playable", "vidplay"],
         },
       },
       {

@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "AniWave": {
+            "name": "AniWave",
+            "version": "0.2.0",
+            "langs": "en",
+            "lastUpd": 1786467653.342926
+        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.4.6",
@@ -49,12 +55,6 @@
             "version": "0.0.2",
             "langs": "en",
             "lastUpd": 1786407249.110207
-        },
-        "AniWave": {
-            "name": "AniWave",
-            "version": "0.1.0",
-            "langs": "en",
-            "lastUpd": 1786390675.36435
         },
         "JustAnime": {
             "name": "JustAnime",
