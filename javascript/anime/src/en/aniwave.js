@@ -9,7 +9,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=256&domain=https://aniwaves.ru",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.4",
+    "version": "0.2.3",
     "pkgPath": "anime/src/en/aniwave.js",
     "isManga": false,
     "isNsfw": false,
@@ -73,41 +73,13 @@ class DefaultExtension extends MProvider {
     return this.source.baseUrl + (path.charAt(0) === "/" ? path : "/" + path);
   }
 
-  // aniwaves.ru returns transient 502s on /ajax/server/list and /ajax/sources
-  // for roughly one request in seven, and they succeed on an immediate repeat.
-  // Unretried, a single blip surfaces as a playback or download that fails once
-  // and works on the second tap — or worse, silently loses the DoodStream entry
-  // for a track and falls back to the unplayable Vidplay one.
-  //
-  // Retries are immediate: no extension in this repo uses setTimeout, so the
-  // runtime is assumed not to provide it, and the isolate has a time budget to
-  // respect anyway. Same shape as anidap.js's gql().
-  async getRetry(url, headers) {
-    var lastErr = null;
-    for (var attempt = 0; attempt < 3; attempt++) {
-      var res = null;
-      try {
-        res = await this.client.get(url, headers);
-      } catch (e) {
-        lastErr = e;
-        continue;
-      }
-      var code = res ? res.statusCode : 0;
-      if (code >= 200 && code < 300) return res;
-      lastErr = new Error("HTTP " + code + " for " + url);
-      // 4xx will not change on a repeat.
-      if (code >= 400 && code < 500) break;
-    }
-    throw lastErr || new Error("request failed: " + url);
-  }
-
   async fetchDoc(path, headers) {
-    var res = await this.getRetry(this.abs(path), headers || this.headers);
+    var res = await this.client.get(this.abs(path), headers || this.headers);
     return new Document(res.body);
   }
 
   async fetchAjax(path) {
-    var res = await this.getRetry(this.abs(path), this.ajaxHeaders);
+    var res = await this.client.get(this.abs(path), this.ajaxHeaders);
     var json = JSON.parse(res.body);
     if (!json || json.status !== 200) throw new Error("ajax failed: " + path);
     return json.result;
@@ -448,7 +420,7 @@ class DefaultExtension extends MProvider {
     var origin = m[1];
     var id = m[2];
 
-    var res = await this.getRetry(origin + "/embed-1/getSources?id=" + id, {
+    var res = await this.client.get(origin + "/embed-1/getSources?id=" + id, {
       "User-Agent": this.ua,
       "X-Requested-With": "XMLHttpRequest",
       "Referer": embedUrl,
@@ -474,7 +446,7 @@ class DefaultExtension extends MProvider {
     var origin = (embedUrl.match(/^(https?:\/\/[^\/]+)/) || [])[1];
     if (!origin) return [];
 
-    var res = await this.getRetry(embedUrl, { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" });
+    var res = await this.client.get(embedUrl, { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" });
     var html = res.body || "";
 
     var pass = html.match(/\/pass_md5\/[^'"\s]+/);
@@ -483,7 +455,7 @@ class DefaultExtension extends MProvider {
 
     // The pass_md5 path is relative; requesting it on the original host works
     // even when that host 301s to the current DoodStream domain.
-    var baseRes = await this.getRetry(origin + pass[0], {
+    var baseRes = await this.client.get(origin + pass[0], {
       "User-Agent": this.ua,
       "Referer": embedUrl,
     });
@@ -577,7 +549,7 @@ class DefaultExtension extends MProvider {
     var results = await Promise.all(
       jobs.map(async function (job) {
         try {
-          var srcRes = await self.getRetry(
+          var srcRes = await self.client.get(
             self.source.baseUrl + "/ajax/sources?id=" + encodeURIComponent(job.linkId),
             self.ajaxHeaders
           );
