@@ -1,8 +1,4 @@
 {
-    "AniCove": {
-        "downloads": "No",
-        "subDub": "Sub+Dub"
-    },
     "Anidap": {
         "downloads": "No",
         "subDub": "Sub+Dub"
@@ -15,17 +11,9 @@
         "downloads": "Yes",
         "subDub": "Sub Only"
     },
-    "AnimeKai": {
-        "downloads": "Yes",
-        "subDub": "Sub+Dub"
-    },
     "AnimeParadise": {
         "downloads": "No",
         "subDub": "Sub Only"
-    },
-    "Animetsu": {
-        "downloads": "No",
-        "subDub": "Sub+Dub"
     },
     "HiAnime": {
         "downloads": "Yes",
@@ -43,23 +31,11 @@
         "downloads": "Yes",
         "subDub": "Sub+Dub"
     },
-    "MKissa": {
-        "downloads": "?",
-        "subDub": "?"
-    },
-    "AnimePahe": {
-        "downloads": "?",
-        "subDub": "?"
-    },
     "Playback Diagnostic": {
         "downloads": "?",
         "subDub": "?"
     },
     "AniWave": {
-        "downloads": "?",
-        "subDub": "?"
-    },
-    "UniqueStream": {
         "downloads": "?",
         "subDub": "?"
     }

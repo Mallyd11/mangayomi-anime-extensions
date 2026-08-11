@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.5",
+    "version": "0.4.6",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -451,6 +451,17 @@ class DefaultExtension extends MProvider {
     return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
   }
 
+  // Known nekostream-family CDN hostnames that always prepend a 70-byte PNG
+  // wrapper to every MPEG-TS segment.  Matching by substring is intentional —
+  // the CDN family reuses the same pattern across multiple subdomains.
+  _isWrappedCdnUrl(url) {
+    var hosts = ["norami.top", "kotocdn.site", "ibyteimg.com", "byteimg.com", "ipstatp.com"];
+    for (var i = 0; i < hosts.length; i++) {
+      if ((url || "").indexOf(hosts[i]) >= 0) return true;
+    }
+    return false;
+  }
+
   // Probe the first segment in a media playlist for a PNG file signature.
   // nekostream-family CDNs prepend a 70-byte PNG header to every MPEG-TS segment;
   // iOS/AVPlayer scans past it, but libmpv on Windows treats each segment as an
@@ -468,6 +479,10 @@ class DefaultExtension extends MProvider {
         var base = playlistUrl.substring(0, playlistUrl.lastIndexOf("/") + 1);
         segUrl = base + segUrl;
       }
+      // Fast path: known nekostream CDN domains always serve PNG-wrapped segments.
+      // Avoids an extra HTTP round-trip and is immune to CDN Range-request quirks.
+      if (this._isWrappedCdnUrl(segUrl)) return true;
+      // Slow path: fetch first 8 bytes and check the PNG magic signature.
       var rangeHdrs = {};
       for (var k in headers) rangeHdrs[k] = headers[k];
       rangeHdrs["Range"] = "bytes=0-7";
