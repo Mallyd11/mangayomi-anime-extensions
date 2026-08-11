@@ -9,7 +9,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=256&domain=https://aniwaves.ru",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.2",
+    "version": "0.2.3",
     "pkgPath": "anime/src/en/aniwave.js",
     "isManga": false,
     "isNsfw": false,
@@ -467,7 +467,15 @@ class DefaultExtension extends MProvider {
     for (var i = 0; i < 10; i++) {
       suffix += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    var videoUrl = base + suffix + "?token=" + token[1] + "&expiry=" + Date.now();
+    // The 10 random characters are a cache-buster the CDN ignores, so ".mp4"
+    // can ride along on the end of them. It has to be there: Mangayomi picks a
+    // downloader by file extension and refuses a URL that has none —
+    // "No downloadable URL among N video(s) (none matched .m3u8/.m3u or a
+    // known extension)". It goes in the path rather than the query because an
+    // extension check looks at the path. Verified the CDN still answers 206
+    // video/mp4 with it appended.
+    var videoUrl =
+      base + suffix + ".mp4?token=" + token[1] + "&expiry=" + Date.now();
 
     return [
       {
