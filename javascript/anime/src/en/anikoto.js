@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.7",
+    "version": "0.4.8",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -353,6 +353,11 @@ class DefaultExtension extends MProvider {
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
       var trimmed = line.trim();
+      // #EXT-X-BYTERANGE requires HLS version 4+; bump if the playlist declares 3 or lower.
+      if (trimmed.match(/^#EXT-X-VERSION:[1-3]$/)) {
+        out.push("#EXT-X-VERSION:4");
+        continue;
+      }
       if (trimmed && trimmed.charAt(0) !== "#") {
         out.push("#EXT-X-BYTERANGE:99999999@70");
       }
@@ -365,7 +370,7 @@ class DefaultExtension extends MProvider {
   // Known nekostream-family CDN hostnames that always prepend a 70-byte PNG
   // wrapper to every MPEG-TS segment.
   _isWrappedCdnUrl(url) {
-    var hosts = ["norami.top", "kotocdn.site", "ibyteimg.com", "byteimg.com", "ipstatp.com"];
+    var hosts = ["nekostream.site", "norami.top", "kotocdn.site", "ibyteimg.com", "byteimg.com", "ipstatp.com"];
     for (var i = 0; i < hosts.length; i++) {
       if ((url || "").indexOf(hosts[i]) >= 0) return true;
     }
