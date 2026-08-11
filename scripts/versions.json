@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "AniWave": {
+            "name": "AniWave",
+            "version": "0.2.1",
+            "langs": "en",
+            "lastUpd": 1786468485.231572
+        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.4.7",
@@ -43,12 +49,6 @@
             "version": "0.4.8",
             "langs": "en",
             "lastUpd": 1786468018.627353
-        },
-        "AniWave": {
-            "name": "AniWave",
-            "version": "0.2.0",
-            "langs": "en",
-            "lastUpd": 1786467653.342926
         },
         "Playback Diagnostic": {
             "name": "Playback Diagnostic",

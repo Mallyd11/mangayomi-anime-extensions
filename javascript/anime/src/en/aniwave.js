@@ -9,7 +9,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=256&domain=https://aniwaves.ru",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.2.1",
     "pkgPath": "anime/src/en/aniwave.js",
     "isManga": false,
     "isNsfw": false,
@@ -580,10 +580,25 @@ class DefaultExtension extends MProvider {
     // AVPlayer) accept it once the .m3u8 hint is on the URL, and DoodStream's
     // host rejects some HTTP clients outright — when that happens Vidplay is
     // all that is left.
+    // Vidplay is not merely second-best on desktop, it is unusable: playback
+    // fails the extension check above, and downloads fail too — its playlists
+    // reference segments as root-relative "/cdn/..." URIs, which Mangayomi's
+    // M3U8 downloader mis-resolves into a doubled path and gets a 404 on
+    // TS_1. Leaving it in the list means the downloader (or a user picking a
+    // quality) can still land on it. So by default hand back only the MP4
+    // streams whenever any resolved, and fall back to Vidplay only when
+    // DoodStream gave us nothing at all — better a stream that might work on
+    // some platform than no stream.
     var routing = this.getPreference("aniwave_pref_routing") || "playable";
-    if (routing !== "vidplay") {
+    if (routing === "vidplay") {
+      streams.sort(function (a, b) { return (a.hls ? 0 : 1) - (b.hls ? 0 : 1); });
+    } else {
       // Stable sort, so the audio preference ordering survives within each group.
       streams.sort(function (a, b) { return (a.hls ? 1 : 0) - (b.hls ? 1 : 0); });
+      if (routing !== "all") {
+        var direct = streams.filter(function (s) { return !s.hls; });
+        if (direct.length) streams = direct;
+      }
     }
 
     // `hls` is bookkeeping for the sort above, not part of Mangayomi's stream
@@ -712,14 +727,19 @@ class DefaultExtension extends MProvider {
         listPreference: {
           title: "Stream routing",
           summary:
-            "Vidplay serves HLS whose segments have no file extension, which ffmpeg refuses to load — " +
-            "on Windows and Android that shows up as the player skipping straight through every episode. " +
-            "The default puts DoodStream (a plain MP4) first so playback works, and keeps Vidplay below it " +
-            "as a fallback. Choose Vidplay first on iOS, where it plays fine and offers both audio tracks " +
-            "and more qualities.",
+            "Vidplay serves HLS that breaks two ways off iOS: ffmpeg refuses its extension-less segment " +
+            "URLs (the player skips straight through every episode), and Mangayomi's M3U8 downloader " +
+            "mis-resolves them into a 404 on TS_1. The default hides Vidplay whenever DoodStream (a plain " +
+            "MP4) resolved, so playback and downloads both land on a working source, and falls back to " +
+            "Vidplay only if DoodStream returned nothing. Pick \"Show both\" to get Vidplay's extra " +
+            "qualities alongside, or \"Vidplay first\" on iOS where it plays fine.",
           valueIndex: 0,
-          entries: ["DoodStream first (fixes Windows/Android)", "Vidplay first (iOS)"],
-          entryValues: ["playable", "vidplay"],
+          entries: [
+            "DoodStream only when available (fixes Windows/Android)",
+            "Show both (DoodStream first)",
+            "Vidplay first (iOS)",
+          ],
+          entryValues: ["playable", "all", "vidplay"],
         },
       },
       {
