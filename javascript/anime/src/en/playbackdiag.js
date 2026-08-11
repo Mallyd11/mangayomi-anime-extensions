@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://apple.com",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "pkgPath": "anime/src/en/playbackdiag.js",
     "isManga": false,
     "isNsfw": false,
@@ -51,10 +51,23 @@ class DefaultExtension extends MProvider {
         name: "1. MP4 progressive (control)",
         // Matches AnimeHeaven's shape. Expected to play. If this fails, the
         // problem is broader than HLS and nothing below will be informative.
-        sources: [{
-          url: "https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4",
-          quality: "MP4 — Blender (Big Buck Bunny)",
-        }],
+        //
+        // 2026-08-10: the original Blender URL began returning 404, so this
+        // control silently "failed" for reasons that had nothing to do with the
+        // player — a dead control is worse than no control, because it reads as
+        // a total playback failure. Two independent hosts now, so one going
+        // away is visible as a disagreement rather than a false diagnosis.
+        // Re-check both with a plain HTTP request before trusting a failure.
+        sources: [
+          {
+            url: "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4",
+            quality: "MP4 — test-videos.co.uk (Big Buck Bunny 360p)",
+          },
+          {
+            url: "https://filesamples.com/samples/video/mp4/sample_640x360.mp4",
+            quality: "MP4 — filesamples.com (640x360)",
+          },
+        ],
       },
       {
         key: "hls-flat",

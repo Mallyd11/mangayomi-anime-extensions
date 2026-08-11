@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "Playback Diagnostic": {
+            "name": "Playback Diagnostic",
+            "version": "0.0.2",
+            "langs": "en",
+            "lastUpd": 1786407249.110207
+        },
         "UniqueStream": {
             "name": "UniqueStream",
             "version": "0.1.1",
@@ -73,12 +79,6 @@
             "version": "0.3.4",
             "langs": "en",
             "lastUpd": 1784564001.048408
-        },
-        "Playback Diagnostic": {
-            "name": "Playback Diagnostic",
-            "version": "0.0.1",
-            "langs": "en",
-            "lastUpd": 1784496598.310292
         },
         "Anidap": {
             "name": "Anidap",

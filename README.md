@@ -29,7 +29,7 @@ This repository contains the available javascript extension catalogues for the M
 | JustAnime | 0.2.6 | Yes | Sub+Dub | 2026/07/26 |
 | Miruro | 6.1.11 | Yes | Sub+Dub | 2026/07/20 |
 | MyroniX | 0.2.3 | Yes | Sub+Dub | 2026/07/09 |
-| Playback Diagnostic | 0.0.1 | ? | ? | 2026/07/19 |
+| Playback Diagnostic | 0.0.2 | ? | ? | 2026/08/10 |
 | UniqueStream | 0.1.1 | ? | ? | 2026/08/10 |
 
 ## Novel
