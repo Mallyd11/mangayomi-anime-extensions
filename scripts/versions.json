@@ -32,12 +32,6 @@
         }
     },
     "anime": {
-        "UniqueStream": {
-            "name": "UniqueStream",
-            "version": "0.1.2",
-            "langs": "en",
-            "lastUpd": 1786408550.038399
-        },
         "Playback Diagnostic": {
             "name": "Playback Diagnostic",
             "version": "0.0.2",
