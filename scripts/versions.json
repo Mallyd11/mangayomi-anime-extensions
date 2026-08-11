@@ -32,6 +32,18 @@
         }
     },
     "anime": {
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.4.5",
+            "langs": "en",
+            "lastUpd": 1786466405.934556
+        },
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.4.6",
+            "langs": "en",
+            "lastUpd": 1786466405.934556
+        },
         "Playback Diagnostic": {
             "name": "Playback Diagnostic",
             "version": "0.0.2",
@@ -43,18 +55,6 @@
             "version": "0.1.0",
             "langs": "en",
             "lastUpd": 1786390675.36435
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.4.5",
-            "langs": "en",
-            "lastUpd": 1786373866.370687
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.4.4",
-            "langs": "en",
-            "lastUpd": 1785080637.804122
         },
         "JustAnime": {
             "name": "JustAnime",

@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.5",
+    "version": "0.4.6",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -361,6 +361,41 @@ class DefaultExtension extends MProvider {
     return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
   }
 
+  // Probe the first segment in a media playlist for a PNG file signature (bytes 1-3 = "PNG").
+  // nekostream-family CDNs prepend a 70-byte 1×1 RGBA PNG header to every MPEG-TS segment;
+  // iOS/AVPlayer scans for the 0x47 sync byte and plays anyway, but libmpv on Windows treats
+  // each segment as an undecodable image and races to #EXT-X-ENDLIST, causing the skip loop.
+  // A Range: bytes=0-7 request is cheap (~1 RTT) and works for any CDN domain, so it catches
+  // cases that _playlistIsPoisoned misses (e.g. segments on ipstatp.com rather than ibyteimg.com).
+  async _firstSegmentIsPng(playlistBody, playlistUrl, headers) {
+    try {
+      var lines = String(playlistBody).split("\n");
+      var segUrl = null;
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i].trim();
+        if (l && l.charAt(0) !== "#") { segUrl = l; break; }
+      }
+      if (!segUrl) return false;
+      if (segUrl.indexOf("http") !== 0) {
+        var base = playlistUrl.substring(0, playlistUrl.lastIndexOf("/") + 1);
+        segUrl = base + segUrl;
+      }
+      var rangeHdrs = {};
+      for (var k in headers) rangeHdrs[k] = headers[k];
+      rangeHdrs["Range"] = "bytes=0-7";
+      var res = await this.client.get(segUrl, rangeHdrs);
+      var body = res.body || "";
+      // PNG signature: bytes 1-3 are always 'P' (0x50), 'N' (0x4E), 'G' (0x47).
+      // The first byte (0x89) is non-ASCII and may be mangled by text decoders,
+      // but positions 1-3 are plain ASCII and always preserved correctly.
+      return body.length >= 4 &&
+             body.charCodeAt(1) === 0x50 &&
+             body.charCodeAt(2) === 0x4E &&
+             body.charCodeAt(3) === 0x47;
+    } catch (e) {}
+    return false;
+  }
+
   // Convert a WebVTT timestamp to SRT format.
   // lostproject.club VTTs use MM:SS.mmm (no hours); libmpv rejects this two-part form.
   _vttTsToSrt(ts) {
@@ -644,8 +679,10 @@ class DefaultExtension extends MProvider {
       var body = res.body || "";
       if (body.indexOf("#EXTM3U") < 0) return null; // not a valid m3u8 (blocked or error)
       if (body.indexOf("#EXT-X-STREAM-INF") < 0) {
-        // Flat media playlist — segments are in hand, so check without refetching.
-        if (this._playlistIsPoisoned(body, masterUrl)) {
+        // Flat media playlist — check for ad-injected segments or PNG wrapper.
+        var flatNeedsRewrite = this._playlistIsPoisoned(body, masterUrl) ||
+                               await this._firstSegmentIsPng(body, masterUrl, headers);
+        if (flatNeedsRewrite) {
           return [{ url: this._rewriteWithByterange(body), label: "Auto" }];
         }
         return []; // use master URL as-is
@@ -678,9 +715,14 @@ class DefaultExtension extends MProvider {
         try {
           var probe = await this.client.get(variants[0].url, headers);
           var probeBody = probe.body || "";
-          if (probeBody.indexOf("#EXTM3U") >= 0 &&
-              this._playlistIsPoisoned(probeBody, variants[0].url)) {
-            return [{ url: this._rewriteWithByterange(probeBody), label: variants[0].label }];
+          if (probeBody.indexOf("#EXTM3U") >= 0) {
+            var varNeedsRewrite = this._playlistIsPoisoned(probeBody, variants[0].url);
+            if (!varNeedsRewrite) {
+              varNeedsRewrite = await this._firstSegmentIsPng(probeBody, variants[0].url, headers);
+            }
+            if (varNeedsRewrite) {
+              return [{ url: this._rewriteWithByterange(probeBody), label: variants[0].label }];
+            }
           }
         } catch (e) {} // probe failure is not proof of poisoning — let it through
       }
