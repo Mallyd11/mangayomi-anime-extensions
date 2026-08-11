@@ -32,23 +32,23 @@
         }
     },
     "anime": {
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.4.8",
+            "langs": "en",
+            "lastUpd": 1786469864.085055
+        },
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.4.9",
+            "langs": "en",
+            "lastUpd": 1786469864.085055
+        },
         "AniWave": {
             "name": "AniWave",
             "version": "0.2.2",
             "langs": "en",
             "lastUpd": 1786469234.656965
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.4.7",
-            "langs": "en",
-            "lastUpd": 1786468018.627353
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.4.8",
-            "langs": "en",
-            "lastUpd": 1786468018.627353
         },
         "Playback Diagnostic": {
             "name": "Playback Diagnostic",

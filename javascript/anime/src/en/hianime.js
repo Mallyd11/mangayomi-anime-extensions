@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.7",
+    "version": "0.4.8",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -417,91 +417,6 @@ class DefaultExtension extends MProvider {
     return [];
   }
 
-  _b64enc(str) {
-    var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var out = "", i = 0, n = str.length;
-    while (i < n) {
-      var a = str.charCodeAt(i++);
-      out += t[a >> 2];
-      if (i === n) { out += t[(a & 3) << 4] + "=="; break; }
-      var b = str.charCodeAt(i++);
-      out += t[((a & 3) << 4) | (b >> 4)];
-      if (i === n) { out += t[(b & 15) << 2] + "="; break; }
-      var c = str.charCodeAt(i++);
-      out += t[((b & 15) << 2) | (c >> 6)];
-      out += t[c & 63];
-    }
-    return out;
-  }
-
-  // Rewrite a media playlist so every segment carries #EXT-X-BYTERANGE:N@70,
-  // telling ExoPlayer/libmpv to send Range: bytes=70- and skip the 70-byte PNG
-  // wrapper that nekostream-family CDNs prepend to every MPEG-TS segment.
-  _rewriteWithByterange(body) {
-    var lines = String(body).split("\n");
-    var out = [];
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      var trimmed = line.trim();
-      // #EXT-X-BYTERANGE requires HLS version 4+; bump if the playlist declares 3 or lower.
-      if (trimmed.match(/^#EXT-X-VERSION:[1-3]$/)) {
-        out.push("#EXT-X-VERSION:4");
-        continue;
-      }
-      if (trimmed && trimmed.charAt(0) !== "#") {
-        out.push("#EXT-X-BYTERANGE:99999999@70");
-      }
-      out.push(line);
-    }
-    return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
-  }
-
-  // Known nekostream-family CDN hostnames that always prepend a 70-byte PNG
-  // wrapper to every MPEG-TS segment.  Matching by substring is intentional —
-  // the CDN family reuses the same pattern across multiple subdomains.
-  _isWrappedCdnUrl(url) {
-    var hosts = ["nekostream.site", "norami.top", "kotocdn.site", "ibyteimg.com", "byteimg.com", "ipstatp.com"];
-    for (var i = 0; i < hosts.length; i++) {
-      if ((url || "").indexOf(hosts[i]) >= 0) return true;
-    }
-    return false;
-  }
-
-  // Probe the first segment in a media playlist for a PNG file signature.
-  // nekostream-family CDNs prepend a 70-byte PNG header to every MPEG-TS segment;
-  // iOS/AVPlayer scans past it, but libmpv on Windows treats each segment as an
-  // undecodable image and races to #EXT-X-ENDLIST (the "skip to end" bug).
-  async _firstSegmentIsPng(playlistBody, playlistUrl, headers) {
-    try {
-      var lines = String(playlistBody).split("\n");
-      var segUrl = null;
-      for (var i = 0; i < lines.length; i++) {
-        var l = lines[i].trim();
-        if (l && l.charAt(0) !== "#") { segUrl = l; break; }
-      }
-      if (!segUrl) return false;
-      if (segUrl.indexOf("http") !== 0) {
-        var base = playlistUrl.substring(0, playlistUrl.lastIndexOf("/") + 1);
-        segUrl = base + segUrl;
-      }
-      // Fast path: known nekostream CDN domains always serve PNG-wrapped segments.
-      // Avoids an extra HTTP round-trip and is immune to CDN Range-request quirks.
-      if (this._isWrappedCdnUrl(segUrl)) return true;
-      // Slow path: fetch first 8 bytes and check the PNG magic signature.
-      var rangeHdrs = {};
-      for (var k in headers) rangeHdrs[k] = headers[k];
-      rangeHdrs["Range"] = "bytes=0-7";
-      var res = await this.client.get(segUrl, rangeHdrs);
-      var body = res.body || "";
-      // Bytes 1-3 of a PNG are always 'P' (0x50), 'N' (0x4E), 'G' (0x47) — plain ASCII,
-      // preserved correctly even when text decoders mangle the leading 0x89 byte.
-      return body.length >= 4 &&
-             body.charCodeAt(1) === 0x50 &&
-             body.charCodeAt(2) === 0x4E &&
-             body.charCodeAt(3) === 0x47;
-    } catch (e) {}
-    return false;
-  }
 
   // Convert a WebVTT string to SRT format.
   // lostproject.club VTTs use MM:SS.mmm timestamps (no hours prefix); libmpv's
@@ -578,8 +493,14 @@ class DefaultExtension extends MProvider {
   // these are offered as extra entries alongside the direct ones rather than as
   // a replacement — see the "Stream routing" preference for the ordering.
   wrapProxyStream(stream) {
+    var proxyUrl = this.tsProxy + "/m3u8?url=" + encodeURIComponent(stream.url);
+    // nekostream.site playlists require Referer: megaplay.buzz for the CDN to
+    // serve them; pass it as a hint so the proxy can include it upstream.
+    if ((stream.url || "").indexOf("nekostream.site") >= 0) {
+      proxyUrl += "&referer=" + encodeURIComponent("https://megaplay.buzz/");
+    }
     return {
-      url: this.tsProxy + "/m3u8?url=" + encodeURIComponent(stream.url),
+      url: proxyUrl,
       originalUrl: stream.originalUrl || stream.url,
       quality: stream.quality + " ⟨unwrapped⟩",
       // The proxy fetches upstream itself, so no Referer/Origin is needed here.
@@ -589,20 +510,20 @@ class DefaultExtension extends MProvider {
   }
 
   // Whether a stream both needs the proxy and can actually be served by it.
-  //   vivibebe.site        PNG-wrapped, and the proxy can fetch it  -> wrap
-  //   vibevibe.workers.dev already raw MPEG-TS                      -> leave alone
-  //   megap.kotocdn.site   PNG-wrapped, but the proxy does not send the
-  //                        Referer that CDN demands and gets a 403, so wrapping
-  //                        it would only produce a dead entry            -> skip
+  //   vivibebe.site        PNG-wrapped; proxy can fetch it without special headers.
+  //   nekostream.site      PNG-wrapped + extension-less segment URLs (libmpv's
+  //                        extension_picky rejects them); proxy strips the PNG
+  //                        wrapper and serves clean TS. Playlist fetch needs
+  //                        Referer: megaplay.buzz (passed via &referer= param).
+  //   vibevibe.workers.dev already raw MPEG-TS — leave alone.
   canUnwrap(url) {
-    return (url || "").indexOf("vivibebe.site") >= 0;
+    return (url || "").indexOf("vivibebe.site") >= 0 ||
+           (url || "").indexOf("nekostream.site") >= 0;
   }
 
-  // This CDN serves plain MPEG-TS, so libmpv can already decode it as-is.
-  // data: URIs are byterange-rewritten playlists that ExoPlayer/libmpv handle correctly.
+  // This CDN serves plain MPEG-TS that libmpv can decode without intervention.
   servesRawTs(url) {
-    return (url || "").indexOf("vibevibe.workers.dev") >= 0 ||
-           (url || "").indexOf("data:") === 0;
+    return (url || "").indexOf("vibevibe.workers.dev") >= 0;
   }
 
   // Resolve a playlist URI that may be absolute or relative to its playlist.
@@ -701,10 +622,6 @@ class DefaultExtension extends MProvider {
     var hasExtinf = body.indexOf("#EXTINF") >= 0;
 
     if (hasExtinf && !hasStreamInf) {
-      // Flat media playlist — rewrite with byterange if PNG-wrapped.
-      if (await this._firstSegmentIsPng(body, playlistUrl, baseHeaders)) {
-        return { kind: "master", variants: [{ url: this._rewriteWithByterange(body), label: "Auto" }] };
-      }
       return { kind: "flat" };
     }
     if (!hasStreamInf) return { kind: "empty-master" };
@@ -738,30 +655,6 @@ class DefaultExtension extends MProvider {
       var bRes = parseInt((b.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
       return bRes - aRes;
     });
-
-    // Probe the top variant for PNG-wrapped segments. If detected, rewrite every
-    // variant playlist with #EXT-X-BYTERANGE:N@70 so ExoPlayer/libmpv sends
-    // Range: bytes=70- and skips the nekostream PNG header. Each rewritten playlist
-    // is returned as a data: URI (treated as "raw" by servesRawTs → goes into the
-    // Windows-playable list). All quality levels are preserved.
-    try {
-      var topVarRes = await this.client.get(variants[0].url, baseHeaders);
-      var topVarBody = topVarRes && topVarRes.body ? topVarRes.body : "";
-      if (topVarBody.indexOf("#EXTM3U") >= 0 &&
-          await this._firstSegmentIsPng(topVarBody, variants[0].url, baseHeaders)) {
-        var rewrittenVariants = [{ url: this._rewriteWithByterange(topVarBody), label: variants[0].label }];
-        for (var rv = 1; rv < variants.length; rv++) {
-          try {
-            var rvRes = await this.client.get(variants[rv].url, baseHeaders);
-            var rvBody = rvRes && rvRes.body ? rvRes.body : "";
-            if (rvBody.indexOf("#EXTM3U") >= 0) {
-              rewrittenVariants.push({ url: this._rewriteWithByterange(rvBody), label: variants[rv].label });
-            }
-          } catch (e2) {}
-        }
-        return { kind: "master", variants: rewrittenVariants };
-      }
-    } catch (e) {}
 
     return { kind: "master", variants: variants };
   }

@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.8",
+    "version": "0.4.9",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -366,9 +366,7 @@ class DefaultExtension extends MProvider {
     return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
   }
 
-  // Probe the first segment in a media playlist for a PNG file signature (bytes 1-3 = "PNG").
-  // Known nekostream-family CDN hostnames that always prepend a 70-byte PNG
-  // wrapper to every MPEG-TS segment.
+  // Known nekostream-family CDN hostnames that serve PNG-wrapped MPEG-TS segments.
   _isWrappedCdnUrl(url) {
     var hosts = ["nekostream.site", "norami.top", "kotocdn.site", "ibyteimg.com", "byteimg.com", "ipstatp.com"];
     for (var i = 0; i < hosts.length; i++) {
@@ -377,41 +375,13 @@ class DefaultExtension extends MProvider {
     return false;
   }
 
-  // Probe the first segment in a media playlist for a PNG file signature.
-  // nekostream-family CDNs prepend a 70-byte 1×1 RGBA PNG header to every MPEG-TS segment;
-  // iOS/AVPlayer scans for the 0x47 sync byte and plays anyway, but libmpv on Windows treats
-  // each segment as an undecodable image and races to #EXT-X-ENDLIST, causing the skip loop.
-  async _firstSegmentIsPng(playlistBody, playlistUrl, headers) {
-    try {
-      var lines = String(playlistBody).split("\n");
-      var segUrl = null;
-      for (var i = 0; i < lines.length; i++) {
-        var l = lines[i].trim();
-        if (l && l.charAt(0) !== "#") { segUrl = l; break; }
-      }
-      if (!segUrl) return false;
-      if (segUrl.indexOf("http") !== 0) {
-        var base = playlistUrl.substring(0, playlistUrl.lastIndexOf("/") + 1);
-        segUrl = base + segUrl;
-      }
-      // Fast path: known nekostream CDN domains always serve PNG-wrapped segments.
-      // Avoids an extra HTTP round-trip and is immune to CDN Range-request quirks.
-      if (this._isWrappedCdnUrl(segUrl)) return true;
-      // Slow path: fetch first 8 bytes and check the PNG magic signature.
-      var rangeHdrs = {};
-      for (var k in headers) rangeHdrs[k] = headers[k];
-      rangeHdrs["Range"] = "bytes=0-7";
-      var res = await this.client.get(segUrl, rangeHdrs);
-      var body = res.body || "";
-      // PNG signature: bytes 1-3 are always 'P' (0x50), 'N' (0x4E), 'G' (0x47).
-      // The first byte (0x89) is non-ASCII and may be mangled by text decoders,
-      // but positions 1-3 are plain ASCII and always preserved correctly.
-      return body.length >= 4 &&
-             body.charCodeAt(1) === 0x50 &&
-             body.charCodeAt(2) === 0x4E &&
-             body.charCodeAt(3) === 0x47;
-    } catch (e) {}
-    return false;
+  // Wrap a nekostream.site variant URL through the shirayuki proxy.
+  // The proxy strips the 70-byte PNG header from every segment before forwarding
+  // to libmpv, and passes the megaplay.buzz Referer when fetching from nekostream.
+  _nekoproxy(variantUrl) {
+    return "http://shirayuki.eastasia.cloudapp.azure.com:1818/api/v2/hianime/proxy" +
+           "/m3u8?url=" + encodeURIComponent(variantUrl) +
+           "&referer=" + encodeURIComponent("https://megaplay.buzz/");
   }
 
   // Convert a WebVTT timestamp to SRT format.
@@ -688,19 +658,21 @@ class DefaultExtension extends MProvider {
   // Fetch a master HLS playlist and return one entry per quality variant.
   // Returns [] if the URL is a flat media playlist (no #EXT-X-STREAM-INF, use as-is).
   // Returns null if the response is not a valid m3u8 (Cloudflare block, error, or fetch failure).
-  // When segments are PNG-wrapped (nekostream CDN), rewrites the playlist with
-  // #EXT-X-BYTERANGE:N@70 so ExoPlayer sends Range: bytes=70- and skips the header,
-  // then returns a data URI instead of the original URL.
+  // nekostream.site streams are routed through the shirayuki proxy, which strips the
+  // 70-byte PNG wrapper from every segment and serves clean MPEG-TS to libmpv.
   async _resolveHlsVariants(masterUrl, headers) {
+    var isNeko = this._isWrappedCdnUrl(masterUrl);
     try {
       var res = await this.client.get(masterUrl, headers);
       var body = res.body || "";
       if (body.indexOf("#EXTM3U") < 0) return null; // not a valid m3u8 (blocked or error)
       if (body.indexOf("#EXT-X-STREAM-INF") < 0) {
-        // Flat media playlist — check for ad-injected segments or PNG wrapper.
-        var flatNeedsRewrite = this._playlistIsPoisoned(body, masterUrl) ||
-                               await this._firstSegmentIsPng(body, masterUrl, headers);
-        if (flatNeedsRewrite) {
+        // Flat media playlist.
+        if (isNeko) {
+          var flatProxy = this._nekoproxy(masterUrl);
+          return [{ url: flatProxy, label: "Auto" }];
+        }
+        if (this._playlistIsPoisoned(body, masterUrl)) {
           return [{ url: this._rewriteWithByterange(body), label: "Auto" }];
         }
         return []; // use master URL as-is
@@ -724,23 +696,21 @@ class DefaultExtension extends MProvider {
       }
       variants.sort(function(a, b) { return (parseInt(b.label) || 0) - (parseInt(a.label) || 0); });
 
-      // Poisoning lives in the media playlists, not the master, so the master
-      // alone cannot be judged. Sample one variant — injection is applied per
-      // stream, not per rendition, so the top variant speaks for all of them.
-      // One extra GET per server, which matters against the app's 40s isolate
-      // deadline; sampling further would risk the timeout for no more signal.
+      if (isNeko) {
+        // nekostream.site: segments have no file extension (libmpv's extension_picky
+        // check rejects them) and a 70-byte PNG prefix. Route all quality levels
+        // through the shirayuki proxy, which strips the header and serves clean TS.
+        var self = this;
+        return variants.map(function(v) { return { url: self._nekoproxy(v.url), label: v.label }; });
+      }
+
+      // Not nekostream: check the top variant for ad-injected segments.
       if (variants.length > 0) {
         try {
           var probe = await this.client.get(variants[0].url, headers);
           var probeBody = probe.body || "";
-          if (probeBody.indexOf("#EXTM3U") >= 0) {
-            var varNeedsRewrite = this._playlistIsPoisoned(probeBody, variants[0].url);
-            if (!varNeedsRewrite) {
-              varNeedsRewrite = await this._firstSegmentIsPng(probeBody, variants[0].url, headers);
-            }
-            if (varNeedsRewrite) {
-              return [{ url: this._rewriteWithByterange(probeBody), label: variants[0].label }];
-            }
+          if (probeBody.indexOf("#EXTM3U") >= 0 && this._playlistIsPoisoned(probeBody, variants[0].url)) {
+            return [{ url: this._rewriteWithByterange(probeBody), label: variants[0].label }];
           }
         } catch (e) {} // probe failure is not proof of poisoning — let it through
       }
