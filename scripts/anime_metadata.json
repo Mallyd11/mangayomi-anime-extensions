@@ -32,11 +32,11 @@
         "subDub": "Sub+Dub"
     },
     "Playback Diagnostic": {
-        "downloads": "?",
-        "subDub": "?"
+        "downloads": "No",
+        "subDub": "N/a"
     },
     "AniWave": {
-        "downloads": "?",
-        "subDub": "?"
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
     }
 }

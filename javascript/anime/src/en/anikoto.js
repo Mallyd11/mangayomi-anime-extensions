@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.10",
+    "version": "0.4.11",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -662,6 +662,12 @@ class DefaultExtension extends MProvider {
   // 70-byte PNG wrapper from every segment and serves clean MPEG-TS to libmpv.
   async _resolveHlsVariants(masterUrl, headers) {
     var isNeko = this._isWrappedCdnUrl(masterUrl);
+    // Streams whose playlist Referer is megaplay.buzz come from the same CDN
+    // family regardless of hostname rotation — proxy them unconditionally.
+    if (!isNeko) {
+      var ref = (headers["Referer"] || headers["referer"] || "");
+      if (ref.indexOf("megaplay.buzz") >= 0 || ref.indexOf("vidnest.fun") >= 0) isNeko = true;
+    }
     try {
       var res = await this.client.get(masterUrl, headers);
       var body = res.body || "";

@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.4.11",
+            "langs": "en",
+            "lastUpd": 1786478043.188422
+        },
         "AniWave": {
             "name": "AniWave",
             "version": "0.2.3",
@@ -41,12 +47,6 @@
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.4.9",
-            "langs": "en",
-            "lastUpd": 1786470698.145075
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.4.10",
             "langs": "en",
             "lastUpd": 1786470698.145075
         },
