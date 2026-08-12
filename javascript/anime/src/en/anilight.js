@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://anilight.live",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.3.0",
     "pkgPath": "anime/src/en/anilight.js",
     "isManga": false,
     "isNsfw": false,
@@ -66,10 +66,18 @@ const mangayomiSources = [
 // segments at the same tiktokcdn image host, and every provider AniLight
 // lists resolves to this one MegaPlay stream.
 //
-// Hence anilight_pref_proxy: set it to a proxy that strips the header and
-// serves segments under a .ts path, and an "⟨unwrapped⟩" entry is offered
-// ahead of the direct ones.  Verified with proxy/worker.js in this repo —
-// through it ffprobe reports h264 1920x1080 + aac on default flags.
+// Hence the "Fix playback on Windows/Android" toggle: it routes through a
+// proxy that strips the header and serves segments under a .ts path, and an
+// "⟨unwrapped⟩" entry is offered ahead of the direct ones.  The address is
+// pre-filled (DEFAULT_PROXY) so enabling it is one toggle, no typing.
+// Verified with proxy/worker.js in this repo — through it ffprobe reports
+// h264 1920x1080 + aac on default flags.
+//
+// Neither trick that avoids a proxy works, both measured: a Range header
+// skipping the 252-byte wrapper is never applied to segment requests (ffmpeg
+// owns those), and appending a .ts query to segment URLs only moves the error
+// on to "detected format png_pipe".  The segment URLs live in the provider's
+// playlist body, so nothing an extension returns can reach them.
 // Byte-level segment checks cannot catch any of this: the bytes are valid
 // MPEG-TS once the 70-byte header is gone, so a naive probe reports success
 // on a stream the app cannot play.  Always ffprobe the URL actually returned.
@@ -103,6 +111,16 @@ var SORTS = [
   ["Most Favourited", "FAVOURITES_DESC"],
 ];
 
+// Pre-filled proxy address, so switching this on is one toggle per machine
+// instead of a URL anyone has to be told.
+//
+// NOTE: localhost means *that* PC — this is not a shared address.  Every
+// machine needs proxy/proxy.js running locally (Node + a Startup shortcut).
+// To cover several machines, and phones, from one place, deploy
+// proxy/worker.js and put its https URL here instead; the toggle then needs
+// no per-machine setup at all.
+var DEFAULT_PROXY = "http://localhost:8765";
+
 class DefaultExtension extends MProvider {
   constructor() {
     super();
@@ -134,11 +152,18 @@ class DefaultExtension extends MProvider {
     }
   }
 
-  // Base URL of an unwrapping proxy, or "" when the user has not set one.
-  // Anything that is not an http(s) origin is ignored rather than pasted into
+  // Base URL of the unwrapping proxy, or "" when it is switched off.
+  //
+  // The URL is pre-filled so that turning this on is a single toggle on every
+  // machine — nobody has to know or type the address.  The box stays editable
+  // for anyone pointing at a deployed worker instead of a local proxy, and
+  // anything that is not an http(s) origin is ignored rather than pasted into
   // a stream URL.
   proxyBase() {
-    var raw = String(this.getPreference("anilight_pref_proxy") || "").trim();
+    if (this.getPreference("anilight_pref_proxy_enabled") !== true) return "";
+    var raw = String(this.getPreference("anilight_pref_proxy_url") || "").trim();
+    // Empty box → fall back to the default rather than silently doing nothing.
+    if (!raw) raw = DEFAULT_PROXY;
     if (!/^https?:\/\/[^/\s]+/.test(raw)) return "";
     return raw.replace(/\/+$/, "");
   }
@@ -664,13 +689,21 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "anilight_pref_proxy",
+        key: "anilight_pref_proxy_enabled",
+        checkBoxPreference: {
+          title: "Fix playback on Windows/Android",
+          summary: "Turn on if episodes skip instantly or refuse to start. Not needed on iOS. Requires the proxy to be reachable at the address below.",
+          value: false,
+        },
+      },
+      {
+        key: "anilight_pref_proxy_url",
         editTextPreference: {
-          title: "Unwrapping proxy URL",
-          summary: "Needed for playback on Windows/Android — leave empty on iOS. Base URL only, e.g. http://localhost:8765",
-          value: "",
-          dialogTitle: "Unwrapping proxy URL",
-          dialogMessage: "AniLight's CDN disguises video segments as PNG images, which Windows/Android cannot decode (iOS plays them fine). Point this at a proxy that strips the header and an '⟨unwrapped⟩' entry appears first in the server list. Leave empty to disable.",
+          title: "Proxy address (advanced)",
+          summary: "Already filled in — only change this if you run the proxy somewhere other than this PC.",
+          value: DEFAULT_PROXY,
+          dialogTitle: "Proxy address",
+          dialogMessage: "AniLight's CDN disguises video segments as PNG images, which Windows/Android cannot decode (iOS plays them fine). The default points at a proxy running on this PC. Replace it with a deployed worker's https URL to cover several devices from one place.",
         },
       },
       {
