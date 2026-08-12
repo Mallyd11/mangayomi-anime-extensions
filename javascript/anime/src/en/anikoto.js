@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.11",
+    "version": "0.4.13",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -375,14 +375,6 @@ class DefaultExtension extends MProvider {
     return false;
   }
 
-  // Wrap a nekostream.site variant URL through the shirayuki proxy.
-  // The proxy strips the 70-byte PNG header from every segment before forwarding
-  // to libmpv, and passes the megaplay.buzz Referer when fetching from nekostream.
-  _nekoproxy(variantUrl) {
-    return "http://shirayuki.eastasia.cloudapp.azure.com:1818/api/v2/hianime/proxy" +
-           "/m3u8?url=" + encodeURIComponent(variantUrl) +
-           "&referer=" + encodeURIComponent("https://megaplay.buzz/");
-  }
 
   // Convert a WebVTT timestamp to SRT format.
   // lostproject.club VTTs use MM:SS.mmm (no hours); libmpv rejects this two-part form.
@@ -680,8 +672,7 @@ class DefaultExtension extends MProvider {
           if (masterLast && masterLast.indexOf(".") === -1) isNeko = true;
         }
         if (isNeko) {
-          var flatProxy = this._nekoproxy(masterUrl);
-          return [{ url: flatProxy, label: "Auto" }];
+          return [{ url: masterUrl, label: "Auto" }];
         }
         if (this._playlistIsPoisoned(body, masterUrl)) {
           return [{ url: this._rewriteWithByterange(body), label: "Auto" }];
@@ -716,11 +707,9 @@ class DefaultExtension extends MProvider {
       }
 
       if (isNeko) {
-        // nekostream.site: segments have no file extension (libmpv's extension_picky
-        // check rejects them) and a 70-byte PNG prefix. Route all quality levels
-        // through the shirayuki proxy, which strips the header and serves clean TS.
-        var self = this;
-        return variants.map(function(v) { return { url: self._nekoproxy(v.url), label: v.label }; });
+        // nekostream-family CDN: extension-less segment URLs + PNG-wrapped TS.
+        // Return the variants directly — iOS plays fine; Windows skips (known limitation).
+        return variants;
       }
 
       // Not nekostream: check the top variant for ad-injected segments.

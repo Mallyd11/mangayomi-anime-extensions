@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.9",
+    "version": "0.4.11",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -33,10 +33,6 @@ class DefaultExtension extends MProvider {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
   }
 
-  // shirayuki's HLS proxy — strips the PNG wrapper off segments (see wrapProxyStream).
-  get tsProxy() {
-    return "http://shirayuki.eastasia.cloudapp.azure.com:1818/api/v2/hianime/proxy";
-  }
 
   get headers() {
     return {
@@ -476,59 +472,12 @@ class DefaultExtension extends MProvider {
     return srt || vtt;
   }
 
-  // Most HiAnime CDNs (vivibebe.site, megap.kotocdn.site, and the ibyteimg hosts
-  // their playlists point at) do not serve plain MPEG-TS: every segment is a
-  // 70-byte PNG header (1x1 image) with the real TS bytes appended after it.
-  // Apple's AVPlayer scans forward for the 0x47 sync byte and plays these anyway,
-  // which is why iOS works, but libmpv on Windows treats each segment as an
-  // undecodable image of zero duration and races to the end of the episode.
-  //
-  // The extension hands the player a playlist URL and the player fetches the
-  // segments itself, so we cannot strip the header in here. shirayuki exposes a
-  // proxy that does it for us — /proxy/m3u8 rewrites a playlist so its segments
-  // point at /proxy/ts, which serves the same bytes with the PNG header removed
-  // and a correct video/MP2T content type.
-  //
-  // The proxy costs real throughput (measured ~0.9 MB/s vs ~15 MB/s direct), so
-  // these are offered as extra entries alongside the direct ones rather than as
-  // a replacement — see the "Stream routing" preference for the ordering.
-  wrapProxyStream(stream) {
-    var proxyUrl = this.tsProxy + "/m3u8?url=" + encodeURIComponent(stream.url);
-    // The CDN backing megaplay/vidnest requires Referer: megaplay.buzz.
-    // Check the original source URL so this survives CDN hostname rotation.
-    var orig = stream.originalUrl || "";
-    if ((stream.url || "").indexOf("nekostream.site") >= 0 ||
-        orig.indexOf("megaplay.buzz") >= 0 ||
-        orig.indexOf("vidnest.fun") >= 0) {
-      proxyUrl += "&referer=" + encodeURIComponent("https://megaplay.buzz/");
-    }
-    return {
-      url: proxyUrl,
-      originalUrl: stream.originalUrl || stream.url,
-      quality: stream.quality + " ⟨unwrapped⟩",
-      // The proxy fetches upstream itself, so no Referer/Origin is needed here.
-      headers: { "User-Agent": this.ua },
-      subtitles: stream.subtitles || [],
-    };
-  }
-
-  // Whether a stream needs the proxy.
-  //   vivibebe.site        PNG-wrapped; proxy strips the header.
-  //   nekostream.site      PNG-wrapped + extension-less segment URLs.
-  //   megaplay/vidnest     CDN hostname rotates; detect by originalUrl instead.
-  //   vibevibe.workers.dev already raw MPEG-TS — leave alone.
-  canUnwrap(stream) {
-    var url = stream.url || "";
-    if (url.indexOf("vivibebe.site") >= 0) return true;
-    if (url.indexOf("nekostream.site") >= 0) return true;
-    if (!this.servesRawTs(url)) {
-      var orig = stream.originalUrl || "";
-      if (orig.indexOf("megaplay.buzz") >= 0 || orig.indexOf("vidnest.fun") >= 0) return true;
-    }
-    return false;
-  }
-
-  // This CDN serves plain MPEG-TS that libmpv can decode without intervention.
+  // vibevibe.workers.dev serves plain MPEG-TS that libmpv can decode directly.
+  // All other HiAnime CDNs (vivibebe.site, nekostream-family, etc.) prepend a
+  // 70-byte PNG header to every segment; iOS AVPlayer scans for the 0x47 sync
+  // byte and plays through it, but libmpv on Windows fails format detection and
+  // races to #EXT-X-ENDLIST.  Those streams are only offered when no raw-TS
+  // source is available — the player falls back to them automatically.
   servesRawTs(url) {
     return (url || "").indexOf("vibevibe.workers.dev") >= 0;
   }
@@ -927,30 +876,13 @@ class DefaultExtension extends MProvider {
     ]);
     var direct = pref === "dub" ? results[1].concat(results[0]) : results[0].concat(results[1]);
 
-    // Split by what libmpv can actually decode: CDNs already serving raw
-    // MPEG-TS, versus PNG-wrapped ones that need the unwrap proxy.
-    var raw = [], wrapped = [], unwrapped = [];
+    // Prefer vibevibe.workers.dev (raw TS, decodes correctly on all platforms).
+    // Fall back to direct streams when no raw-TS source is available for the episode.
+    var raw = [];
     for (var i = 0; i < direct.length; i++) {
       if (this.servesRawTs(direct[i].url)) raw.push(direct[i]);
-      else wrapped.push(direct[i]);
-      if (this.canUnwrap(direct[i])) unwrapped.push(this.wrapProxyStream(direct[i]));
     }
-    var playable = raw.concat(unwrapped);
-
-    var routing = "playable";
-    try { routing = new SharedPreferences().get("hianime_pref_routing") || "playable"; } catch (e) {}
-
-    var ordered;
-    if (routing === "direct") {
-      ordered = direct;
-    } else if (routing === "all") {
-      ordered = playable.concat(wrapped);
-    } else {
-      // Default. Offer *only* streams that decode, so the player cannot land on
-      // a PNG-wrapped one and race through the episode. Falls back to the
-      // undecodable ones when an episode has no other source at all.
-      ordered = playable.length ? playable : direct;
-    }
+    var ordered = raw.length ? raw : direct;
     return this.normalizeSubtitles(ordered);
   }
 
