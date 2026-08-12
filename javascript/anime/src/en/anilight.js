@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://anilight.live",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.0",
+    "version": "0.4.0",
     "pkgPath": "anime/src/en/anilight.js",
     "isManga": false,
     "isNsfw": false,
@@ -65,6 +65,19 @@ const mangayomiSources = [
 // (megap.mikora.top / shiora.top / shiora.site / akirax.buzz) point their
 // segments at the same tiktokcdn image host, and every provider AniLight
 // lists resolves to this one MegaPlay stream.
+//
+// AnimeGG (providerId=ryu on /sources) is the way out, and it needs no proxy:
+// progressive MP4s, one URL per quality, so there is no playlist, no segment
+// extension check and no PNG wrapper.  Verified h264 1080p + aac on default
+// flags.  It only serves with an animegg.org Referer (anilight.live gets a
+// 500), and coverage is partial - plenty of episodes 404 - so it is offered
+// first and MegaPlay stays behind it.
+//
+// /sources is keyed by the numeric anime id, NOT the slug; passing the slug
+// 404s, which is why this endpoint looked like dead code at first.  The other
+// providers were measured and are all unusable: light (vivibebe) is
+// PNG-wrapped at extension-less URLs, near (hls.anidb.app) disguises its
+// segments as .xls, raye (uwucdn) 403s on hotlink.
 //
 // Hence the "Fix playback on Windows/Android" toggle: it routes through a
 // proxy that strips the header and serves segments under a .ts path, and an
@@ -338,7 +351,10 @@ class DefaultExtension extends MProvider {
       if (ep.isFiller) label += " (Filler)";
       chapters.push({
         name: label,
-        url: this.source.baseUrl + "/watch/" + slug + "?ep=" + ep.number,
+        // The numeric id rides along because /sources (AnimeGG) keys off it and
+        // will not accept the slug — carrying it here saves a lookup per play.
+        url: this.source.baseUrl + "/watch/" + slug + "?ep=" + ep.number +
+             (info.id ? "&id=" + info.id : ""),
       });
     }
     // The API returns episode 1 first; Mangayomi lists newest at the top.
@@ -580,14 +596,63 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
+  // AnimeGG (the API's "ryu" provider) hands back progressive MP4s, one URL
+  // per quality.  This is the only backend AniLight exposes that Windows can
+  // play untouched: no playlist, so no segment-extension check and no PNG
+  // wrapper.  Coverage is partial — plenty of episodes 404 here — so it is
+  // offered first and MegaPlay stays behind it.
+  //
+  // The MP4s only serve with an animegg.org Referer; anilight.live gets a 500.
+  async resolveAnimeGG(animeId, epNum, type, audioLabel) {
+    var streams = [];
+    if (!animeId || epNum === null || epNum === undefined) return streams;
+    try {
+      var data = await this.getJson(
+        "/sources?id=" + encodeURIComponent(animeId) +
+        "&epNum=" + encodeURIComponent(epNum) +
+        "&type=" + type + "&providerId=ryu"
+      );
+      var list = (data && Array.isArray(data.sources)) ? data.sources : [];
+      var hdrs = {
+        "User-Agent": this.ua,
+        "Referer": "https://www.animegg.org/",
+        "Origin": "https://www.animegg.org",
+      };
+      for (var i = 0; i < list.length; i++) {
+        var s = list[i];
+        if (!s || !s.url || !/^https?:\/\//.test(s.url)) continue;
+        streams.push({
+          url: s.url,
+          originalUrl: s.url,
+          quality: "AnimeGG " + (s.quality || "MP4") + " [" + audioLabel + "]",
+          headers: hdrs,
+          subtitles: [],
+          _h: parseInt(s.quality, 10) || 0,
+        });
+      }
+      // Highest quality first within the group.
+      streams.sort(function (a, b) { return b._h - a._h; });
+    } catch (e) {}
+    return streams;
+  }
+
   async getVideoList(url) {
     var slug = this.slugFrom(url);
     var epM = String(url || "").match(/[?&]ep=([0-9.]+)/);
     var epNum = epM ? epM[1] : null;
+    // getDetail puts the numeric id in the link; older bookmarks predate that,
+    // so fall back to looking it up.
+    var idM = String(url || "").match(/[?&]id=(\d+)/);
+    var animeId = idM ? idM[1] : null;
 
     var watch = await this.getJson("/watch/" + slug);
     var eps = (watch && Array.isArray(watch.episodes)) ? watch.episodes : [];
     if (eps.length === 0) return [];
+    if (!animeId) animeId = watch.id || null;
+    if (!animeId) {
+      var info = await this.getJson("/anime/" + slug);
+      animeId = (info && info.id) || null;
+    }
 
     var episode = null;
     for (var i = 0; i < eps.length; i++) {
@@ -596,31 +661,50 @@ class DefaultExtension extends MProvider {
     if (!episode) episode = eps[0];
 
     var embeds = episode.embed_url || {};
-    var jobs = [];
-    if (embeds.sub) jobs.push({ url: embeds.sub, label: "Sub" });
-    if (embeds.dub) jobs.push({ url: embeds.dub, label: "Dub" });
-    if (jobs.length === 0) return [];
-
     var self = this;
+    var epKey = episode.number;
+
+    // AnimeGG and MegaPlay are independent lookups — run them together.
+    var jobs = [];
+    jobs.push({ kind: "gg", type: "sub", label: "Sub" });
+    jobs.push({ kind: "gg", type: "dub", label: "Dub" });
+    if (embeds.sub) jobs.push({ kind: "mp", url: embeds.sub, label: "Sub" });
+    if (embeds.dub) jobs.push({ kind: "mp", url: embeds.dub, label: "Dub" });
+
     var groups = await Promise.all(jobs.map(function (j) {
-      return self.resolveMegaplay(j.url, j.label).catch(function () { return []; });
+      var p = j.kind === "gg"
+        ? self.resolveAnimeGG(animeId, epKey, j.type, j.label)
+        : self.resolveMegaplay(j.url, j.label);
+      return p.catch(function () { return []; });
     }));
 
     var videos = [];
     for (var g = 0; g < groups.length; g++) {
       for (var k = 0; k < groups[g].length; k++) videos.push(groups[g][k]);
     }
+    if (videos.length === 0) return [];
 
     // Mangayomi plays the first entry and takes auto-play subtitles from it,
-    // so the preferred audio track has to lead.
+    // so the preferred audio track has to lead.  Within that, AnimeGG goes
+    // first: it is the only source that plays on Windows without a proxy.
+    // MegaPlay carries the soft subtitles, so anyone who wants those (or a
+    // higher quality than AnimeGG has) picks it from the list.
     var prefType = this.getPreference("anilight_pref_type") || "sub";
     var wantDub = prefType === "dub";
+    var rank = function (v) {
+      if (v.quality.indexOf("AnimeGG") === 0) return 0;
+      if (v.quality.indexOf("⟨unwrapped⟩") >= 0) return 1;
+      return 2;
+    };
     videos.sort(function (a, b) {
       var aDub = a.quality.indexOf("[Dub]") >= 0;
       var bDub = b.quality.indexOf("[Dub]") >= 0;
       if (aDub !== bDub) return (aDub === wantDub) ? -1 : 1;
-      return 0;   // hlsVariants already ordered each group high→low
+      var r = rank(a) - rank(b);
+      if (r !== 0) return r;
+      return 0;   // each group is already ordered high→low
     });
+    videos.forEach(function (v) { delete v._h; });
     return videos;
   }
 
