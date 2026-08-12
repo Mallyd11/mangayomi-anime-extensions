@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://anilight.live",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.0",
+    "version": "0.5.0",
     "pkgPath": "anime/src/en/anilight.js",
     "isManga": false,
     "isNsfw": false,
@@ -79,6 +79,20 @@ const mangayomiSources = [
 // PNG-wrapped at extension-less URLs, near (hls.anidb.app) disguises its
 // segments as .xls, raye (uwucdn) 403s on hotlink.
 //
+// MegaPlay works on Windows too, and needs no byte rewriting at all.  The
+// PNG wrapper only exists on the megap.* hosts reached via the embed page;
+// the same content through /sources?providerId=misa comes back as clean
+// MPEG-TS.  Its segments are merely *named* .jpg, which is the only reason
+// libmpv refuses them.  Same for misora once the site's own host rewrite is
+// applied (bd.24stream.xyz is dead, bd.aniwatchtv.site answers).
+//
+// So those go through the proxy in redirect mode: the playlist is rewritten
+// so segment URLs end in .ts and each one 302s straight back to the CDN.  No
+// video passes through the proxy - a few hundred bytes per episode instead of
+// gigabytes - and it covers the series AnimeGG lacks.  These entries must
+// carry the Referer themselves, because after the 302 the player is talking
+// to the CDN directly.
+//
 // Hence the "Fix playback on Windows/Android" toggle: it routes through a
 // proxy that strips the header and serves segments under a .ts path, and an
 // "⟨unwrapped⟩" entry is offered ahead of the direct ones.  The address is
@@ -133,6 +147,24 @@ var SORTS = [
 // proxy/worker.js and put its https URL here instead; the toggle then needs
 // no per-machine setup at all.
 var DEFAULT_PROXY = "http://localhost:8765";
+
+// The API hands out hostnames that are frequently dead (Cloudflare 522) and
+// only answer under a replacement name.  The site ships the same mapping in
+// its own bundle and applies it before playing, so this is not a workaround
+// so much as the missing half of the response.
+var HOST_REWRITES = [
+  ["bd.24stream.xyz", "bd.aniwatchtv.site"],
+  ["vibeplayer.site", "vivibebe.site"],
+];
+
+// Providers reachable through /sources that serve *clean* MPEG-TS.  Their
+// segments are misnamed (.jpg), which is the only reason libmpv rejects them,
+// so they need nothing more than a URL that ends in .ts — the proxy's redirect
+// mode, which passes no video bytes at all.
+var TS_PROVIDERS = [
+  { id: "misa",   name: "MegaPlay", referer: "https://megaplay.buzz/" },
+  { id: "misora", name: "Misora",   referer: null },   // referer = its own origin
+];
 
 class DefaultExtension extends MProvider {
   constructor() {
@@ -440,8 +472,12 @@ class DefaultExtension extends MProvider {
   async inlineSubtitles(tracks, referer) {
     if (!Array.isArray(tracks)) return [];
     var self = this;
+    // The two stream endpoints disagree on the field name: /stream/getSources
+    // calls it `file`, /sources calls it `url`. Accept either.
     var wanted = tracks.filter(function (t) {
-      return t && t.file && t.kind !== "thumbnails";
+      return t && (t.file || t.url) && t.kind !== "thumbnails";
+    }).map(function (t) {
+      return { file: t.file || t.url, label: t.label, default: t.default, kind: t.kind };
     });
     var rank = function (t) {
       if (t.default === true) return 0;
@@ -636,6 +672,70 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
+  applyHostRewrites(u) {
+    var out = String(u || "");
+    for (var i = 0; i < HOST_REWRITES.length; i++) {
+      out = out.split(HOST_REWRITES[i][0]).join(HOST_REWRITES[i][1]);
+    }
+    return out;
+  }
+
+  // Providers whose segments are already valid MPEG-TS and are only refused
+  // because they are named .jpg.  Nothing needs unwrapping, so these go out
+  // through the proxy's redirect mode when it is on: the playlist is rewritten
+  // so segment URLs end in .ts, and each one 302s straight back to the CDN.
+  // Without the proxy they are still listed — iOS plays them as-is.
+  async resolveTsProvider(prov, animeId, epNum, type, audioLabel) {
+    var streams = [];
+    if (!animeId || epNum === null || epNum === undefined) return streams;
+    try {
+      var data = await this.getJson(
+        "/sources?id=" + encodeURIComponent(animeId) +
+        "&epNum=" + encodeURIComponent(epNum) +
+        "&type=" + type + "&providerId=" + prov.id
+      );
+      var list = (data && Array.isArray(data.sources)) ? data.sources : [];
+      if (list.length === 0) return streams;
+
+      var master = this.applyHostRewrites(list[0].url || "");
+      if (!/^https?:\/\//.test(master)) return streams;
+
+      var origin = master.match(/^(https?:\/\/[^/]+)/)[1];
+      var referer = prov.referer || (origin + "/");
+      var hdrs = { "User-Agent": this.ua, "Referer": referer, "Origin": origin.replace(/\/$/, "") };
+
+      var subtitles = await this.inlineSubtitles(data.tracks, referer);
+      var variants = await this.hlsVariants(master, hdrs);
+      if (variants === null) return streams;   // host down — skip quietly
+      var playlists = variants.length > 0 ? variants : [{ url: master, label: "Auto" }];
+
+      var proxy = this.proxyBase();
+      for (var p = 0; p < playlists.length && proxy; p++) {
+        streams.push({
+          url: proxy + "/m3u8?url=" + encodeURIComponent(playlists[p].url) +
+               "&referer=" + encodeURIComponent(referer) + "&mode=redirect",
+          originalUrl: playlists[p].url,
+          quality: prov.name + " " + playlists[p].label + " [" + audioLabel + "] ⟨fixed⟩",
+          // Redirect mode means the player talks to the CDN itself once the
+          // 302 lands, so it has to carry the Referer — unlike the unwrapping
+          // path, where the proxy makes the upstream request.
+          headers: hdrs,
+          subtitles: subtitles,
+        });
+      }
+      for (var v = 0; v < playlists.length; v++) {
+        streams.push({
+          url: playlists[v].url,
+          originalUrl: master,
+          quality: prov.name + " " + playlists[v].label + " [" + audioLabel + "]",
+          headers: hdrs,
+          subtitles: subtitles,
+        });
+      }
+    } catch (e) {}
+    return streams;
+  }
+
   async getVideoList(url) {
     var slug = this.slugFrom(url);
     var epM = String(url || "").match(/[?&]ep=([0-9.]+)/);
@@ -664,17 +764,25 @@ class DefaultExtension extends MProvider {
     var self = this;
     var epKey = episode.number;
 
-    // AnimeGG and MegaPlay are independent lookups — run them together.
+    // Every backend is an independent lookup — run them together.
     var jobs = [];
     jobs.push({ kind: "gg", type: "sub", label: "Sub" });
     jobs.push({ kind: "gg", type: "dub", label: "Dub" });
+    for (var t = 0; t < TS_PROVIDERS.length; t++) {
+      jobs.push({ kind: "ts", prov: TS_PROVIDERS[t], type: "sub", label: "Sub" });
+      jobs.push({ kind: "ts", prov: TS_PROVIDERS[t], type: "dub", label: "Dub" });
+    }
+    // The embed path reaches MegaPlay's PNG-wrapped hosts; kept last because
+    // it is the only one that needs bytes rewritten, but it is also the one
+    // that always exists.
     if (embeds.sub) jobs.push({ kind: "mp", url: embeds.sub, label: "Sub" });
     if (embeds.dub) jobs.push({ kind: "mp", url: embeds.dub, label: "Dub" });
 
     var groups = await Promise.all(jobs.map(function (j) {
-      var p = j.kind === "gg"
-        ? self.resolveAnimeGG(animeId, epKey, j.type, j.label)
-        : self.resolveMegaplay(j.url, j.label);
+      var p;
+      if (j.kind === "gg") p = self.resolveAnimeGG(animeId, epKey, j.type, j.label);
+      else if (j.kind === "ts") p = self.resolveTsProvider(j.prov, animeId, epKey, j.type, j.label);
+      else p = self.resolveMegaplay(j.url, j.label);
       return p.catch(function () { return []; });
     }));
 
@@ -691,10 +799,14 @@ class DefaultExtension extends MProvider {
     // higher quality than AnimeGG has) picks it from the list.
     var prefType = this.getPreference("anilight_pref_type") || "sub";
     var wantDub = prefType === "dub";
+    // Playable-on-Windows first: AnimeGG needs nothing, the ⟨fixed⟩ entries
+    // need only a redirect, ⟨unwrapped⟩ needs every byte proxied, and the bare
+    // entries are iOS-only.
     var rank = function (v) {
       if (v.quality.indexOf("AnimeGG") === 0) return 0;
-      if (v.quality.indexOf("⟨unwrapped⟩") >= 0) return 1;
-      return 2;
+      if (v.quality.indexOf("⟨fixed⟩") >= 0) return 1;
+      if (v.quality.indexOf("⟨unwrapped⟩") >= 0) return 2;
+      return 3;
     };
     videos.sort(function (a, b) {
       var aDub = a.quality.indexOf("[Dub]") >= 0;
