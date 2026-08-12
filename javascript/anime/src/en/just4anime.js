@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://just4anime.online",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/just4anime.js",
     "isManga": false,
     "isNsfw": false,
@@ -426,6 +426,7 @@ class DefaultExtension extends MProvider {
           subtitles: subtitles,
         });
       }
+      videos = this.orderByPreferredQuality(videos);
     } else {
       videos.push({
         url: resolved.master,
@@ -436,6 +437,51 @@ class DefaultExtension extends MProvider {
       });
     }
     return videos;
+  }
+
+  // Mangayomi auto-plays the FIRST entry, so which one leads decides startup time.
+  // premilkyway caps around 440 KB/s regardless of rendition, so 1080p (2.2-3.8 MB
+  // per 10s segment) has far less headroom over realtime than 720p (1.0-2.5 MB).
+  // That predicts 1080p should start slower — but measured A/B does NOT bear it out:
+  // across 3 alternating trials on two episodes, 720p was ~1s faster on one and
+  // slower (plus one timeout) on the other. Startup is dominated by per-episode CDN
+  // variance, not by rendition. So the default stays highest-first and this exists
+  // only to let a user who hits slow starts pin a lower rung. Every quality remains
+  // in the list either way; this just picks which one leads.
+  orderByPreferredQuality(videos) {
+    // Must match the declared default of j4a_pref_quality — an unset preference
+    // reads back undefined, so a mismatched fallback silently changes behaviour.
+    var pref = "max";
+    try { pref = new SharedPreferences().get("j4a_pref_quality") || "max"; } catch (e) {}
+    if (pref === "max") return videos; // already highest-first
+
+    var target = parseInt(pref, 10);
+    function height(v) {
+      return parseInt((v.quality.match(/\[(\d+)p\]/) || [0, 0])[1], 10) || 0;
+    }
+    // Preferred height first; otherwise the closest one at or below it, then the rest.
+    return videos.slice().sort(function (a, b) {
+      var ha = height(a), hb = height(b);
+      function rank(h) {
+        if (h === target) return 0;
+        return h < target ? 1 : 2; // prefer stepping down over jumping up
+      }
+      var ra = rank(ha), rb = rank(hb);
+      if (ra !== rb) return ra - rb;
+      return ra === 2 ? ha - hb : hb - ha;
+    });
+  }
+
+  // Walk the provider list until one yields streams. mai and sai return identical
+  // embeds, so sai is only ever a retry for a transient failure on mai.
+  async resolveTrack(id, epNum, type, label, providers) {
+    for (var p = 0; p < providers.length; p++) {
+      try {
+        var vids = await this.streamsFor(id, epNum, type, providers[p], label);
+        if (vids.length) return vids;
+      } catch (e) {}
+    }
+    return [];
   }
 
   async getVideoList(url) {
@@ -452,20 +498,16 @@ class DefaultExtension extends MProvider {
     //  - mai / sai  → StreamHG, clean .m3u8 with absolute .ts segments
     var providers = ["mai", "sai"];
 
-    var subVideos = [];
-    var dubVideos = [];
-
-    for (var p = 0; p < providers.length; p++) {
-      if (!subVideos.length && audioPref !== "dub_only") {
-        subVideos = await this.streamsFor(id, epNum, "sub", providers[p], "SUB");
-      }
-      if (!dubVideos.length && audioPref !== "sub_only") {
-        dubVideos = await this.streamsFor(id, epNum, "dub", providers[p], "DUB");
-      }
-      if (subVideos.length && dubVideos.length) break;
-      if (audioPref === "sub_only" && subVideos.length) break;
-      if (audioPref === "dub_only" && dubVideos.length) break;
-    }
+    // Each track costs three sequential round-trips (sources API → embed → master)
+    // and the two tracks are independent, so resolve them concurrently — done
+    // serially this is the difference between ~7s and ~3.5s before playback starts.
+    var jobs = [
+      audioPref === "dub_only" ? [] : this.resolveTrack(id, epNum, "sub", "SUB", providers),
+      audioPref === "sub_only" ? [] : this.resolveTrack(id, epNum, "dub", "DUB", providers),
+    ];
+    var results = await Promise.all(jobs);
+    var subVideos = results[0] || [];
+    var dubVideos = results[1] || [];
 
     if (audioPref === "dub" || audioPref === "dub_only") {
       return dubVideos.concat(subVideos);
@@ -539,6 +581,16 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub first, Dub fallback", "Dub first, Sub fallback", "Sub only", "Dub only"],
           entryValues: ["sub", "dub", "sub_only", "dub_only"],
+        },
+      },
+      {
+        key: "j4a_pref_quality",
+        listPreference: {
+          title: "Preferred quality",
+          summary: "Which quality plays first. Startup speed varies more by episode than by quality, so try a lower rung if a particular episode is slow to start. All qualities stay selectable in the player.",
+          valueIndex: 0,
+          entries: ["Highest available", "720p", "480p"],
+          entryValues: ["max", "720", "480"],
         },
       },
       {
