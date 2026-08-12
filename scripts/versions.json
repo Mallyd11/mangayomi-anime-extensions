@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "Just4Anime": {
+            "name": "Just4Anime",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1786556679.901106
+        },
         "AniNeko": {
             "name": "AniNeko",
             "version": "0.1.0",
