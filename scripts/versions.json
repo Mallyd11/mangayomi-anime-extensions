@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "AniLight": {
+            "name": "AniLight",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1786558692.057787
+        },
         "Just4Anime": {
             "name": "Just4Anime",
             "version": "0.1.1",

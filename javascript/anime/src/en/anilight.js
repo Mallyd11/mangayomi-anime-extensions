@@ -1,0 +1,639 @@
+const mangayomiSources = [
+  {
+    "name": "AniLight",
+    "id": 671614911,
+    "lang": "en",
+    "baseUrl": "https://anilight.live",
+    "apiUrl": "https://api.anilight.live/api",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://anilight.live",
+    "typeSource": "single",
+    "itemType": 1,
+    "version": "0.1.0",
+    "pkgPath": "anime/src/en/anilight.js",
+    "isManga": false,
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/anilight.js",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": "",
+  },
+];
+
+// AniLight is a React SPA in front of a fully open JSON API at
+// api.anilight.live/api — no auth, no vrf/token handshake, no Cloudflare
+// challenge.  The site's own Clerk login only gates /user/* (bookmarks,
+// watch progress), none of which this extension needs.
+//
+// Endpoints used:
+//   /filter?page=&sort=&search=&genres=&format=&status=&season=&seasonYear=
+//                              → { pageInfo: { hasNextPage }, media: [...] }
+//   /search?q=                 → flat array (no paging; /filter is used instead)
+//   /anime/{slug}              → AniList-sourced metadata
+//   /watch/{slug}              → { episodes: [ { number, title, embed_url } ] }
+//
+// Metadata is AniList-backed, so titles/covers/genres match AniList exactly.
+//
+// Streams: /watch/{slug} hands back a MegaPlay embed per episode, e.g.
+//   https://megaplay.buzz/stream/s-2/494179/sub
+// The number in that path is NOT the id the stream API wants — the embed page
+// carries the real one as data-id="177667", and only
+//   /stream/getSources?id=177667
+// returns the playlist.  Skipping the embed-page fetch 404s every time.
+// Only the s-2 server responds; s-1/s-3/s-4 return an error or an empty player.
+//
+// Subtitle VTTs live on lostproject.club and 403 without a megaplay.buzz
+// Referer, so they are downloaded here and inlined as SRT text rather than
+// handed to the player as URLs (the player sends no Referer and would 403).
+//
+// Known playback limitation (shared with the other MegaPlay-backed sources in
+// this repo): segments are MPEG-TS hidden behind a 70-byte PNG header served
+// from an image CDN.  iOS AVPlayer scans for the 0x47 sync byte and plays
+// through it; libmpv on Windows/Android fails format detection and can skip
+// straight through an episode.  There is no second CDN to fall back to here —
+// every provider AniLight lists resolves to this same MegaPlay stream.
+
+var GENRES = [
+  "Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy", "Horror",
+  "Mahou Shoujo", "Mecha", "Music", "Mystery", "Psychological", "Romance",
+  "Sci-Fi", "Slice of Life", "Sports", "Supernatural", "Thriller",
+];
+
+var FORMATS = [
+  ["TV Series", "TV"], ["TV Short", "TV_SHORT"], ["Movie", "MOVIE"],
+  ["Special", "SPECIAL"], ["OVA", "OVA"], ["ONA", "ONA"], ["Music", "MUSIC"],
+];
+
+var STATUSES = [
+  ["Airing", "RELEASING"], ["Finished", "FINISHED"],
+  ["Upcoming", "NOT_YET_RELEASED"], ["Cancelled", "CANCELLED"],
+  ["On Hiatus", "HIATUS"],
+];
+
+var SEASONS = [
+  ["Winter", "WINTER"], ["Spring", "SPRING"],
+  ["Summer", "SUMMER"], ["Fall", "FALL"],
+];
+
+var SORTS = [
+  ["Most Popular", "POPULARITY_DESC"], ["Trending", "TRENDING_DESC"],
+  ["Highest Rated", "SCORE_DESC"], ["Newest First", "START_DATE_DESC"],
+  ["Oldest First", "START_DATE"], ["Most Episodes", "EPISODES_DESC"],
+  ["Most Favourited", "FAVOURITES_DESC"],
+];
+
+class DefaultExtension extends MProvider {
+  constructor() {
+    super();
+    this.client = new Client();
+  }
+
+  get ua() {
+    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+  }
+
+  get apiUrl() {
+    return this.source.apiUrl || "https://api.anilight.live/api";
+  }
+
+  get apiHeaders() {
+    return {
+      "User-Agent": this.ua,
+      "Accept": "application/json",
+      "Referer": this.source.baseUrl + "/",
+      "Origin": this.source.baseUrl,
+    };
+  }
+
+  getPreference(key) {
+    try {
+      return new SharedPreferences().get(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async getJson(path) {
+    var res = await this.client.get(this.apiUrl + path, this.apiHeaders);
+    try {
+      return JSON.parse((res && res.body) || "");
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // AniList titles come as { romaji, english, native } — honour the user's pick
+  // but never return an empty string.
+  pickTitle(title) {
+    if (!title) return "Unknown";
+    var pref = this.getPreference("anilight_pref_title") || "english";
+    return (
+      title[pref] || title.english || title.romaji || title.native || "Unknown"
+    );
+  }
+
+  cover(item) {
+    var img = item.coverImage || {};
+    return img.extraLarge || img.large || item.bannerImage || "";
+  }
+
+  toEntry(item) {
+    return {
+      name: this.pickTitle(item.title),
+      link: this.source.baseUrl + "/anime/" + item.slug,
+      imageUrl: this.cover(item),
+    };
+  }
+
+  // ── List pages ──────────────────────────────────────────────────────────────
+
+  async filterPage(params, page) {
+    var qs = ["page=" + (page || 1)];
+    for (var i = 0; i < params.length; i++) qs.push(params[i]);
+    var data = await this.getJson("/filter?" + qs.join("&"));
+    if (!data || !Array.isArray(data.media)) {
+      return { list: [], hasNextPage: false };
+    }
+    var self = this;
+    return {
+      list: data.media.map(function (m) { return self.toEntry(m); }),
+      hasNextPage: !!(data.pageInfo && data.pageInfo.hasNextPage),
+    };
+  }
+
+  get supportsLatest() {
+    return true;
+  }
+
+  async getPopular(page) {
+    return await this.filterPage(["sort=POPULARITY_DESC"], page);
+  }
+
+  // /filter has no "recently updated" sort — START_DATE_DESC returns an empty
+  // first page upstream (entries with no start date sort ahead of everything).
+  // The homepage's recentlyAddedEpisodes rail is the real "what just aired"
+  // list; it is a fixed 15 items with no paging.
+  async getLatestUpdates(page) {
+    if ((page || 1) > 1) return { list: [], hasNextPage: false };
+    var data = await this.getJson("/homepage");
+    var recent = (data && Array.isArray(data.recentlyAddedEpisodes))
+      ? data.recentlyAddedEpisodes
+      : [];
+    if (recent.length === 0) {
+      // Fall back to trending so the tab is never blank.
+      return await this.filterPage(["sort=TRENDING_DESC"], 1);
+    }
+    var self = this;
+    var seen = {};
+    var list = [];
+    for (var i = 0; i < recent.length; i++) {
+      var item = recent[i];
+      if (!item || !item.slug || seen[item.slug]) continue;
+      seen[item.slug] = true;
+      list.push(self.toEntry(item));
+    }
+    return { list: list, hasNextPage: false };
+  }
+
+  async search(query, page, filters) {
+    var params = [];
+    if (query) params.push("search=" + encodeURIComponent(query));
+
+    // Filters arrive positionally, in the same order as getFilterList().
+    try {
+      var defs = this.filterDefs();
+      for (var i = 0; i < defs.length; i++) {
+        var f = (filters || [])[i];
+        if (!f) continue;
+        var def = defs[i];
+        if (def.kind === "group") {
+          // Genres go over as one comma-separated `genres=` param.
+          var picked = [];
+          var st = f.state || [];
+          for (var j = 0; j < st.length; j++) {
+            if (st[j] && st[j].state === true && st[j].value) picked.push(st[j].value);
+          }
+          if (picked.length) {
+            params.push(def.param + "=" + encodeURIComponent(picked.join(",")));
+          }
+        } else {
+          var opt = (f.values || [])[f.state || 0];
+          if (opt && opt.value) {
+            params.push(def.param + "=" + encodeURIComponent(opt.value));
+          }
+        }
+      }
+    } catch (e) { /* fall back to a plain title search */ }
+
+    // A bare browse with no query and no filters should still be ordered.
+    if (params.length === 0) params.push("sort=POPULARITY_DESC");
+    return await this.filterPage(params, page);
+  }
+
+  // ── Detail ──────────────────────────────────────────────────────────────────
+
+  slugFrom(url) {
+    var m = String(url || "").match(/\/(?:anime|watch)\/([^/?#]+)/);
+    return m ? m[1] : String(url || "").replace(/^\/+|\/+$/g, "");
+  }
+
+  statusCode(s) {
+    var t = String(s || "").toUpperCase();
+    if (t === "FINISHED") return 1;
+    if (t === "NOT_YET_RELEASED") return 4;
+    if (t === "RELEASING") return 0;
+    return 5;
+  }
+
+  stripHtml(s) {
+    return String(s || "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&quot;/g, '"')
+      .replace(/&#0*39;|&apos;|&rsquo;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .trim();
+  }
+
+  async getDetail(url) {
+    var slug = this.slugFrom(url);
+    // Metadata and the episode list are two separate endpoints; neither
+    // depends on the other, so fetch them together.
+    var pair = await Promise.all([
+      this.getJson("/anime/" + slug),
+      this.getJson("/watch/" + slug),
+    ]);
+    var info = pair[0] || {};
+    var watch = pair[1] || {};
+
+    var chapters = [];
+    var eps = Array.isArray(watch.episodes) ? watch.episodes : [];
+    for (var i = 0; i < eps.length; i++) {
+      var ep = eps[i];
+      if (!ep || ep.number === undefined || ep.number === null) continue;
+      var label = "Episode " + ep.number;
+      // Episodes with no English title come back as "#" (and occasionally as
+      // "Episode N" repeated) — neither is worth appending.
+      var epTitle = this.stripHtml(ep.title || "");
+      if (/^[\s#\-–—.]*$/.test(epTitle)) epTitle = "";
+      if (epTitle && epTitle !== label) label += ": " + epTitle;
+      if (ep.isFiller) label += " (Filler)";
+      chapters.push({
+        name: label,
+        url: this.source.baseUrl + "/watch/" + slug + "?ep=" + ep.number,
+      });
+    }
+    // The API returns episode 1 first; Mangayomi lists newest at the top.
+    chapters.reverse();
+
+    var genre = Array.isArray(info.genres) ? info.genres : [];
+    var studios = "";
+    if (info.studios && Array.isArray(info.studios.nodes) && info.studios.nodes.length) {
+      studios = info.studios.nodes.map(function (n) { return n.name; }).join(", ");
+    }
+
+    var description = this.stripHtml(info.description || "");
+    var extra = [];
+    if (studios) extra.push("Studio: " + studios);
+    if (info.seasonYear) {
+      extra.push("Season: " + ((info.season || "") + " " + info.seasonYear).trim());
+    }
+    if (info.averageScore) extra.push("Score: " + info.averageScore + "%");
+    if (extra.length) description = extra.join("\n") + (description ? "\n\n" + description : "");
+
+    return {
+      name: this.pickTitle(info.title) !== "Unknown"
+        ? this.pickTitle(info.title)
+        : this.slugFrom(url),
+      imageUrl: this.cover(info),
+      description: description,
+      genre: genre,
+      status: this.statusCode(info.status),
+      author: studios,
+      link: this.source.baseUrl + "/anime/" + slug,
+      chapters: chapters,
+    };
+  }
+
+  // ── Streaming ───────────────────────────────────────────────────────────────
+
+  // Convert a WebVTT timestamp to SRT format.
+  // These VTTs use MM:SS.mmm (no hours); libmpv rejects that two-part form.
+  _vttTsToSrt(ts) {
+    var dotIdx = ts.lastIndexOf(".");
+    var ms = ts.substring(dotIdx + 1);
+    var parts = ts.substring(0, dotIdx).split(":");
+    while (parts.length < 3) parts.unshift("00");
+    return parts.join(":") + "," + ms;
+  }
+
+  _vttToSrt(vtt) {
+    var lines = vtt.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    var srt = "", cueNum = 1, i = 0;
+    while (i < lines.length && lines[i].trim() !== "") i++;
+    while (i < lines.length) {
+      while (i < lines.length && lines[i].trim() === "") i++;
+      if (i >= lines.length) break;
+      var line = lines[i];
+      if (/^(NOTE|STYLE|REGION)\b/.test(line)) {
+        while (i < lines.length && lines[i].trim() !== "") i++;
+        continue;
+      }
+      if (line.indexOf("-->") < 0) { i++; if (i >= lines.length) break; line = lines[i]; }
+      if (line.indexOf("-->") < 0) { i++; continue; }
+      var m = line.match(/([\d:]+\.\d{3})\s*-->\s*([\d:]+\.\d{3})/);
+      if (!m) { i++; continue; }
+      var start = this._vttTsToSrt(m[1]), end = this._vttTsToSrt(m[2]);
+      i++;
+      var textLines = [];
+      while (i < lines.length && lines[i].trim() !== "") {
+        textLines.push(lines[i].replace(/<[\d:]+\.\d{3}>/g, ""));
+        i++;
+      }
+      if (textLines.length > 0) {
+        srt += cueNum + "\n" + start + " --> " + end + "\n" + textLines.join("\n") + "\n\n";
+        cueNum++;
+      }
+    }
+    return srt || vtt;
+  }
+
+  // Download the tracks with a megaplay Referer and inline them as SRT.
+  // Mangayomi auto-enables subtitles[0], and MegaPlay returns the list in
+  // alphabetical order (Arabic first), so the track flagged `default` — and
+  // English after it — has to be pulled to the front or the wrong language
+  // turns itself on.
+  async inlineSubtitles(tracks, referer) {
+    if (!Array.isArray(tracks)) return [];
+    var self = this;
+    var wanted = tracks.filter(function (t) {
+      return t && t.file && t.kind !== "thumbnails";
+    });
+    var rank = function (t) {
+      if (t.default === true) return 0;
+      var label = String(t.label || "").toLowerCase();
+      if (label.indexOf("english") === 0) return 1;
+      return 2;
+    };
+    // Stable ordering: keep the original sequence inside each rank.
+    wanted = wanted
+      .map(function (t, i) { return { t: t, i: i }; })
+      .sort(function (a, b) { return rank(a.t) - rank(b.t) || a.i - b.i; })
+      .map(function (x) { return x.t; });
+
+    // Every track has to be downloaded in full to be inlined, and some releases
+    // carry 14+ languages. Firing all of them gets the CDN to throttle (which
+    // then takes the playlist request down with it and the episode resolves to
+    // no sources at all), and the app's isolate gives the whole call ~40s.
+    // The ranked head of the list is what anyone actually turns on.
+    var cap = parseInt(this.getPreference("anilight_pref_sub_count"), 10);
+    if (!cap || cap < 1) cap = 6;
+    wanted = wanted.slice(0, cap);
+    var fetched = await Promise.all(wanted.map(function (track) {
+      return self.client
+        .get(track.file, { "User-Agent": self.ua, "Referer": referer })
+        .then(function (res) {
+          var body = ((res && res.body) || "").replace(/^\s+/, "");
+          if (body.indexOf("WEBVTT") !== 0) return null;
+          return { file: self._vttToSrt(body), label: track.label || "Unknown" };
+        })
+        .catch(function () { return null; });
+    }));
+    return fetched.filter(function (s) { return s !== null; });
+  }
+
+  // Split a master playlist into one entry per quality.
+  // Returns [] when the URL is already a flat media playlist.
+  async hlsVariants(masterUrl, headers) {
+    try {
+      var res = await this.client.get(masterUrl, headers);
+      var body = (res && res.body) || "";
+      if (body.indexOf("#EXTM3U") < 0) return null;   // blocked or an error page
+      if (body.indexOf("#EXT-X-STREAM-INF") < 0) return [];
+
+      var lastSlash = masterUrl.lastIndexOf("/");
+      var baseDir = lastSlash > 0 ? masterUrl.substring(0, lastSlash + 1) : masterUrl;
+      var lines = body.split("\n");
+      var variants = [];
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+        var resM = line.match(/RESOLUTION=\d+x(\d+)/);
+        var bwM = line.match(/BANDWIDTH=(\d+)/);
+        var label = resM
+          ? resM[1] + "p"
+          : (bwM ? Math.round(parseInt(bwM[1], 10) / 1000) + "kbps" : "Auto");
+        for (var j = i + 1; j < lines.length; j++) {
+          var u = lines[j].trim();
+          if (!u || u.charAt(0) === "#") continue;
+          variants.push({ url: u.indexOf("http") === 0 ? u : baseDir + u, label: label });
+          break;
+        }
+      }
+      variants.sort(function (a, b) {
+        return (parseInt(b.label, 10) || 0) - (parseInt(a.label, 10) || 0);
+      });
+      return variants;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // MegaPlay embed → playable streams.
+  // The id in the embed path is a lookup key only; the page's data-id is what
+  // /stream/getSources actually accepts.
+  async resolveMegaplay(embedUrl, audioLabel) {
+    var streams = [];
+    try {
+      var hostM = embedUrl.match(/^(https?:\/\/[^/]+)/);
+      if (!hostM) return streams;
+      var origin = hostM[1];
+
+      var page = await this.client.get(embedUrl, {
+        "User-Agent": this.ua,
+        "Referer": this.source.baseUrl + "/",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+      });
+      var html = (page && page.body) || "";
+      var idM = html.match(/data-id="(\d+)"/) || html.match(/<title>File (\d+)/i);
+      if (!idM) return streams;
+
+      var srcRes = await this.client.get(
+        origin + "/stream/getSources?id=" + idM[1],
+        {
+          "User-Agent": this.ua,
+          "Referer": embedUrl,
+          "X-Requested-With": "XMLHttpRequest",
+          "Accept": "application/json",
+        }
+      );
+      var data;
+      try { data = JSON.parse((srcRes && srcRes.body) || ""); } catch (e) { return streams; }
+      if (!data) return streams;
+
+      var m3u8 = "";
+      if (data.sources) {
+        if (typeof data.sources === "string") m3u8 = data.sources;
+        else if (data.sources.file) m3u8 = data.sources.file;
+        else if (Array.isArray(data.sources) && data.sources.length) {
+          m3u8 = data.sources[0].file || data.sources[0].url || "";
+        }
+      }
+      if (!m3u8) return streams;
+
+      var hdrs = { "User-Agent": this.ua, "Referer": origin + "/", "Origin": origin };
+      var subtitles = await this.inlineSubtitles(data.tracks, origin + "/");
+      var variants = await this.hlsVariants(m3u8, hdrs);
+      if (variants === null) return streams;   // playlist unreachable — skip
+
+      if (variants.length > 0) {
+        for (var v = 0; v < variants.length; v++) {
+          streams.push({
+            url: variants[v].url,
+            originalUrl: m3u8,
+            quality: "MegaPlay " + variants[v].label + " [" + audioLabel + "]",
+            headers: hdrs,
+            subtitles: subtitles,
+          });
+        }
+      } else {
+        streams.push({
+          url: m3u8,
+          originalUrl: m3u8,
+          quality: "MegaPlay Auto [" + audioLabel + "]",
+          headers: hdrs,
+          subtitles: subtitles,
+        });
+      }
+    } catch (e) {}
+    return streams;
+  }
+
+  async getVideoList(url) {
+    var slug = this.slugFrom(url);
+    var epM = String(url || "").match(/[?&]ep=([0-9.]+)/);
+    var epNum = epM ? epM[1] : null;
+
+    var watch = await this.getJson("/watch/" + slug);
+    var eps = (watch && Array.isArray(watch.episodes)) ? watch.episodes : [];
+    if (eps.length === 0) return [];
+
+    var episode = null;
+    for (var i = 0; i < eps.length; i++) {
+      if (String(eps[i].number) === String(epNum)) { episode = eps[i]; break; }
+    }
+    if (!episode) episode = eps[0];
+
+    var embeds = episode.embed_url || {};
+    var jobs = [];
+    if (embeds.sub) jobs.push({ url: embeds.sub, label: "Sub" });
+    if (embeds.dub) jobs.push({ url: embeds.dub, label: "Dub" });
+    if (jobs.length === 0) return [];
+
+    var self = this;
+    var groups = await Promise.all(jobs.map(function (j) {
+      return self.resolveMegaplay(j.url, j.label).catch(function () { return []; });
+    }));
+
+    var videos = [];
+    for (var g = 0; g < groups.length; g++) {
+      for (var k = 0; k < groups[g].length; k++) videos.push(groups[g][k]);
+    }
+
+    // Mangayomi plays the first entry and takes auto-play subtitles from it,
+    // so the preferred audio track has to lead.
+    var prefType = this.getPreference("anilight_pref_type") || "sub";
+    var wantDub = prefType === "dub";
+    videos.sort(function (a, b) {
+      var aDub = a.quality.indexOf("[Dub]") >= 0;
+      var bDub = b.quality.indexOf("[Dub]") >= 0;
+      if (aDub !== bDub) return (aDub === wantDub) ? -1 : 1;
+      return 0;   // hlsVariants already ordered each group high→low
+    });
+    return videos;
+  }
+
+  // ── Filters & preferences ───────────────────────────────────────────────────
+
+  filterDefs() {
+    var years = [];
+    for (var y = new Date().getFullYear() + 1; y >= 1970; y--) years.push([String(y), String(y)]);
+    return [
+      {
+        kind: "group", param: "genres", name: "Genres",
+        options: GENRES.map(function (g) { return [g, g]; }),
+      },
+      { kind: "select", param: "format", name: "Format", options: FORMATS },
+      { kind: "select", param: "status", name: "Status", options: STATUSES },
+      { kind: "select", param: "season", name: "Season", options: SEASONS },
+      { kind: "select", param: "seasonYear", name: "Year", options: years },
+      { kind: "select", param: "sort", name: "Sort by", options: SORTS },
+    ];
+  }
+
+  getFilterList() {
+    return this.filterDefs().map(function (def) {
+      if (def.kind === "group") {
+        return {
+          type_name: "GroupFilter",
+          name: def.name,
+          state: def.options.map(function (o) {
+            return { type_name: "CheckBox", name: o[0], value: o[1] };
+          }),
+        };
+      }
+      return {
+        type_name: "SelectFilter",
+        name: def.name,
+        state: 0,
+        values: [{ type_name: "SelectOption", name: "Any", value: "" }].concat(
+          def.options.map(function (o) {
+            return { type_name: "SelectOption", name: o[0], value: o[1] };
+          })
+        ),
+      };
+    });
+  }
+
+  getSourcePreferences() {
+    return [
+      {
+        key: "anilight_pref_title",
+        listPreference: {
+          title: "Preferred title language",
+          summary: "Which AniList title to display",
+          valueIndex: 0,
+          entries: ["English", "Romaji", "Native"],
+          entryValues: ["english", "romaji", "native"],
+        },
+      },
+      {
+        key: "anilight_pref_type",
+        listPreference: {
+          title: "Preferred audio",
+          summary: "Which version is listed first (and supplies auto-play subtitles)",
+          valueIndex: 0,
+          entries: ["Sub", "Dub"],
+          entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "anilight_pref_sub_count",
+        listPreference: {
+          title: "Subtitle languages to load",
+          summary: "Subtitles must be downloaded to work, so loading more slows episodes down. English first either way.",
+          valueIndex: 1,
+          entries: ["2 (fastest)", "6 (default)", "12", "All available"],
+          entryValues: ["2", "6", "12", "99"],
+        },
+      },
+    ];
+  }
+}
