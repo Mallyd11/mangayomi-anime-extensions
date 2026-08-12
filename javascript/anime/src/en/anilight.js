@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://anilight.live",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.0",
+    "version": "0.5.1",
     "pkgPath": "anime/src/en/anilight.js",
     "isManga": false,
     "isNsfw": false,
@@ -383,10 +383,11 @@ class DefaultExtension extends MProvider {
       if (ep.isFiller) label += " (Filler)";
       chapters.push({
         name: label,
-        // The numeric id rides along because /sources (AnimeGG) keys off it and
-        // will not accept the slug — carrying it here saves a lookup per play.
-        url: this.source.baseUrl + "/watch/" + slug + "?ep=" + ep.number +
-             (info.id ? "&id=" + info.id : ""),
+        // This URL is the episode's identity in the app's library — anything
+        // appended here makes every existing entry look like a new episode and
+        // the list doubles. /sources needs the numeric id, but /watch/{slug}
+        // already returns it, so it is looked up at play time instead.
+        url: this.source.baseUrl + "/watch/" + slug + "?ep=" + ep.number,
       });
     }
     // The API returns episode 1 first; Mangayomi lists newest at the top.
