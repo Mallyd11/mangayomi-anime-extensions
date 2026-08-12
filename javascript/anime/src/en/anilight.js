@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://anilight.live",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/anilight.js",
     "isManga": false,
     "isNsfw": false,
@@ -50,12 +50,29 @@ const mangayomiSources = [
 // Referer, so they are downloaded here and inlined as SRT text rather than
 // handed to the player as URLs (the player sends no Referer and would 403).
 //
-// Known playback limitation (shared with the other MegaPlay-backed sources in
-// this repo): segments are MPEG-TS hidden behind a 70-byte PNG header served
-// from an image CDN.  iOS AVPlayer scans for the 0x47 sync byte and plays
-// through it; libmpv on Windows/Android fails format detection and can skip
-// straight through an episode.  There is no second CDN to fall back to here —
-// every provider AniLight lists resolves to this same MegaPlay stream.
+// Playback on Windows/Android needs a proxy — measured, not assumed:
+// segments are MPEG-TS behind a 70-byte PNG header, served from an image CDN
+// at .image URLs.  ffprobe on the raw stream reports
+//   "... is not in allowed_extensions" -> Invalid data found
+// and with -extension_picky 0 it gets further only to call the segments
+// png_pipe / 0x0, i.e. an image, not video.  So the PNG wrapper is the real
+// cause and the extension check is a second, downstream symptom; neither is
+// reachable from an extension.  iOS AVPlayer scans forward for the 0x47 sync
+// byte and plays anyway, which is why the source looks fine there while
+// libmpv races through a whole season.
+//
+// There is no clean-CDN escape: all four hosts MegaPlay hands out
+// (megap.mikora.top / shiora.top / shiora.site / akirax.buzz) point their
+// segments at the same tiktokcdn image host, and every provider AniLight
+// lists resolves to this one MegaPlay stream.
+//
+// Hence anilight_pref_proxy: set it to a proxy that strips the header and
+// serves segments under a .ts path, and an "⟨unwrapped⟩" entry is offered
+// ahead of the direct ones.  Verified with proxy/worker.js in this repo —
+// through it ffprobe reports h264 1920x1080 + aac on default flags.
+// Byte-level segment checks cannot catch any of this: the bytes are valid
+// MPEG-TS once the 70-byte header is gone, so a naive probe reports success
+// on a stream the app cannot play.  Always ffprobe the URL actually returned.
 
 var GENRES = [
   "Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy", "Horror",
@@ -115,6 +132,15 @@ class DefaultExtension extends MProvider {
     } catch (e) {
       return null;
     }
+  }
+
+  // Base URL of an unwrapping proxy, or "" when the user has not set one.
+  // Anything that is not an http(s) origin is ignored rather than pasted into
+  // a stream URL.
+  proxyBase() {
+    var raw = String(this.getPreference("anilight_pref_proxy") || "").trim();
+    if (!/^https?:\/\/[^/\s]+/.test(raw)) return "";
+    return raw.replace(/\/+$/, "");
   }
 
   async getJson(path) {
@@ -493,21 +519,34 @@ class DefaultExtension extends MProvider {
       var variants = await this.hlsVariants(m3u8, hdrs);
       if (variants === null) return streams;   // playlist unreachable — skip
 
-      if (variants.length > 0) {
-        for (var v = 0; v < variants.length; v++) {
-          streams.push({
-            url: variants[v].url,
-            originalUrl: m3u8,
-            quality: "MegaPlay " + variants[v].label + " [" + audioLabel + "]",
-            headers: hdrs,
-            subtitles: subtitles,
-          });
-        }
-      } else {
+      var playlists = variants.length > 0
+        ? variants
+        : [{ url: m3u8, label: "Auto" }];
+
+      // An unwrapping proxy, when the user has one, is emitted first: on
+      // Windows/Android it is the only thing that plays (see the header note).
+      // The direct entries stay as fallback so iOS — where the raw stream is
+      // fine — still has them, and so the source degrades to plain behaviour
+      // if the proxy is down.
+      var proxy = this.proxyBase();
+      for (var p = 0; p < playlists.length; p++) {
+        if (!proxy) break;
         streams.push({
-          url: m3u8,
+          url: proxy + "/m3u8?url=" + encodeURIComponent(playlists[p].url) +
+               "&referer=" + encodeURIComponent(origin + "/"),
+          originalUrl: playlists[p].url,
+          quality: "MegaPlay " + playlists[p].label + " [" + audioLabel + "] ⟨unwrapped⟩",
+          // The proxy attaches the upstream Referer itself; forwarding ours
+          // would make Mangayomi send it to the proxy instead.
+          headers: { "User-Agent": this.ua },
+          subtitles: subtitles,
+        });
+      }
+      for (var v = 0; v < playlists.length; v++) {
+        streams.push({
+          url: playlists[v].url,
           originalUrl: m3u8,
-          quality: "MegaPlay Auto [" + audioLabel + "]",
+          quality: "MegaPlay " + playlists[v].label + " [" + audioLabel + "]",
           headers: hdrs,
           subtitles: subtitles,
         });
@@ -622,6 +661,16 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
+        },
+      },
+      {
+        key: "anilight_pref_proxy",
+        editTextPreference: {
+          title: "Unwrapping proxy URL",
+          summary: "Needed for playback on Windows/Android — leave empty on iOS. Base URL only, e.g. http://localhost:8765",
+          value: "",
+          dialogTitle: "Unwrapping proxy URL",
+          dialogMessage: "AniLight's CDN disguises video segments as PNG images, which Windows/Android cannot decode (iOS plays them fine). Point this at a proxy that strips the header and an '⟨unwrapped⟩' entry appears first in the server list. Leave empty to disable.",
         },
       },
       {
