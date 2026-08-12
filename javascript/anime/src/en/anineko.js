@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://anineko.to/icon/android-chrome-192x192.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/anineko.js",
     "isManga": false,
     "isNsfw": false,
@@ -368,6 +368,56 @@ class DefaultExtension extends MProvider {
     return [{ file: file, label: label }];
   }
 
+  resolveUrl(base, rel) {
+    if (/^https?:\/\//.test(rel)) return rel;
+    var origin = (base.match(/^(https?:\/\/[^/]+)/) || [])[1] || "";
+    if (rel.charAt(0) === "/") return origin + rel;
+    var i = base.split("?")[0].lastIndexOf("/");
+    return (i > 0 ? base.split("?")[0].substring(0, i + 1) : base) + rel;
+  }
+
+  // Expand a master playlist into its per-quality media playlists.
+  //
+  // Returning the master directly plays fine, but the app counts #EXTINF
+  // entries to drive the download progress bar and a master has none — so
+  // downloads run with progress stuck at 0 until they suddenly finish.
+  // Handing back the media playlists fixes progress and gives a real quality
+  // picker at the same time.
+  async resolveVariants(masterUrl, headers) {
+    var res = await this.client.get(masterUrl, headers);
+    var body = (res && res.body) || "";
+    if (body.indexOf("#EXTM3U") < 0) return [];
+    // Already a media playlist — hand it back as-is.
+    if (body.indexOf("#EXT-X-STREAM-INF") < 0) {
+      return [{ url: masterUrl, label: "Auto", height: 0 }];
+    }
+
+    var lines = body.split("\n");
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+      var target = "";
+      for (var j = i + 1; j < lines.length; j++) {
+        var l2 = lines[j].trim();
+        if (!l2 || l2.charAt(0) === "#") continue;
+        target = l2;
+        break;
+      }
+      if (!target) continue;
+      var rm = line.match(/RESOLUTION=\d+x(\d+)/);
+      var nm = line.match(/NAME="([^"]+)"/);
+      var height = rm ? parseInt(rm[1], 10) : 0;
+      out.push({
+        url: this.resolveUrl(masterUrl, target),
+        label: (nm && nm[1]) || (height ? height + "p" : "Auto"),
+        height: height,
+      });
+    }
+    out.sort(function (a, b) { return b.height - a.height; });
+    return out;
+  }
+
   // Both supported hosts are VibePlayer: the playlist sits in the page as a
   // bare `const src = "..."`, no packing and no second request.
   async resolveEmbed(embed) {
@@ -408,26 +458,40 @@ class DefaultExtension extends MProvider {
 
     var results = await Promise.all(supported.map(function (s) {
       return self.resolveEmbed(s.embed)
-        .then(function (r) {
-          if (!r) return null;
+        .then(async function (r) {
+          if (!r) return [];
           var langLabel = LANG_LABELS[s.lang] || s.lang.toUpperCase();
-          return {
-            url: r.file,
-            originalUrl: r.file,
-            quality: s.name + " [" + langLabel + "]",
-            headers: {
-              "Referer": r.origin + "/",
-              "Origin": r.origin,
-              "User-Agent": self.ua,
-            },
-            subtitles: self.subsFromEmbed(s.embed),
-            _lang: s.lang,
+          var hdrs = {
+            "Referer": r.origin + "/",
+            "Origin": r.origin,
+            "User-Agent": self.ua,
           };
+          var subs = self.subsFromEmbed(s.embed);
+
+          var variants = [];
+          try {
+            variants = await self.resolveVariants(r.file, hdrs);
+          } catch (e) { /* fall back to the master below */ }
+          if (!variants.length) {
+            variants = [{ url: r.file, label: "Auto", height: 0 }];
+          }
+
+          return variants.map(function (v) {
+            return {
+              url: v.url,
+              originalUrl: r.file,
+              quality: s.name + " " + v.label + " [" + langLabel + "]",
+              headers: hdrs,
+              subtitles: subs,
+              _lang: s.lang,
+              _height: v.height,
+            };
+          });
         })
-        .catch(function () { return null; });
+        .catch(function () { return []; });
     }));
 
-    var videos = results.filter(function (v) { return v !== null; });
+    var videos = results.reduce(function (acc, r) { return acc.concat(r); }, []);
 
     // Put the preferred audio/subtitle flavour first — Mangayomi plays the
     // first entry and only auto-enables subtitles from that same entry.
@@ -437,8 +501,11 @@ class DefaultExtension extends MProvider {
       if (prefLang === "hsub") return lang === "sub" ? 1 : 2;
       return lang === "hsub" ? 1 : 2;
     };
-    videos.sort(function (a, b) { return rank(a._lang) - rank(b._lang); });
-    videos.forEach(function (v) { delete v._lang; });
+    videos.sort(function (a, b) {
+      var d = rank(a._lang) - rank(b._lang);
+      return d !== 0 ? d : (b._height - a._height);
+    });
+    videos.forEach(function (v) { delete v._lang; delete v._height; });
 
     return videos;
   }
