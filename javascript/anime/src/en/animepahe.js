@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.1",
+    "version": "0.5.2",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -281,21 +281,38 @@ class DefaultExtension extends MProvider {
       return "HTTP=" + st + " len=" + b.length + " cf=" + cf + " packer=" + pk;
     };
 
+    // Snippet helper: ~120 chars around the first occurrence of `needle`,
+    // whitespace-collapsed, so the app's actual markup is visible in the picker.
+    var snip = function (h, needle) {
+      var i = h.indexOf(needle);
+      if (i < 0) return "(no '" + needle + "')";
+      return h.slice(Math.max(0, i - 40), i + 90).replace(/\s+/g, " ");
+    };
+
     try {
       var epUrl = url.startsWith("http") ? url : this.source.baseUrl + url;
       var res = await this.client.get(epUrl, this.headers);
       var html = (res && res.body) || "";
       diag("1 ep: " + probe(html, (res && res.statusCode) || "?"));
+      diag("1b has: kwik=" + (html.indexOf("kwik") >= 0) + " soraddl=" + (html.indexOf("soraddl") >= 0) + " gofile=" + (html.indexOf("gofile") >= 0) + " Pahe=" + (html.indexOf("Pahe") >= 0));
 
+      // Match kwik on ANY tld and permissive id charset, in case the app's page
+      // variant serves a different kwik domain/format than a plain fetch.
       var ids = [];
       var seen = {};
-      var re = /kwik\.cx\/[efd]\/([A-Za-z0-9]+)/g;
+      var re = /kwik\.\w+\/[efds]\/([A-Za-z0-9_-]+)/g;
       var m;
       while ((m = re.exec(html)) !== null) {
         if (!seen[m[1]]) { seen[m[1]] = true; ids.push(m[1]); }
       }
       diag("2 ids: count=" + ids.length + " first=" + (ids[0] || "NONE"));
-      if (ids.length === 0) return trace;
+      if (ids.length === 0) {
+        // Show what the download area actually looks like in the app's HTML.
+        diag("2a @gofile: " + snip(html, "gofile"));
+        diag("2b @soraddl: " + snip(html, "soraddl"));
+        diag("2c @Download: " + snip(html, "Download"));
+        return trace;
+      }
       var id = ids[0];
 
       // Probe both kwik forms with both header strategies. The new CF handling may
