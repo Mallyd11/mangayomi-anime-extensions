@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.0",
+    "version": "0.5.1",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -264,55 +264,83 @@ class DefaultExtension extends MProvider {
     }
   }
 
+  // DIAGNOSTIC BUILD (v0.5.1): the new app still yields an empty list, so re-trace
+  // to see whether its updated Cloudflare handling changed the kwik failure mode.
+  // Each entry carries a UNIQUE url (Mangayomi dedupes by url) so the full trace
+  // shows. Real streams, if resolved, are returned first.
   async getVideoList(url) {
-    var epUrl = url.startsWith("http") ? url : this.source.baseUrl + url;
-    var res = await this.client.get(epUrl, this.headers);
-    var html = (res && res.body) || "";
-
-    // Collect kwik ids from the `.soraddl` download box (deduped). The /f/, /e/
-    // and /d/ forms share the id; the P.A.C.K.E.R m3u8 lives on /e/.
-    var ids = [];
-    var seen = {};
-    var re = /kwik\.cx\/[efd]\/([A-Za-z0-9]+)/g;
-    var m;
-    while ((m = re.exec(html)) !== null) {
-      if (!seen[m[1]]) { seen[m[1]] = true; ids.push(m[1]); }
-    }
-    if (ids.length === 0) return [];
-
-    var streamHeaders = {
-      "User-Agent": this.ua,
-      "Referer": "https://kwik.cx/",
-      "Origin": "https://kwik.cx",
+    var trace = [];
+    var DIAG = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
+    var diag = function (label) {
+      var u = DIAG + "#s" + (trace.length + 1);
+      trace.push({ url: u, originalUrl: u, quality: label, headers: {}, subtitles: [] });
+    };
+    var probe = function (b, st) {
+      var cf = /Just a moment|Attention Required|challenge-platform|cf-mitigated|Verifying you are human/i.test(b);
+      var pk = b.indexOf("eval(function(p,a,c,k,e,d)") >= 0;
+      return "HTTP=" + st + " len=" + b.length + " cf=" + cf + " packer=" + pk;
     };
 
-    var streams = [];
-    for (var i = 0; i < ids.length; i++) {
-      var m3u8 = await this.resolveKwik("https://kwik.cx/e/" + ids[i]);
-      if (!m3u8) continue;
+    try {
+      var epUrl = url.startsWith("http") ? url : this.source.baseUrl + url;
+      var res = await this.client.get(epUrl, this.headers);
+      var html = (res && res.body) || "";
+      diag("1 ep: " + probe(html, (res && res.statusCode) || "?"));
 
+      var ids = [];
+      var seen = {};
+      var re = /kwik\.cx\/[efd]\/([A-Za-z0-9]+)/g;
+      var m;
+      while ((m = re.exec(html)) !== null) {
+        if (!seen[m[1]]) { seen[m[1]] = true; ids.push(m[1]); }
+      }
+      diag("2 ids: count=" + ids.length + " first=" + (ids[0] || "NONE"));
+      if (ids.length === 0) return trace;
+      var id = ids[0];
+
+      // Probe both kwik forms with both header strategies. The new CF handling may
+      // now return a solvable challenge page (cf=true) or the packer (packer=true)
+      // where before it threw. Each labelled so the winning combination is clear.
+      var kbody = "", winner = null;
+      var probes = [
+        ["4 e/noUA", "https://kwik.cx/e/" + id, { "Referer": this.source.baseUrl + "/" }],
+        ["5 e/withUA", "https://kwik.cx/e/" + id, { "User-Agent": this.ua, "Referer": "https://kwik.cx/" }],
+        ["6 f/noUA", "https://kwik.cx/f/" + id, { "Referer": this.source.baseUrl + "/" }],
+      ];
+      for (var p = 0; p < probes.length; p++) {
+        try {
+          var r = await this.client.get(probes[p][1], probes[p][2]);
+          var b = (r && r.body) || "";
+          diag(probes[p][0] + ": " + probe(b, (r && r.statusCode) || "?"));
+          if (!winner && b.indexOf("eval(function(p,a,c,k,e,d)") >= 0) { winner = b; kbody = b; }
+        } catch (e) {
+          diag(probes[p][0] + ": ERR " + (e && (e.message || e.name || String(e))));
+        }
+      }
+      if (!winner) return trace;
+
+      var scriptText = this.extractPackerScript(kbody);
+      var unpacked = this.unpack(scriptText);
+      var m3u8Match = unpacked.match(/source\s*=\s*['"]([^'"]+\.m3u8[^'"]*)['"]/);
+      diag("7 unpack: len=" + unpacked.length + " m3u8=" + !!m3u8Match);
+      if (!m3u8Match) return trace;
+
+      var m3u8 = m3u8Match[1];
+      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://kwik.cx/", "Origin": "https://kwik.cx" };
+      var streams = [];
       var variants = await this._parseHlsVariants(m3u8, streamHeaders);
       if (variants.length) {
         for (var v = 0; v < variants.length; v++) {
-          streams.push({
-            url: variants[v].url,
-            originalUrl: m3u8,
-            quality: variants[v].label + " - Kwik",
-            headers: streamHeaders,
-            subtitles: [],
-          });
+          streams.push({ url: variants[v].url, originalUrl: m3u8, quality: variants[v].label + " - Kwik", headers: streamHeaders, subtitles: [] });
         }
       } else {
-        streams.push({
-          url: m3u8,
-          originalUrl: m3u8,
-          quality: "Kwik",
-          headers: streamHeaders,
-          subtitles: [],
-        });
+        streams.push({ url: m3u8, originalUrl: m3u8, quality: "Kwik", headers: streamHeaders, subtitles: [] });
       }
+      return streams.concat(trace);
+    } catch (e) {
+      diag("FATAL " + (e && (e.message || String(e))));
+      return trace;
     }
-    return streams;
   }
 
   // Fetch a master playlist and return [{url,label}] per RESOLUTION variant.
