@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.2",
+    "version": "0.5.3",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -314,35 +314,57 @@ class DefaultExtension extends MProvider {
         return trace;
       }
       var id = ids[0];
+      var embed = "https://kwik.cx/e/" + id;
 
-      // Probe both kwik forms with both header strategies. The new CF handling may
-      // now return a solvable challenge page (cf=true) or the packer (packer=true)
-      // where before it threw. Each labelled so the winning combination is clear.
-      var kbody = "", winner = null;
-      var probes = [
-        ["4 e/noUA", "https://kwik.cx/e/" + id, { "Referer": this.source.baseUrl + "/" }],
-        ["5 e/withUA", "https://kwik.cx/e/" + id, { "User-Agent": this.ua, "Referer": "https://kwik.cx/" }],
-        ["6 f/noUA", "https://kwik.cx/f/" + id, { "Referer": this.source.baseUrl + "/" }],
-      ];
-      for (var p = 0; p < probes.length; p++) {
-        try {
-          var r = await this.client.get(probes[p][1], probes[p][2]);
-          var b = (r && r.body) || "";
-          diag(probes[p][0] + ": " + probe(b, (r && r.statusCode) || "?"));
-          if (!winner && b.indexOf("eval(function(p,a,c,k,e,d)") >= 0) { winner = b; kbody = b; }
-        } catch (e) {
-          diag(probes[p][0] + ": ERR " + (e && (e.message || e.name || String(e))));
-        }
+      // The app's HTTP client is fingerprint-blocked by kwik's Cloudflare (hard
+      // WAF 403, no solvable challenge). The only browser-grade path is a real
+      // on-device WebView. evaluateJavascriptViaWebview(url, headers, [scripts])
+      // loads the kwik page in a genuine WebView (passes CF), where we re-run the
+      // P.A.C.K.E.R and read out the m3u8. The uwucdn stream itself is NOT CF-
+      // gated, so once we have the URL the app's player fetches it normally.
+      var haveWv = (typeof evaluateJavascriptViaWebview !== "undefined");
+      diag("4 webviewApi=" + haveWv);
+      if (!haveWv) return trace;
+
+      // Script runs INSIDE the kwik.cx WebView context (past Cloudflare):
+      // find the packer <script>, re-run it with eval hooked to capture the
+      // unpacked source, extract the m3u8, and hand it back both ways.
+      var wvScript = [
+        "(async function(){",
+        "  try {",
+        "    var st='';",
+        "    var sc=document.scripts;",
+        "    for (var i=0;i<sc.length;i++){var t=sc[i].textContent||'';if(t.indexOf('eval(function(p,a,c,k,e,d)')>=0){st=t;break;}}",
+        "    if(!st){var r=await fetch(location.href,{cache:'no-store'}).then(function(x){return x.text()});var mm=r.match(/eval\\(function\\(p,a,c,k,e,d\\)[\\s\\S]*?\\)\\)/);if(mm)st=mm[0];}",
+        "    if(!st){return 'ERR:nopacker';}",
+        "    window.__u='';",
+        "    window.__cap=function(x){window.__u=String(x);return x;};",
+        "    try{ (new Function(st.replace(/\\beval\\(/g,'window.__cap(')))(); }catch(e){ return 'ERR:run:'+(e&&e.message); }",
+        "    var s=window.__u.match(/source\\s*=\\s*['\\\"]([^'\\\"]+m3u8[^'\\\"]*)['\\\"]/);",
+        "    var out=s?s[1]:('ERR:nosource:'+window.__u.slice(0,40));",
+        "    try{ await window.flutter_inappwebview.callHandler('setResponse', out); }catch(e){}",
+        "    return out;",
+        "  } catch(e){ return 'ERR:'+(e&&e.message); }",
+        "})()",
+      ].join("\n");
+
+      var wvRet;
+      try {
+        wvRet = await evaluateJavascriptViaWebview(embed, { "Referer": this.source.baseUrl + "/" }, [wvScript]);
+      } catch (e) {
+        diag("5 wv ERR: " + (e && (e.message || String(e))));
+        return trace;
       }
-      if (!winner) return trace;
+      diag("5 wv ret: type=" + (typeof wvRet) + " val=" + String(wvRet).slice(0, 90));
 
-      var scriptText = this.extractPackerScript(kbody);
-      var unpacked = this.unpack(scriptText);
-      var m3u8Match = unpacked.match(/source\s*=\s*['"]([^'"]+\.m3u8[^'"]*)['"]/);
-      diag("7 unpack: len=" + unpacked.length + " m3u8=" + !!m3u8Match);
+      // The return may be the string, or an object wrapping it, depending on the
+      // app's bridge. Pull an m3u8 URL out of whatever came back.
+      var wvStr = (wvRet && typeof wvRet === "object") ? JSON.stringify(wvRet) : String(wvRet || "");
+      var m3u8Match = wvStr.match(/https?:\/\/[^\s"']+m3u8[^\s"']*/);
+      diag("6 m3u8=" + (m3u8Match ? "FOUND" : "no") + (m3u8Match ? " host=" + (m3u8Match[0].split("/")[2] || "?") : ""));
       if (!m3u8Match) return trace;
 
-      var m3u8 = m3u8Match[1];
+      var m3u8 = m3u8Match[0];
       var streamHeaders = { "User-Agent": this.ua, "Referer": "https://kwik.cx/", "Origin": "https://kwik.cx" };
       var streams = [];
       var variants = await this._parseHlsVariants(m3u8, streamHeaders);
