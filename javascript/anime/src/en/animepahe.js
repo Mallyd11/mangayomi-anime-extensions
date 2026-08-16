@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animepahe.ch",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.3",
+    "version": "0.5.4",
     "pkgPath": "anime/src/en/animepahe.js",
     "isManga": false,
     "isNsfw": false,
@@ -348,12 +348,22 @@ class DefaultExtension extends MProvider {
         "})()",
       ].join("\n");
 
-      var wvRet;
+      // The new app's evaluateJavascriptViaWebview requires a 4th `time` arg
+      // (seconds); the old 3-arg form throws RangeError reading args[3]. Try the
+      // 4-arg form, falling back to 3-arg for older builds.
+      var wvHeaders = { "Referer": this.source.baseUrl + "/" };
+      var wvRet, wvErr = null;
       try {
-        wvRet = await evaluateJavascriptViaWebview(embed, { "Referer": this.source.baseUrl + "/" }, [wvScript]);
-      } catch (e) {
-        diag("5 wv ERR: " + (e && (e.message || String(e))));
-        return trace;
+        wvRet = await evaluateJavascriptViaWebview(embed, wvHeaders, [wvScript], 30);
+      } catch (e1) {
+        wvErr = "4arg:" + (e1 && (e1.message || String(e1)));
+        try {
+          wvRet = await evaluateJavascriptViaWebview(embed, wvHeaders, [wvScript]);
+          wvErr = null;
+        } catch (e2) {
+          diag("5 wv ERR " + wvErr + " | 3arg:" + (e2 && (e2.message || String(e2))));
+          return trace;
+        }
       }
       diag("5 wv ret: type=" + (typeof wvRet) + " val=" + String(wvRet).slice(0, 90));
 
