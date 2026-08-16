@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "AnimePahe": {
+            "name": "AnimePahe",
+            "version": "0.5.0",
+            "langs": "en",
+            "lastUpd": 1786890924.87391
+        },
         "AniLight": {
             "name": "AniLight",
             "version": "0.5.1",
