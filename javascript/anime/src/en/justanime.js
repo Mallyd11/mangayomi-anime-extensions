@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.6",
+    "version": "0.2.7",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -198,6 +198,114 @@ class DefaultExtension extends MProvider {
     }
   }
 
+  // Returns false if the playlist body contains ByteDance/ibyteimg ad segments.
+  async isPlaylistClean(url, headers) {
+    try {
+      var res = await new Client().get(url, headers);
+      var body = res.body || "";
+      return body.indexOf("ibyteimg") < 0 && body.indexOf("p16-ad-") < 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // anineko uses a two-step API:
+  //   Step 1: /watch/{id}/episode/{ep}/anineko → {langs: {sub:[{server,name}...], dub:[...]}}
+  //   Step 2: /watch/{id}/episode/{ep}/anineko/{lang}/{server} → {sources, subtitles, headers}
+  // HLS streams are checked for ad-poisoning before being included.
+  async getAninekoStreams(animeId, epNum, ua, autoSubs) {
+    var subVideos = [];
+    var dubVideos = [];
+    try {
+      var avail = await this.apiGet("/watch/" + animeId + "/episode/" + epNum + "/anineko");
+      var langs = avail.langs || {};
+      var langKeys = ["sub", "dub"];
+      for (var li = 0; li < langKeys.length; li++) {
+        var lang = langKeys[li];
+        var servers = langs[lang] || [];
+        for (var si = 0; si < servers.length; si++) {
+          var serverName = servers[si].server;
+          var serverLabel = servers[si].name || serverName;
+          try {
+            var data = await this.apiGet(
+              "/watch/" + animeId + "/episode/" + epNum + "/anineko/" + lang + "/" + serverName
+            );
+            if (!data || data.error || !Array.isArray(data.sources) || !data.sources.length) continue;
+
+            var apiHeaders = data.headers || {};
+            var streamHeaders = {
+              "User-Agent": ua,
+              "Referer": apiHeaders["Referer"] || "https://justanime.to/",
+              "Origin": apiHeaders["Origin"] || "https://justanime.to",
+            };
+
+            // anineko returns subtitles[].url + .lang (not .file + .label)
+            var rawSubs = data.subtitles || [];
+            var subtitles = [];
+            for (var ti = 0; ti < rawSubs.length; ti++) {
+              var t = rawSubs[ti];
+              var fileUrl = t.file || t.url;
+              if (!fileUrl) continue;
+              subtitles.push({ file: fileUrl, label: t.label || t.lang || "Unknown" });
+            }
+            if (autoSubs && subtitles.length > 0) subtitles[0].default = true;
+
+            for (var i = 0; i < data.sources.length; i++) {
+              var s = data.sources[i];
+              var streamUrl = s.url || s.file;
+              if (!streamUrl) continue;
+
+              var isHls = s.isM3U8 || streamUrl.indexOf(".m3u8") >= 0;
+              if (isHls) {
+                var variants = await this.resolveMasterPlaylist(streamUrl, streamHeaders);
+                if (variants.length > 0) {
+                  var clean = await this.isPlaylistClean(variants[0].url, streamHeaders);
+                  if (!clean) continue;
+                  for (var vi = 0; vi < variants.length; vi++) {
+                    var entry = {
+                      url: variants[vi].url,
+                      originalUrl: streamUrl,
+                      quality: "anineko " + serverLabel + " " + lang.toUpperCase() + " [" + variants[vi].quality + "]",
+                      headers: streamHeaders,
+                      subtitles: subtitles,
+                    };
+                    if (lang === "dub") dubVideos.push(entry); else subVideos.push(entry);
+                  }
+                } else {
+                  // Flat playlist
+                  var clean = await this.isPlaylistClean(streamUrl, streamHeaders);
+                  if (!clean) continue;
+                  var qual = s.quality || "auto";
+                  if (qual !== "auto" && !/p$/i.test(qual)) qual += "p";
+                  var entry = {
+                    url: streamUrl,
+                    originalUrl: streamUrl,
+                    quality: "anineko " + serverLabel + " " + lang.toUpperCase() + " [" + qual + "]",
+                    headers: streamHeaders,
+                    subtitles: subtitles,
+                  };
+                  if (lang === "dub") dubVideos.push(entry); else subVideos.push(entry);
+                }
+              } else {
+                var qual = s.quality || "auto";
+                if (qual !== "auto" && !/p$/i.test(qual)) qual += "p";
+                var entry = {
+                  url: streamUrl,
+                  originalUrl: streamUrl,
+                  quality: "anineko " + serverLabel + " " + lang.toUpperCase() + " [" + qual + "]",
+                  headers: streamHeaders,
+                  subtitles: subtitles,
+                };
+                if (lang === "dub") dubVideos.push(entry); else subVideos.push(entry);
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+    return { subVideos: subVideos, dubVideos: dubVideos };
+  }
+
   // ── Video sources ─────────────────────────────────────────────────────────
 
   async getVideoList(url) {
@@ -209,6 +317,9 @@ class DefaultExtension extends MProvider {
     var subVideos = [];
     var dubVideos = [];
     var ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
+
+    var autoSubs = false;
+    try { autoSubs = new SharedPreferences().get("justanime_pref_auto_subs") === "true"; } catch (e) {}
 
     // megaplay: HLS via nekostream CDN (poisoned with ads on Windows but fallback exists)
     // animegg: direct MP4, 360p, no HLS poisoning — reliable fallback for Windows
@@ -257,9 +368,6 @@ class DefaultExtension extends MProvider {
               subtitles.push({ file: track.file, label: track.label || "Unknown" });
             }
           }
-          // Auto-enable the first subtitle if the user has toggled that preference
-          var autoSubs = false;
-          try { autoSubs = new SharedPreferences().get("justanime_pref_auto_subs") === "true"; } catch (e) {}
           if (autoSubs && subtitles.length > 0) subtitles[0].default = true;
 
           var sources = typeData.sources;
@@ -307,6 +415,11 @@ class DefaultExtension extends MProvider {
         }
       } catch (e) {}
     }
+
+    // anineko: two-step API with ad-poisoning filter — adds clean HLS streams
+    var nekoResult = await this.getAninekoStreams(animeId, epNum, ua, autoSubs);
+    subVideos = subVideos.concat(nekoResult.subVideos);
+    dubVideos = dubVideos.concat(nekoResult.dubVideos);
 
     // Sort highest quality first (1080p → 720p → 360p → auto)
     function sortByQuality(arr) {
