@@ -34,9 +34,15 @@
     "anime": {
         "ReAnime": {
             "name": "ReAnime",
-            "version": "0.2.0",
+            "version": "0.2.1",
             "langs": "en",
-            "lastUpd": 1787184000.0
+            "lastUpd": 1787184000
+        },
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.2.7",
+            "langs": "en",
+            "lastUpd": 1787165616.445998
         },
         "AniKoto": {
             "name": "AniKoto",
@@ -85,12 +91,6 @@
             "version": "0.0.2",
             "langs": "en",
             "lastUpd": 1786407249.110207
-        },
-        "JustAnime": {
-            "name": "JustAnime",
-            "version": "0.2.6",
-            "langs": "en",
-            "lastUpd": 1785080168.647181
         },
         "Miruro": {
             "name": "Miruro",

@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -891,29 +891,44 @@ class DefaultExtension extends MProvider {
     return this.decryptPlaylist(res.body, pk);
   }
 
-  // Rewrite every segment/URI line to an absolute URL, and ask the CDN for the
-  // ".ts" form of each segment.
-  //
-  // The playlists address segments as ".png"/".webp" (alternating).  Those are
-  // not images: the CDN wraps the payload in a fake PNG (8-byte) or RIFF/WEBP
-  // (12-byte) header and XOR-encrypts the rest with a fixed 16-byte key, which
-  // the site's patched hls.js undoes in a custom loader.  No ordinary player
-  // can do that.  The wrapper is chosen purely from the *requested* file
-  // extension, though — request the same segment as ".ts" and the CDN serves
-  // raw, unwrapped, unencrypted MPEG-TS (verified: 0x47 sync, aligned 188-byte
-  // packets, exactly 8/12 bytes shorter than the wrapped form).  That also
-  // keeps ffmpeg's extension_picky check happy; see memory/hls-extension-picky.
   // Empty preference means "leave the playlist's own host alone".
   get segmentHost() {
     const p = this.getPreference("reanime_segment_host");
     return p === null || p === undefined ? DEFAULT_SEGMENT_HOST : ("" + p).trim();
   }
 
+  // Rewrite every segment/URI line to an absolute URL, and ask the CDN for the
+  // ".ts" form of each segment.
+  //
+  // Segments are disguised as static assets: the playlists address them with a
+  // rotating fake extension — .png, .webp, .otf, .woff2, .ttf, .woff, .eot —
+  // and for the image ones the CDN also wraps the payload in a matching fake
+  // header (8-byte PNG / 12-byte RIFF-WEBP) and XOR-encrypts the rest with a
+  // fixed 16-byte key, which the site's patched hls.js undoes in a custom
+  // loader.  No ordinary player can do that.
+  //
+  // The disguise is chosen purely from the *requested* extension, though:
+  // re-request the very same path as ".ts" and the CDN serves raw, unwrapped,
+  // unencrypted MPEG-TS.  So normalise whatever extension the playlist used —
+  // matching only the image ones is not enough, because roughly a fifth of the
+  // segments carry a font extension, and ffmpeg's HLS allowed_extensions list
+  // rejects .otf/.woff/.woff2/.ttf/.eot outright, which stalls playback into a
+  // permanent buffer (see memory/hls-extension-picky).
   segmentUrl(uri, base) {
-    let u = this.absUrl(uri, base).replace(/\.(png|webp)(\?|$)/i, ".ts$2");
+    const abs = this.absUrl(uri, base);
+    const q = abs.indexOf("?");
+    let path = q < 0 ? abs : abs.slice(0, q);
+    const query = q < 0 ? "" : abs.slice(q);
+
+    const slash = path.lastIndexOf("/");
+    const file = path.slice(slash + 1);
+    const dot = file.lastIndexOf(".");
+    path = path.slice(0, slash + 1) + (dot > 0 ? file.slice(0, dot) : file) + ".ts";
+
+    let out = path + query;
     const host = this.segmentHost;
-    if (host) u = u.replace(/^(https?:\/\/)[^/]+/i, "$1" + host);
-    return u;
+    if (host) out = out.replace(/^(https?:\/\/)[^/]+/i, "$1" + host);
+    return out;
   }
 
   absolutizePlaylist(text, base) {
