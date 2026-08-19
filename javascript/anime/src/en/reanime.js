@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -782,23 +782,30 @@ class DefaultExtension extends MProvider {
   // Decrypt and build the stream client-side.
   async getVideoListDirect(embeds, audioPref) {
     const streams = [];
+    // Diagnostics only need to appear once, not once per mirror.
+    const diag = this.getPreference("reanime_diag") !== false;
+    let first = true;
     for (const emb of embeds) {
       let r = null;
       try {
-        r = await this.resolveEmbed(emb.link, audioPref);
+        r = await this.resolveEmbed(emb.link, audioPref, diag && first);
       } catch (e) {
         r = null;
       }
       if (!r || !r.variants) continue;
+      first = false;
       r.variants.forEach((vrt) => {
+        // The control entry points at a third-party CDN; sending flixcloud's
+        // Origin/Referer to it would confound the very thing it is testing.
+        const external = /^https?:\/\//.test(vrt.url) && vrt.url.indexOf("flixcloud") < 0;
         streams.push({
           url: vrt.url,
           originalUrl: vrt.url,
           quality: emb.label + " · " + vrt.label,
           // The player fetches the segments itself, so it needs the same
           // browser-shaped header set the CDN demands (see cdnHeaders).
-          headers: this.cdnHeaders,
-          subtitles: r.subtitles,
+          headers: external ? { "User-Agent": this.ua } : this.cdnHeaders,
+          subtitles: external ? [] : r.subtitles,
         });
       });
     }
@@ -807,7 +814,7 @@ class DefaultExtension extends MProvider {
 
   // Resolve a flixcloud embed into one or more directly playable, self-
   // contained HLS masters (data: URIs) plus subtitles. See memory/reanime-extension.md.
-  async resolveEmbed(embedUrl, audioPref) {
+  async resolveEmbed(embedUrl, audioPref, withDiag) {
     const pageRes = await this.client.get(embedUrl, this.embedHeaders);
     if (pageRes.statusCode !== 200 || !pageRes.body) return null;
     const html = pageRes.body;
@@ -864,7 +871,7 @@ class DefaultExtension extends MProvider {
     if (!/^https?:\/\//.test(masterUrl)) return null;
 
     let variants = [];
-    try { variants = await this.buildVariants(masterUrl, pk, audioPref); } catch (e3) { variants = []; }
+    try { variants = await this.buildVariants(masterUrl, pk, audioPref, withDiag); } catch (e3) { variants = []; }
     if (variants.length === 0) return null;
     return { variants: variants, subtitles: this.parseSubtitles(html) };
   }
@@ -948,7 +955,7 @@ class DefaultExtension extends MProvider {
   // renditions, the video playlist and each audio playlist — exactly once
   // each — then rebuilds one self-contained master with everything inlined
   // as data: URIs and the preferred audio track marked DEFAULT.
-  async buildVariants(masterUrl, pk, audioPref) {
+  async buildVariants(masterUrl, pk, audioPref, withDiag) {
     const masterBase = this.baseOf(masterUrl);
     const master = await this.fetchPlaylist(masterUrl, pk);
 
@@ -1014,7 +1021,46 @@ class DefaultExtension extends MProvider {
       nm += line + "\n";
     });
     nm += streamInf + "\n" + videoDataUri + "\n";
-    return [{ label: "Stream", url: this.toDataUri(nm) }];
+    const out = [{ label: withDiag ? "① Stream (real)" : "Stream", url: this.toDataUri(nm) }];
+
+    // Diagnostic ladder.  The real entry above is the only one with sound;
+    // these exist purely to find out which property of it the player rejects,
+    // and should be dropped once that is known.  ReAnime is the only extension
+    // here that hands the player a data: URI — it has to, because the CDN's own
+    // playlists are randomly XOR-encrypted and name segments with rotating fake
+    // extensions, and there is no muxed rendition to fall back to.  Reading the
+    // result: ④ plays but ①–③ do not → data: URIs are unsupported.  ③ plays but
+    // ② does not → the payload is too large.  ② plays (silent) but ① does not →
+    // nested data: URIs inside #EXT-X-MEDIA are the problem.
+    if (withDiag) {
+      // A genuinely small but well-formed playlist: the leading tags, then the
+      // first three #EXTINF/segment pairs.  Keeping every #EXTINF while
+      // dropping their segments would just produce a broken playlist and a
+      // meaningless test.
+      const short = [];
+      let segsKept = 0;
+      for (const line of videoPl.split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        if (t.indexOf("#EXT-X-ENDLIST") === 0) break;
+        if (t.charAt(0) === "#") {
+          if (t.indexOf("#EXTINF") === 0 && segsKept >= 3) break;
+          short.push(t);
+        } else {
+          short.push(t);
+          if (++segsKept >= 3) break;
+        }
+      }
+      short.push("#EXT-X-ENDLIST");
+
+      out.push({ label: "② data: flat, video only (silent)", url: videoDataUri });
+      out.push({ label: "③ data: flat, 3 segments (silent)", url: this.toDataUri(short.join("\n")) });
+      out.push({
+        label: "④ control — Apple HLS, no data: URI",
+        url: "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8",
+      });
+    }
+    return out;
   }
 
   matchOne(str, rx) {
@@ -1114,6 +1160,17 @@ class DefaultExtension extends MProvider {
           valueIndex: 1,
           entries: ["Romaji", "English", "Native"],
           entryValues: ["romaji", "english", "native"],
+        },
+      },
+      {
+        key: "reanime_diag",
+        switchPreferenceCompat: {
+          title: "Show playback diagnostic entries",
+          summary: "Adds numbered test entries to the quality picker to work out " +
+            "why playback stalls. Entry ① is the real stream; ②/③ are silent " +
+            "video-only tests and ④ is a reference stream from Apple. Turn off " +
+            "once playback works.",
+          value: true,
         },
       },
       {

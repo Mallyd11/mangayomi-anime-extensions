@@ -54,21 +54,5 @@
     "ReAnime": {
         "downloads": "Yes",
         "subDub": "Sub+Dub"
-    },
-    "AnimeKai": {
-        "downloads": "Yes",
-        "subDub": "Sub+Dub"
-    },
-    "AniCove": {
-        "downloads": "No",
-        "subDub": "Sub+Dub"
-    },
-    "AnimePahe": {
-        "downloads": "?",
-        "subDub": "?"
-    },
-    "Animetsu": {
-        "downloads": "No",
-        "subDub": "Sub+Dub"
     }
 }
