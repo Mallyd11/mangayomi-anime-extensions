@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://justanime.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.7",
+    "version": "0.2.8",
     "pkgPath": "anime/src/en/justanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -321,9 +321,13 @@ class DefaultExtension extends MProvider {
     var autoSubs = false;
     try { autoSubs = new SharedPreferences().get("justanime_pref_auto_subs") === "true"; } catch (e) {}
 
-    // megaplay: HLS via nekostream CDN (poisoned with ads on Windows but fallback exists)
-    // animegg: direct MP4, 360p, no HLS poisoning — reliable fallback for Windows
-    var providers = ["megaplay", "animegg"];
+    var serverPref = "megaplay";
+    try { serverPref = new SharedPreferences().get("justanime_pref_server") || "megaplay"; } catch (e) {}
+
+    // Resolve which simple providers (megaplay/animegg) to query
+    var providers = [];
+    if (serverPref === "megaplay" || serverPref === "all") providers.push("megaplay");
+    if (serverPref === "animegg"  || serverPref === "all") providers.push("animegg");
 
     for (var pi = 0; pi < providers.length; pi++) {
       var provider = providers[pi];
@@ -417,9 +421,11 @@ class DefaultExtension extends MProvider {
     }
 
     // anineko: two-step API with ad-poisoning filter — adds clean HLS streams
-    var nekoResult = await this.getAninekoStreams(animeId, epNum, ua, autoSubs);
-    subVideos = subVideos.concat(nekoResult.subVideos);
-    dubVideos = dubVideos.concat(nekoResult.dubVideos);
+    if (serverPref === "anineko" || serverPref === "all") {
+      var nekoResult = await this.getAninekoStreams(animeId, epNum, ua, autoSubs);
+      subVideos = subVideos.concat(nekoResult.subVideos);
+      dubVideos = dubVideos.concat(nekoResult.dubVideos);
+    }
 
     // Sort highest quality first (1080p → 720p → 360p → auto)
     function sortByQuality(arr) {
@@ -448,6 +454,16 @@ class DefaultExtension extends MProvider {
 
   getSourcePreferences() {
     return [
+      {
+        key: "justanime_pref_server",
+        listPreference: {
+          title: "Preferred server",
+          summary: "Which streaming server to use. MegaPlay is default; AnimeGG is a clean 360p fallback; AniNeko filters out ad-poisoned streams automatically.",
+          valueIndex: 0,
+          entries: ["MegaPlay (default)", "AnimeGG (clean MP4, 360p)", "AniNeko (clean HLS, ad-filtered)", "All servers"],
+          entryValues: ["megaplay", "animegg", "anineko", "all"],
+        },
+      },
       {
         key: "justanime_pref_audio",
         listPreference: {
