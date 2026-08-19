@@ -32,6 +32,18 @@
         }
     },
     "anime": {
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.5.29",
+            "langs": "en",
+            "lastUpd": 1787167194.822621
+        },
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.2.7",
+            "langs": "en",
+            "lastUpd": 1787167194.822621
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.15",
@@ -50,23 +62,11 @@
             "langs": "en",
             "lastUpd": 1787165334.174888
         },
-        "JustAnime": {
-            "name": "JustAnime",
-            "version": "0.2.6",
-            "langs": "en",
-            "lastUpd": 1787165334.174888
-        },
         "MyroniX": {
             "name": "MyroniX",
             "version": "0.2.4",
             "langs": "en",
             "lastUpd": 1787165334.174888
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.28",
-            "langs": "en",
-            "lastUpd": 1784062928.823875
         },
         "Animetsu": {
             "name": "Animetsu",
