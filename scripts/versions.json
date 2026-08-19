@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "ReAnime": {
+            "name": "ReAnime",
+            "version": "0.2.0",
+            "langs": "en",
+            "lastUpd": 1787184000.0
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.14",
