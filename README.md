@@ -33,7 +33,6 @@ This repository contains the available javascript extension catalogues for the M
 | Miruro | 6.1.11 | Yes | Sub+Dub | 2026/07/20 |
 | MyroniX | 0.2.4 | Yes | Sub+Dub | 2026/08/19 |
 | Playback Diagnostic | 0.0.2 | No | N/a | 2026/08/10 |
-| ReAnime | 0.2.2 | Yes | Sub+Dub | 2026/08/19 |
 
 ## Novel
 

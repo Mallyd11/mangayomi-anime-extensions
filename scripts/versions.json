@@ -32,12 +32,6 @@
         }
     },
     "anime": {
-        "ReAnime": {
-            "name": "ReAnime",
-            "version": "0.2.2",
-            "langs": "en",
-            "lastUpd": 1787184000
-        },
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.2.8",

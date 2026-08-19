@@ -264,28 +264,6 @@
         "notes": ""
     },
     {
-        "name": "ReAnime",
-        "id": 631942785,
-        "baseUrl": "https://reanime.cz",
-        "lang": "en",
-        "typeSource": "single",
-        "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://reanime.cz",
-        "dateFormat": "",
-        "dateFormatLocale": "",
-        "isNsfw": false,
-        "hasCloudflare": false,
-        "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
-        "apiUrl": "https://reanime.cz",
-        "version": "0.2.2",
-        "isManga": false,
-        "itemType": 1,
-        "isFullData": false,
-        "appMinVerReq": "0.5.0",
-        "additionalParams": "",
-        "sourceCodeLanguage": 1,
-        "notes": ""
-    },
-    {
         "name": "AniLight",
         "id": 671614911,
         "baseUrl": "https://anilight.live",
