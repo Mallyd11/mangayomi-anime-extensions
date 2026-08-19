@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.13",
+    "version": "0.4.14",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -865,10 +865,11 @@ class DefaultExtension extends MProvider {
     // Server list — VidPlay (VidTube CDN) / HD (MegaPlay CDN) / Vidstream / VidCloud
     // "megaplay" pref also routes here: MegaPlay streams are served via the HD server entry.
     if (serverPref !== "mapper") {
-      if (!ids) {
-        var m2 = await this._fetchEpMeta(slug, epNum);
-        if (m2 && m2.ids) ids = m2.ids;
-      }
+      // Always re-fetch fresh ids — cached ids from the episode list can go stale
+      // (site rotates server link IDs) and point to a completely different episode.
+      var m2 = await this._fetchEpMeta(slug, epNum);
+      if (m2 && m2.ids) ids = m2.ids;
+      if (!ids) return [];
       var resolveTypes = { sub: audioPref !== "dub", dub: audioPref !== "sub" };
       var listResult = await this._fetchServerListStreams(ids, resolveTypes);
       subStreams = subStreams.concat(listResult.sub);
