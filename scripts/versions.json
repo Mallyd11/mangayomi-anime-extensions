@@ -38,6 +38,12 @@
             "langs": "en",
             "lastUpd": 1787184000.0
         },
+        "MyroniX": {
+            "name": "MyroniX",
+            "version": "0.2.4",
+            "langs": "en",
+            "lastUpd": 1787164944.014409
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.14",
@@ -103,12 +109,6 @@
             "version": "1.5.28",
             "langs": "en",
             "lastUpd": 1784410955.087323
-        },
-        "MyroniX": {
-            "name": "MyroniX",
-            "version": "0.2.3",
-            "langs": "en",
-            "lastUpd": 1783632992.765798
         },
         "AnimeHeaven": {
             "name": "AnimeHeaven",

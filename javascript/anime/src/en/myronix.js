@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.3",
+    "version": "0.2.4",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -238,64 +238,37 @@ class DefaultExtension extends MProvider {
     var pref = "sub";
     try { pref = new SharedPreferences().get("myronix_pref_lang") || "sub"; } catch (e) {}
 
-    var self    = this;
-    var baseUrl = this.source.baseUrl;
+    // AniKoto API: one call returns all servers with direct HTTPS m3u8 URLs.
+    var apiUrl = "https://dainsleif6284-anikoto-api.hf.space/api/anime/stream/" +
+      anilistId + "/" + epNum;
 
-    var fetchCategory = function(category) {
-      var serversUrl = baseUrl + "/api/v2/shirayuki/hianime/episode/servers" +
-        "?animeEpisodeId=" + encodeURIComponent(anilistId) +
-        "&ep=" + encodeURIComponent(epNum) +
-        "&provider=anilist";
+    var res = await this.client.get(apiUrl, {
+      "User-Agent": this.ua,
+      "Accept": "application/json",
+    });
+    if (res.statusCode !== 200) return [];
 
-      return self.client.get(serversUrl, self.getHeaders)
-        .then(function(res) {
-          if (res.statusCode !== 200) return [];
-          var json = JSON.parse(res.body);
-          if (!json.success || !json.data || !json.data.servers) return [];
-          var serverList = json.data.servers[category] || [];
-          if (serverList.length === 0) return [];
+    var json = JSON.parse(res.body);
+    if (!json.success || !json.data || !json.data.servers) return [];
 
-          return Promise.all(serverList.map(function(srv) {
-            var sourcesUrl = baseUrl + "/api/v2/shirayuki/hianime/episode/sources" +
-              "?animeEpisodeId=" + encodeURIComponent(anilistId) +
-              "&ep=" + encodeURIComponent(epNum) +
-              "&server=" + encodeURIComponent(srv.nameId) +
-              "&category=" + category +
-              "&provider=anilist";
+    var subStreams = [];
+    var dubStreams = [];
 
-            return self.client.get(sourcesUrl, self.getHeaders)
-              .then(function(res2) {
-                if (res2.statusCode !== 200) return [];
-                var json2 = JSON.parse(res2.body);
-                if (!json2.success || !json2.data || !json2.data.sources) return [];
-
-                var subtitles = (json2.data.tracks || [])
-                  .filter(function(t) { return t && t.file; })
-                  .map(function(t) { return { file: t.file, label: t.label || "Unknown" }; });
-
-                return json2.data.sources
-                  .filter(function(src) { return src && src.source; })
-                  .map(function(src) {
-                    return {
-                      url: src.source,
-                      originalUrl: src.source,
-                      quality: (srv.name || srv.nameId) + " [" + category.toUpperCase() + "]",
-                      headers: src.referer ? { "Referer": src.referer } : {},
-                      subtitles: subtitles,
-                    };
-                  });
-              })
-              .catch(function() { return []; });
-          })).then(function(results) {
-            return results.reduce(function(acc, r) { return acc.concat(r); }, []);
-          });
-        })
-        .catch(function() { return []; });
-    };
-
-    var results = await Promise.all([fetchCategory("sub"), fetchCategory("dub")]);
-    var subStreams = results[0];
-    var dubStreams = results[1];
+    json.data.servers.forEach(function(srv) {
+      if (!srv.m3u8Url) return;
+      var subtitles = (srv.subtitles || [])
+        .filter(function(t) { return t && t.file; })
+        .map(function(t) { return { file: t.file, label: t.label || "Unknown" }; });
+      var entry = {
+        url: srv.m3u8Url,
+        originalUrl: srv.m3u8Url,
+        quality: srv.serverName + " [" + (srv.type || "sub").toUpperCase() + "]",
+        headers: { "Referer": srv.referer || "https://megaplay.buzz/" },
+        subtitles: subtitles,
+      };
+      if (srv.type === "dub") dubStreams.push(entry);
+      else subStreams.push(entry);
+    });
 
     return pref === "dub"
       ? dubStreams.concat(subStreams)

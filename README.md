@@ -31,7 +31,7 @@ This repository contains the available javascript extension catalogues for the M
 | Just4Anime | 0.1.1 | No | Sub+Dub | 2026/08/12 |
 | JustAnime | 0.2.6 | Yes | Sub+Dub | 2026/07/26 |
 | Miruro | 6.1.11 | Yes | Sub+Dub | 2026/07/20 |
-| MyroniX | 0.2.3 | Yes | Sub+Dub | 2026/07/09 |
+| MyroniX | 0.2.4 | Yes | Sub+Dub | 2026/08/19 |
 | Playback Diagnostic | 0.0.2 | No | N/a | 2026/08/10 |
 | ReAnime | 0.2.0 | Yes | Sub+Dub | 2026/08/19 |
 
