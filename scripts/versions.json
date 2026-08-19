@@ -32,47 +32,47 @@
         }
     },
     "anime": {
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.4.15",
+            "langs": "en",
+            "lastUpd": 1787165334.174888
+        },
+        "AnimeParadise": {
+            "name": "AnimeParadise",
+            "version": "0.3.4",
+            "langs": "en",
+            "lastUpd": 1787165334.174888
+        },
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.4.11",
+            "langs": "en",
+            "lastUpd": 1787165334.174888
+        },
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.2.6",
+            "langs": "en",
+            "lastUpd": 1787165334.174888
+        },
+        "MyroniX": {
+            "name": "MyroniX",
+            "version": "0.2.4",
+            "langs": "en",
+            "lastUpd": 1787165334.174888
+        },
         "Anidap": {
             "name": "Anidap",
             "version": "1.5.28",
             "langs": "en",
             "lastUpd": 1784062928.823875
         },
-        "JustAnime": {
-            "name": "JustAnime",
-            "version": "0.2.2",
-            "langs": "en",
-            "lastUpd": 1784062928.823875
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.3.9",
-            "langs": "en",
-            "lastUpd": 1784057305.837381
-        },
         "Animetsu": {
             "name": "Animetsu",
             "version": "1.5.1",
             "langs": "en",
             "lastUpd": 1784057305.837381
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.3.6",
-            "langs": "en",
-            "lastUpd": 1784057305.837381
-        },
-        "MyroniX": {
-            "name": "MyroniX",
-            "version": "0.2.3",
-            "langs": "en",
-            "lastUpd": 1784057305.837381
-        },
-        "AnimeParadise": {
-            "name": "AnimeParadise",
-            "version": "0.3.3",
-            "langs": "en",
-            "lastUpd": 1779565217.520518
         },
         "AnimeHeaven": {
             "name": "AnimeHeaven",

@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.28",
+    "version": "1.5.29",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -26,82 +26,6 @@ const mangayomiSources = [
 
 // chad.anidap.lol is the dedicated REST API subdomain (site moved from anidap.se to anidap.lol)
 var CHAD = "https://chad.anidap.lol/rest/api";
-
-// ─── URL transform helpers ────────────────────────────────────────────────────
-//
-// Derived from anidap.lol/assets/api-9brnPJZ5.js (bundle as of 2026-07-14).
-//
-// Providers with complex transforms:
-//   beep  → path extraction    → bd.24stream.xyz/media{path}
-//   yuki  → uwu CDN proxy      → {cdn}.aniwatchtv.site/uwu/{encoded}
-//   uwu   → uwu CDN proxy      → {cdn}.aniwatchtv.site/uwu/{encoded}
-//   miku  → uwu CDN proxy      → {cdn}.aniwatchtv.site/uwu/{encoded}
-//   shiro → crs proxy (xorHex) → crs.24stream.xyz/media/{hex}&origin=kem.clvd.xyz
-//   kami  → crs proxy (xorHex) → crs.24stream.xyz/media/{hex}&origin=krussdomi.com
-//   vee   → crs proxy (xorHex) → crs.24stream.xyz/media/{hex}&origin=animeonsen.xyz
-//   mimi  → preprocessing only → hawk.aniwatchtv.site/media/{rest}
-//   mochi → string replace     → mp4.24stream.xyz/storage
-//   kiwi, loli, sora, zone, beep (if already bd.*) — identity after preprocessing
-//
-// Preprocessing (applied to ALL providers before provider-specific transform):
-//   vivibebe.site/public/stream/ → hawk.aniwatchtv.site/media/
-
-// XOR-with-137 hex encoder — used by crs.24stream.xyz proxy (b() in site JS)
-function _xorHex137(url) {
-  var r = "";
-  for (var i = 0; i < url.length; i++) {
-    var b = url.charCodeAt(i) ^ 137;
-    r += (b < 16 ? "0" : "") + b.toString(16);
-  }
-  return r;
-}
-
-// URL-safe base64 encoder (avoids btoa dependency) — for uwu CDN proxy
-function _b64url(bytes) {
-  var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  var r = "";
-  for (var i = 0; i < bytes.length; i += 3) {
-    var b0 = bytes[i];
-    var b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
-    var b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
-    r += t[b0 >> 2];
-    r += t[((b0 & 3) << 4) | (b1 >> 4)];
-    r += i + 1 < bytes.length ? t[((b1 & 15) << 2) | (b2 >> 6)] : "=";
-    r += i + 2 < bytes.length ? t[b2 & 63] : "=";
-  }
-  while (r.charAt(r.length - 1) === "=") r = r.slice(0, -1);
-  return r.replace(/\+/g, "-").replace(/\//g, "_");
-}
-
-// N() from site JS: XOR-encodes (url + \0 + origin) with fixed key → base64url
-var _UWU_KEY = "10b06cdc1ca48c9fb0b94af97cc040cf";
-var _UWU_CDN = [
-  "https://cx.aniwatchtv.site",
-  "https://nsx.aniwatchtv.site",
-  "https://pro.aniwatchtv.site",
-  "https://rl2.aniwatchtv.site",
-  "https://rrl.aniwatchtv.site"
-];
-var _uwuCounter = 0;
-
-function _encodeUwu(url, origin) {
-  var urlB = [], origB = [];
-  for (var i = 0; i < url.length;    i++) urlB.push(url.charCodeAt(i) & 255);
-  for (var i = 0; i < origin.length; i++) origB.push(origin.charCodeAt(i) & 255);
-  var combined = new Uint8Array(urlB.length + 1 + origB.length);
-  for (var i = 0; i < urlB.length; i++)  combined[i] = urlB[i];
-  combined[urlB.length] = 0;
-  for (var i = 0; i < origB.length; i++) combined[urlB.length + 1 + i] = origB[i];
-  for (var i = 0; i < combined.length; i++)
-    combined[i] ^= _UWU_KEY.charCodeAt(i % _UWU_KEY.length);
-  return _b64url(combined);
-}
-
-function _uwuTransform(url, origin) {
-  var cdn = _UWU_CDN[_uwuCounter % _UWU_CDN.length];
-  _uwuCounter++;
-  return cdn + "/uwu/" + _encodeUwu(url, origin);
-}
 
 // ─── Slug cache ───────────────────────────────────────────────────────────────
 //
@@ -423,54 +347,20 @@ class DefaultExtension extends MProvider {
 
   // ── URL transformation ─────────────────────────────────────────────────────
   //
-  // Mirrors the HOST_HANDLERS map from anidap.lol/assets/api-9brnPJZ5.js.
-  // See module-level helpers (_xorHex137, _uwuTransform) for the encoding.
+  // The site JS applies CDN proxy transforms (bd.24stream.xyz, aniwatchtv.site
+  // uwu proxies) that require browser session cookies — those 403/404 from
+  // Mangayomi's HTTP client.  Live testing confirmed every provider's raw URL
+  // works directly in Mangayomi when the correct Referer/Origin from the API
+  // response headers is forwarded.
+  //
+  // Only mochi is special: its source URL is from tools.fast4speed.rsvp which
+  // must be rewritten to mp4.24stream.xyz/storage for direct MP4 download.
 
   transformUrl(url, providerId) {
     if (!url) return url;
-
-    // Preprocessing — applied before any provider-specific transform
-    url = url.replace(
-      "https://vivibebe.site/public/stream/",
-      "https://hawk.aniwatchtv.site/media/"
-    );
-
-    switch (providerId) {
-      // Path extraction → bd.24stream.xyz/media (strips /r2 prefix)
-      case "beep":
-        if (url.startsWith("https://bd.24stream.xyz/media")) return url;
-        if (url.startsWith("/"))
-          return "https://bd.24stream.xyz/media" + url.replace("/r2", "");
-        return "https://bd.24stream.xyz/media" +
-          url.replace(/https?:\/\/[^/]+/, "").replace("/r2", "");
-
-      // String replace — same target as before
-      case "mochi":
-        return url.replace(
-          "https://tools.fast4speed.rsvp",
-          "https://mp4.24stream.xyz/storage"
-        );
-
-      // uwu CDN proxy (rotating CDN, compound base64url encoding)
-      case "yuki": return _uwuTransform(url, "https://megaplay.buzz");
-      case "uwu":  return _uwuTransform(url, "https://kwik.cx/");
-      case "miku": return _uwuTransform(url, "https://allanime.uns.bio");
-
-      // crs proxy (XOR-137 hex encoding + origin hint)
-      case "shiro":
-        return "https://crs.24stream.xyz/media/" + _xorHex137(url) +
-          "&origin=https://kem.clvd.xyz/";
-      case "kami":
-        return "https://crs.24stream.xyz/media/" + _xorHex137(url) +
-          "&origin=https://krussdomi.com";
-      case "vee":
-        if (url.startsWith("https://cdn.animeonsen.xyz")) return url;
-        return "https://crs.24stream.xyz/media/" + _xorHex137(url) +
-          "&origin=https://www.animeonsen.xyz/";
-
-      // Identity after preprocessing: kiwi, mimi, loli, sora, and any unknown provider
-      default: return url;
-    }
+    if (providerId === "mochi")
+      return url.replace("https://tools.fast4speed.rsvp", "https://mp4.24stream.xyz/storage");
+    return url;
   }
 
   // ── Detail ─────────────────────────────────────────────────────────────────
@@ -687,10 +577,10 @@ class DefaultExtension extends MProvider {
         var sources = srcData.sources || [];
         var tracks  = srcData.tracks  || [];
 
-        // Forward Referer and Origin from the API response — CDNs check
-        // these for hotlink protection; without them the CDN returns 403.
+        // Forward Referer, Origin, and User-Agent from the API response.
+        // CDNs check these for hotlink protection; sora also needs a specific UA.
         var apiHdrs = srcData.headers || {};
-        var streamHdrs = { "User-Agent": this.ua };
+        var streamHdrs = { "User-Agent": apiHdrs["User-Agent"] || this.ua };
         if (apiHdrs.Referer) streamHdrs.Referer = apiHdrs.Referer;
         if (apiHdrs.Origin)  streamHdrs.Origin  = apiHdrs.Origin;
 

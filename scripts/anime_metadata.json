@@ -42,5 +42,33 @@
     "Miruro": {
         "downloads": "Yes",
         "subDub": "Sub+Dub"
+    },
+    "Playback Diagnostic": {
+        "downloads": "No",
+        "subDub": "N/a"
+    },
+    "AniWave": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    },
+    "AniNeko": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    },
+    "Just4Anime": {
+        "downloads": "No",
+        "subDub": "Sub+Dub"
+    },
+    "AniLight": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
+    },
+    "AnimePahe": {
+        "downloads": "?",
+        "subDub": "?"
+    },
+    "ReAnime": {
+        "downloads": "Yes",
+        "subDub": "Sub+Dub"
     }
 }
