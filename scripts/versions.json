@@ -38,23 +38,17 @@
             "langs": "en",
             "lastUpd": 1787184000.0
         },
-        "JustAnime": {
-            "name": "JustAnime",
-            "version": "0.2.7",
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.4.15",
             "langs": "en",
-            "lastUpd": 1787165240.028395
+            "lastUpd": 1787165281.058739
         },
         "MyroniX": {
             "name": "MyroniX",
             "version": "0.2.4",
             "langs": "en",
             "lastUpd": 1787164944.014409
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.4.14",
-            "langs": "en",
-            "lastUpd": 1787162797.152483
         },
         "AniLight": {
             "name": "AniLight",
@@ -91,6 +85,12 @@
             "version": "0.0.2",
             "langs": "en",
             "lastUpd": 1786407249.110207
+        },
+        "JustAnime": {
+            "name": "JustAnime",
+            "version": "0.2.6",
+            "langs": "en",
+            "lastUpd": 1785080168.647181
         },
         "Miruro": {
             "name": "Miruro",

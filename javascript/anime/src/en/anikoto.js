@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.14",
+    "version": "0.4.15",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -474,15 +474,28 @@ class DefaultExtension extends MProvider {
     return [];
   }
 
-  // Extract streams via {host}/stream/getSources?id={streamId} (megaplay, vidwish, etc.)
+  // Extract streams via {host}/stream/getSources?id={dataId} (megaplay, vidwish, etc.)
+  // The URL path ID (e.g. /stream/s-2/169702/sub) is NOT the getSources ID — it's an
+  // internal routing key. The real ID lives as data-id in the embed page's HTML.
+  // Fetching the page first (with the site Referer) gives us the correct ID.
   async _extractGetSourcesStreams(embedUrl, streamId, audioLabel) {
     var streams = [];
     try {
       var hostM = embedUrl.match(/^(https?:\/\/[^/]+)/);
       if (!hostM) return streams;
       var apiHost = hostM[1];
+
+      // Fetch the embed page to resolve the real getSources ID.
+      var getSrcId = streamId; // fallback: URL path ID (likely wrong, but better than nothing)
+      try {
+        var pageRes = await this.client.get(embedUrl, { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" });
+        var pageBody = pageRes.body || "";
+        var pageIdM = pageBody.match(/data-id="(\d+)"/) || pageBody.match(/<title>File (\d+)/i);
+        if (pageIdM) getSrcId = pageIdM[1];
+      } catch (e) {}
+
       var srcRes = await this.client.get(
-        apiHost + "/stream/getSources?id=" + streamId,
+        apiHost + "/stream/getSources?id=" + getSrcId,
         { "User-Agent": this.ua, "Referer": apiHost + "/", "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" }
       );
       var srcData;
