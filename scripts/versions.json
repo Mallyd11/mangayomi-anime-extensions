@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.6.0",
+            "langs": "en",
+            "lastUpd": 1787253650.672228
+        },
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.2.8",
@@ -91,12 +97,6 @@
             "version": "0.3.4",
             "langs": "en",
             "lastUpd": 1784564001.048408
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.5.28",
-            "langs": "en",
-            "lastUpd": 1784410955.087323
         },
         "AnimeHeaven": {
             "name": "AnimeHeaven",

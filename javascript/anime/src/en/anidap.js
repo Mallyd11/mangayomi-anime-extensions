@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.28",
+    "version": "1.6.0",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -26,6 +26,15 @@ const mangayomiSources = [
 
 // chad.anidap.lol is the dedicated REST API subdomain (site moved from anidap.se to anidap.lol)
 var CHAD = "https://chad.anidap.lol/rest/api";
+
+// Canonical server ordering for the quality picker. Kiwi leads — it is the
+// default and the only server enabled out of the box; the rest only appear
+// once the user ticks them in "Servers shown in quality picker".
+// Mochi is deliberately absent: it is MP4-only and reserved for download mode.
+var SERVER_ORDER = [
+  "kiwi", "beep", "mimi", "yuki", "uwu", "miku",
+  "sora", "loli", "zone", "shiro", "kami", "vee",
+];
 
 // ─── URL transform helpers ────────────────────────────────────────────────────
 //
@@ -550,10 +559,21 @@ class DefaultExtension extends MProvider {
 
     var audioPref  = this.getPreference("anidap_audio_pref");
     var dlMode     = this.getPreference("anidap_download_mode") || "off";
-    var serverPref = this.getPreference("anidap_preferred_server") || "auto";
 
-    // Cache key includes mode + server pref so changing either gives fresh results.
-    var cacheKey = url + "|" + dlMode + "|" + serverPref;
+    // Enabled servers (multi-select). Empty/unset means Kiwi only.
+    // Ordered by SERVER_ORDER so Kiwi is tried first whenever it is enabled.
+    var serverSel = this.getPreference("anidap_servers");
+    if (!serverSel || !serverSel.length) serverSel = ["kiwi"];
+    var serverList = [];
+    for (var soi = 0; soi < SERVER_ORDER.length; soi++) {
+      if (serverSel.indexOf(SERVER_ORDER[soi]) >= 0) serverList.push(SERVER_ORDER[soi]);
+    }
+    for (var ssi = 0; ssi < serverSel.length; ssi++) {
+      if (serverList.indexOf(serverSel[ssi]) < 0) serverList.push(serverSel[ssi]);
+    }
+
+    // Cache key includes mode + server list so changing either gives fresh results.
+    var cacheKey = url + "|" + dlMode + "|" + serverList.join(",");
     var _now = Date.now();
     if (_vlCache[cacheKey] && _now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
       return _vlCache[cacheKey];
@@ -573,10 +593,10 @@ class DefaultExtension extends MProvider {
 
     // ── Stream helpers ─────────────────────────────────────────────────────
 
-    // Return the best non-mochi provider from a list.
-    // Mochi is a confirmed MP4-only server — skipped for HLS playback.
-    // All other providers (including kiwi) may serve HLS and are eligible.
-    function hlsProvider(list) {
+    // Last-resort provider when none of the enabled servers carry this episode:
+    // the API default, else the first non-mochi entry. Mochi is MP4-only and is
+    // skipped for HLS playback.
+    function fallbackProvider(list) {
       var fallback = null;
       for (var i = 0; i < list.length; i++) {
         if (list[i].id === "mochi") continue;
@@ -588,30 +608,26 @@ class DefaultExtension extends MProvider {
 
     // Build provider ordering for one audio type.
     //
-    //   Playback mode  → ALL non-mochi providers, ordered:
-    //                      1. Preferred server (if set and available)
-    //                      2. API default server
-    //                      3. Everything else
-    //                    All appear in the quality picker so the user can
-    //                    switch if the first one buffers.
+    //   Playback mode  → ONLY the servers enabled in settings, in serverList
+    //                    order (Kiwi first). Nothing else reaches the quality
+    //                    picker. If none of them serve this episode, one
+    //                    fallback provider is used so playback still works.
     //
-    //   Download mode  → mochi first (confirmed MP4), then all others.
+    //   Download mode  → mochi first (confirmed MP4), then all others. The
+    //                    allow-list is not applied here — downloads need mochi.
     function buildCategories(type, providers) {
       if (dlMode !== "on") {
-        var pref     = [];
-        var defaults = [];
-        var rest     = [];
-        for (var i = 0; i < providers.length; i++) {
-          var p = providers[i];
-          if (p.id === "mochi") continue; // skip MP4-only server for playback
-          if (serverPref !== "auto" && p.id === serverPref) pref.push(p);
-          else if (p.default) defaults.push(p);
-          else rest.push(p);
+        var ordered = [];
+        for (var si = 0; si < serverList.length; si++) {
+          for (var pi = 0; pi < providers.length; pi++) {
+            if (providers[pi].id === "mochi") continue; // MP4-only, download mode handles it
+            if (providers[pi].id === serverList[si]) ordered.push(providers[pi]);
+          }
         }
-        var ordered = pref.concat(defaults).concat(rest);
-        // Last resort: include everything including mochi if nothing else available
-        if (ordered.length === 0 && providers.length > 0)
-          ordered = providers.slice();
+        if (ordered.length === 0) {
+          var fb = fallbackProvider(providers);
+          if (fb) ordered = [fb];
+        }
         return ordered.map(function(p) { return { type: type, provider: p }; });
       }
       // Download mode: mochi first (confirmed MP4), then all other providers.
@@ -778,13 +794,13 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "anidap_preferred_server",
-        listPreference: {
-          title: "Preferred server",
-          summary: "Server tried first for playback. All servers appear in the quality picker.",
-          valueIndex: 2,
-          entries: ["Auto (API default)", "Beep", "Kiwi", "MIMI", "Yuki", "UWU", "Sora", "Loli"],
-          entryValues: ["auto", "beep", "kiwi", "mimi", "yuki", "uwu", "sora", "loli"],
+        key: "anidap_servers",
+        multiSelectListPreference: {
+          title: "Servers shown in quality picker",
+          summary: "Only the ticked servers appear during playback. Kiwi is the default and is always tried first. Tick more only if Kiwi buffers or lacks an episode.",
+          values: ["kiwi"],
+          entries: ["Kiwi (default)", "Beep", "MIMI", "Yuki", "UWU", "Miku", "Sora", "Loli", "Zone", "Shiro", "Kami", "Vee"],
+          entryValues: ["kiwi", "beep", "mimi", "yuki", "uwu", "miku", "sora", "loli", "zone", "shiro", "kami", "vee"],
         },
       },
       {
