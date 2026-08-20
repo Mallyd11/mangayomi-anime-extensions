@@ -10,7 +10,6 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| MangaFire | 0.2.0 | en | 2026/07/14 |
 | ReadComicOnline | 0.3.1 | en | 2026/05/21 |
 | Weeb Central | 0.1.1 | en | 2026/05/21 |
 | WeLoMa | 1.0.0 | ja | 2026/05/21 |
