@@ -106,6 +106,18 @@
         }
     },
     "novel": {
+        "bookReadFree": {
+            "name": "bookReadFree",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1787511418.409035
+        },
+        "NovelFire": {
+            "name": "NovelFire",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1787511418.409035
+        },
         "Novelbuddy": {
             "name": "Novelbuddy",
             "version": "0.2.0",
@@ -117,18 +129,6 @@
             "version": "0.1.0",
             "langs": "fr",
             "lastUpd": 1787501583.305029
-        },
-        "bookReadFree": {
-            "name": "bookReadFree",
-            "version": "0.0.1",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
-        "NovelFire": {
-            "name": "NovelFire",
-            "version": "0.0.1",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
         }
     }
 }
