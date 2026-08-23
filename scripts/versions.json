@@ -106,6 +106,18 @@
         }
     },
     "novel": {
+        "Novelbuddy": {
+            "name": "Novelbuddy",
+            "version": "0.2.0",
+            "langs": "en",
+            "lastUpd": 1787511294.690894
+        },
+        "J-Garden": {
+            "name": "J-Garden",
+            "version": "0.1.0",
+            "langs": "fr",
+            "lastUpd": 1787501583.305029
+        },
         "bookReadFree": {
             "name": "bookReadFree",
             "version": "0.0.1",
@@ -115,12 +127,6 @@
         "NovelFire": {
             "name": "NovelFire",
             "version": "0.0.1",
-            "langs": "en",
-            "lastUpd": 1779410651.044824
-        },
-        "Novelbuddy": {
-            "name": "Novelbuddy",
-            "version": "0.0.9",
             "langs": "en",
             "lastUpd": 1779410651.044824
         }

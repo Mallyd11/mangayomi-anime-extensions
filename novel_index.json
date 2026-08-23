@@ -56,7 +56,7 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/novel/src/en/novelbuddy.js",
         "apiUrl": "",
-        "version": "0.0.9",
+        "version": "0.2.0",
         "isManga": false,
         "itemType": 2,
         "isFullData": false,
@@ -64,5 +64,27 @@
         "additionalParams": "",
         "sourceCodeLanguage": 1,
         "notes": ""
+    },
+    {
+        "name": "J-Garden",
+        "id": 3180938589,
+        "baseUrl": "https://j-garden.fr",
+        "lang": "fr",
+        "typeSource": "single",
+        "iconUrl": "https://j-garden.fr/wp-content/uploads/2025/04/cropped-JG-logo-original-1-300x300.webp",
+        "dateFormat": "",
+        "dateFormatLocale": "",
+        "isNsfw": false,
+        "hasCloudflare": false,
+        "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/novel/src/fr/jgarden.js",
+        "apiUrl": "https://j-garden.fr/wp-json/wp/v2",
+        "version": "0.1.0",
+        "isManga": false,
+        "itemType": 2,
+        "isFullData": false,
+        "appMinVerReq": "0.5.0",
+        "additionalParams": "",
+        "sourceCodeLanguage": 1,
+        "notes": "French fan-translation team on WordPress + Elementor. Series are pages, chapters are posts."
     }
 ]

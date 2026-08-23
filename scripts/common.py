@@ -17,7 +17,9 @@ def extensionInfo(filepath):
     return fix_json(data[start:end])[0]
 
 def readFile(fileName):
-    f = open(fileName, 'r')
+    # Explicit utf-8: the default codepage on Windows mangles non-ASCII source
+    # headers (em dashes and the like) on the way into the generated indexes.
+    f = open(fileName, 'r', encoding='utf-8')
     data = f.read()
     f.close()
     return data
