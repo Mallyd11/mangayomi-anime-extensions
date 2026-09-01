@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.1.12",
+    "version": "6.1.13",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -241,13 +241,18 @@ class DefaultExtension extends MProvider {
       return seenLabels[text] > 1 ? text + " #" + seenLabels[text] : text;
     }
 
-    // Server preference: which upstream providers to query.
-    //   "all"      → megaplay + animegg (megaplay entries listed first)
-    //   "megaplay" → megaplay only
-    //   "animegg"  → animegg only
-    var serverPref = this.pref("miruro_server");
-    if (typeof serverPref !== "string" || !serverPref) serverPref = "all";
-    var providers = serverPref === "all" ? ["megaplay", "animegg"] : [serverPref];
+    // Which upstream servers to query, from the "Servers" multi-select.
+    // Order here is fixed regardless of selection order: megaplay first, so its
+    // entries head the list and keep auto-play + the default subtitle track.
+    // megaplay and animegg are the only two that work — see getSourcePreferences.
+    var enabled = this.pref("miruro_servers");
+    if (!enabled || !enabled.length) enabled = ["megaplay"];
+    var providers = [];
+    var known = ["megaplay", "animegg"];
+    for (var ki = 0; ki < known.length; ki++) {
+      if (enabled.indexOf(known[ki]) >= 0) providers.push(known[ki]);
+    }
+    if (!providers.length) providers = ["megaplay"];
 
     for (var pi = 0; pi < providers.length; pi++) {
       var provider = providers[pi];
@@ -380,14 +385,18 @@ class DefaultExtension extends MProvider {
           entryValues: ["english", "romaji", "native"],
         },
       },
+      // Only megaplay and animegg are offered because they are the only servers
+      // that work. Verified 2026-09-01 against core.justanime.to: anineko 502s
+      // after ~20s, animepahe 502s, and 26 other provider names 404. Miruro's own
+      // pipe API (bee/ally/kiwi/...) is Cloudflare 403 outside a browser session.
       {
-        key: "miruro_server",
-        listPreference: {
+        key: "miruro_servers",
+        multiSelectListPreference: {
           title: "Servers",
-          summary: "MegaPlay is 1080p HLS; AnimeGG adds 720p/480p MP4 alternates",
-          valueIndex: 0,
-          entries:     ["MegaPlay + AnimeGG", "MegaPlay only", "AnimeGG only"],
-          entryValues: ["all", "megaplay", "animegg"],
+          summary: "MegaPlay: HLS, usually only 1080p. AnimeGG: MP4, adds 360p-1080p alternates but is a separate rip.",
+          values:      ["megaplay"],
+          entries:     ["MegaPlay (HLS)", "AnimeGG (MP4, extra qualities)"],
+          entryValues: ["megaplay", "animegg"],
         },
       },
       {
