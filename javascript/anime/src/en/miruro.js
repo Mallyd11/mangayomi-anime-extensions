@@ -12,7 +12,7 @@ const mangayomiSources = [
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/miruro.js",
     "apiUrl": "",
-    "version": "6.1.11",
+    "version": "6.1.12",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -232,7 +232,22 @@ class DefaultExtension extends MProvider {
 
     var streams = [];
     var self = this;
-    var providers = ["megaplay", "animegg"];
+    var seenLabels = {};
+
+    // A provider can return several mirrors at the same resolution; number the
+    // repeats so the picker never shows two identical entries.
+    function label(text) {
+      seenLabels[text] = (seenLabels[text] || 0) + 1;
+      return seenLabels[text] > 1 ? text + " #" + seenLabels[text] : text;
+    }
+
+    // Server preference: which upstream providers to query.
+    //   "all"      → megaplay + animegg (megaplay entries listed first)
+    //   "megaplay" → megaplay only
+    //   "animegg"  → animegg only
+    var serverPref = this.pref("miruro_server");
+    if (typeof serverPref !== "string" || !serverPref) serverPref = "all";
+    var providers = serverPref === "all" ? ["megaplay", "animegg"] : [serverPref];
 
     for (var pi = 0; pi < providers.length; pi++) {
       var provider = providers[pi];
@@ -248,16 +263,9 @@ class DefaultExtension extends MProvider {
         for (var ti = 0; ti < audioList.length; ti++) {
           var type = audioList[ti];
           var typeData = data[type];
-          if (!typeData || !typeData.sources) continue;
+          if (!typeData || !Array.isArray(typeData.sources)) continue;
 
-          var streamHeaders;
-          if (provider === "megaplay") {
-            var rhdrs = typeData.headers || {};
-            streamHeaders = { "User-Agent": this.ua, "Referer": rhdrs["Referer"] || "https://megaplay.buzz/" };
-            if (rhdrs["Origin"]) streamHeaders["Origin"] = rhdrs["Origin"];
-          } else {
-            streamHeaders = { "User-Agent": this.ua, "Referer": "https://justanime.to/" };
-          }
+          var typeHdrs = typeData.headers || {};
 
           var subtitles = [];
           var tracks = typeData.subtitles || typeData.tracks || [];
@@ -272,30 +280,45 @@ class DefaultExtension extends MProvider {
             subtitles[0].default = true;
           }
 
-          var sources = typeData.sources;
+          var sources = typeData.sources.slice();
+          if (provider !== "megaplay") {
+            sources.sort(function(a, b) { return (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0); });
+          }
           for (var si = 0; si < sources.length; si++) {
             var s = sources[si];
             var streamUrl = s.url || s.file;
             if (!streamUrl) continue;
+
+            // Stream headers must come from the API where it supplies them: animegg's
+            // CDN returns HTTP 500 for any Referer other than https://www.animegg.org/.
+            var srcHdrs = s.headers || typeHdrs;
+            var streamHeaders;
+            if (provider === "megaplay") {
+              streamHeaders = { "User-Agent": this.ua, "Referer": srcHdrs["Referer"] || "https://megaplay.buzz/" };
+            } else {
+              streamHeaders = { "User-Agent": this.ua, "Referer": srcHdrs["Referer"] || "https://www.animegg.org/" };
+            }
+            if (srcHdrs["Origin"]) streamHeaders["Origin"] = srcHdrs["Origin"];
+
             if (provider === "megaplay" && (s.isM3U8 || streamUrl.indexOf(".m3u8") >= 0) && (!s.quality || s.quality === "auto")) {
               var variants = await self.resolveMasterPlaylist(streamUrl, streamHeaders);
               if (variants.length > 0) {
                 for (var vi = 0; vi < variants.length; vi++) {
                   streams.push({ url: variants[vi].url, originalUrl: streamUrl,
-                    quality: variants[vi].quality + " [" + type.toUpperCase() + " · mega]",
+                    quality: label(variants[vi].quality + " [" + type.toUpperCase() + " · mega]"),
                     headers: streamHeaders, subtitles: subtitles });
                 }
                 continue;
               }
             }
+            var qual = s.quality || "auto";
+            if (qual !== "auto" && /^\d+$/.test(qual)) qual += "p";
             streams.push({ url: streamUrl, originalUrl: streamUrl,
-              quality: (s.quality || "auto") + " [" + type.toUpperCase() + " · " + provider + "]",
+              quality: label(qual + " [" + type.toUpperCase() + " · " + provider + "]"),
               headers: streamHeaders, subtitles: subtitles });
           }
         }
       } catch (e) {}
-
-      if (streams.length > 0) break;
     }
 
     return streams;
@@ -355,6 +378,16 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries:     ["English", "Romaji", "Native"],
           entryValues: ["english", "romaji", "native"],
+        },
+      },
+      {
+        key: "miruro_server",
+        listPreference: {
+          title: "Servers",
+          summary: "MegaPlay is 1080p HLS; AnimeGG adds 720p/480p MP4 alternates",
+          valueIndex: 0,
+          entries:     ["MegaPlay + AnimeGG", "MegaPlay only", "AnimeGG only"],
+          entryValues: ["all", "megaplay", "animegg"],
         },
       },
       {

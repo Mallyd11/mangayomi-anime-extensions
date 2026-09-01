@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "Miruro": {
+            "name": "Miruro",
+            "version": "6.1.12",
+            "langs": "en",
+            "lastUpd": 1788279498.837814
+        },
         "Anidap": {
             "name": "Anidap",
             "version": "1.6.0",
@@ -85,12 +91,6 @@
             "version": "0.0.2",
             "langs": "en",
             "lastUpd": 1786407249.110207
-        },
-        "Miruro": {
-            "name": "Miruro",
-            "version": "6.1.11",
-            "langs": "en",
-            "lastUpd": 1784565026.256296
         },
         "AnimeParadise": {
             "name": "AnimeParadise",
