@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.4.16",
+            "langs": "en",
+            "lastUpd": 1788622738.283747
+        },
         "Miruro": {
             "name": "Miruro",
             "version": "6.1.13",
@@ -43,12 +49,6 @@
             "version": "0.2.8",
             "langs": "en",
             "lastUpd": 1787165614.772946
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.4.15",
-            "langs": "en",
-            "lastUpd": 1787165281.058739
         },
         "MyroniX": {
             "name": "MyroniX",

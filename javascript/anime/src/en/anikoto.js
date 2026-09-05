@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.15",
+    "version": "0.4.16",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -507,6 +507,7 @@ class DefaultExtension extends MProvider {
         else if (Array.isArray(srcData.sources) && srcData.sources.length) m3u8 = srcData.sources[0].file || srcData.sources[0].url || "";
       }
       if (!m3u8) return streams;
+      if (this._alreadyResolved(m3u8)) return streams; // another server, same file
       var hdrs = { "User-Agent": this.ua, "Referer": apiHost + "/" };
       var subtitles = await this._inlineSubtitles(srcData.tracks, apiHost + "/");
       var variants = await this._resolveHlsVariants(m3u8, hdrs);
@@ -548,6 +549,7 @@ class DefaultExtension extends MProvider {
         else if (Array.isArray(srcData.sources) && srcData.sources.length) m3u8 = srcData.sources[0].file || srcData.sources[0].url || "";
       }
       if (!m3u8) return streams;
+      if (this._alreadyResolved(m3u8)) return streams; // another server, same file
       var subtitles = await this._inlineSubtitles(srcData.tracks, "https://vidtube.site/");
       var hdrs = { "User-Agent": this.ua, "Referer": "https://vidtube.site/" };
       var variants = await this._resolveHlsVariants(m3u8, hdrs);
@@ -779,9 +781,78 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
+  // Extra servers to resolve for one audio track after the first working one.
+  // The site lists an episode on several hosts and they do NOT carry the same
+  // renditions — megaplay often has a single 1080p (or a lone 720p) while
+  // vidtube carries 1080p/720p/360p — so stopping at the first working server
+  // hid qualities that were sitting one server over. Bounded because every
+  // extra server costs a handful of requests.
+  get EXTRA_SERVERS_PER_TYPE() { return 2; }
+
+  // Stop hunting once this many distinct resolutions are in hand: 1080p/720p/360p
+  // is the full ladder these CDNs offer.
+  get ENOUGH_RESOLUTIONS() { return 3; }
+
+  // Servers frequently resolve to the exact same file (HD-1 and Vidstream-2 are
+  // usually one CDN path). Remember what a track already yielded so the extra
+  // servers cost two requests instead of a second master fetch + subtitle set.
+  _alreadyResolved(m3u8) {
+    if (!this._seenSources) return false;
+    if (this._seenSources[m3u8]) return true;
+    this._seenSources[m3u8] = true;
+    return false;
+  }
+
+  // Height of a stream in pixels, from the "1080p - HD-1 [Sub]" quality label.
+  // 0 for unlabelled ("Auto") streams.
+  _streamHeight(stream) {
+    var m = String(stream && stream.quality || "").match(/^(\d+)p/);
+    return m ? parseInt(m[1]) : 0;
+  }
+
+  // Append streams the list does not already carry, keyed by final URL.
+  _mergeStreams(existing, incoming) {
+    var seen = {};
+    for (var i = 0; i < existing.length; i++) seen[existing[i].url] = true;
+    for (var j = 0; j < incoming.length; j++) {
+      if (seen[incoming[j].url]) continue;
+      seen[incoming[j].url] = true;
+      existing.push(incoming[j]);
+    }
+    return existing;
+  }
+
+  _distinctResolutions(streams) {
+    var seen = {}, n = 0;
+    for (var i = 0; i < streams.length; i++) {
+      var h = this._streamHeight(streams[i]);
+      if (seen[h]) continue;
+      seen[h] = true;
+      n++;
+    }
+    return n;
+  }
+
+  // Mangayomi plays the first entry of the list, so "preferred quality" just
+  // moves matching streams to the front. Everything else keeps its order, which
+  // means the first working server stays ahead of the extra ones and no quality
+  // is ever removed from the picker.
+  _sortByQualityPref(streams, pref) {
+    var want = parseInt(pref) || 0;
+    if (!want || streams.length < 2) return streams;
+    var exact = [], rest = [];
+    for (var i = 0; i < streams.length; i++) {
+      if (this._streamHeight(streams[i]) === want) exact.push(streams[i]);
+      else rest.push(streams[i]);
+    }
+    return exact.concat(rest);
+  }
+
   // Fetch servers from /ajax/server/list?servers={ids} and resolve sub and dub separately.
   // The response groups servers in .type[data-type="sub/hsub/dub"] containers, each with
-  // its own li[data-link-id][data-sv-id] entries. We pick the first working server per type.
+  // its own li[data-link-id][data-sv-id] entries. Per type we resolve the first
+  // working server plus up to EXTRA_SERVERS_PER_TYPE more, merging their streams,
+  // because the hosts carry different renditions (see EXTRA_SERVERS_PER_TYPE).
   // resolveTypes: { sub: bool, dub: bool } — skip types the caller doesn't need (saves time).
   async _fetchServerListStreams(ids, resolveTypes) {
     var empty = { sub: [], dub: [] };
@@ -812,6 +883,8 @@ class DefaultExtension extends MProvider {
           var audioLabel = isDub ? "Dub" : "Sub";
           var typeServerEls = typeEl.select("li[data-link-id]");
           var seenSvIds = {};
+          var collected = [], extraTried = 0;
+          this._seenSources = {}; // per audio track — sub and dub are different files
           for (var i = 0; i < typeServerEls.length; i++) {
             var el = typeServerEls[i];
             var svId = el.attr("data-sv-id") || ("srv_" + t + "_" + i);
@@ -820,10 +893,17 @@ class DefaultExtension extends MProvider {
             var linkId = el.attr("data-link-id") || "";
             if (!linkId) continue;
             var svName = (el.text || "").trim().slice(0, 20) || "Srv";
+            var hadStreams = collected.length > 0;
             var resolved = await this._resolveStreams(linkId, svName + " [" + audioLabel + "]");
-            if (isDub) { dubStreams = dubStreams.concat(resolved); if (dubStreams.length > 0) break; }
-            else       { subStreams = subStreams.concat(resolved); if (subStreams.length > 0) break; }
+            collected = this._mergeStreams(collected, resolved);
+            if (hadStreams) extraTried++;
+            // Nothing playable yet: keep walking every server, as before.
+            if (collected.length === 0) continue;
+            if (this._distinctResolutions(collected) >= this.ENOUGH_RESOLUTIONS) break;
+            if (extraTried >= this.EXTRA_SERVERS_PER_TYPE) break;
           }
+          if (isDub) dubStreams = dubStreams.concat(collected);
+          else       subStreams = subStreams.concat(collected);
         }
         return { sub: subStreams, dub: dubStreams };
       }
@@ -831,6 +911,8 @@ class DefaultExtension extends MProvider {
       // Fallback: untyped list — treat all as sub.
       var serverEls = doc.select("li[data-link-id]");
       var seenSvIds = {};
+      var extraTried = 0;
+      this._seenSources = {};
       for (var i = 0; i < serverEls.length; i++) {
         var el = serverEls[i];
         var svId = el.attr("data-sv-id") || ("srv" + i);
@@ -839,9 +921,13 @@ class DefaultExtension extends MProvider {
         var linkId = el.attr("data-link-id") || "";
         if (!linkId) continue;
         var svName = (el.text || "").trim().slice(0, 20) || "Srv" + (i + 1);
+        var hadStreams = subStreams.length > 0;
         var resolved = await this._resolveStreams(linkId, svName);
-        subStreams = subStreams.concat(resolved);
-        if (subStreams.length > 0) break;
+        subStreams = this._mergeStreams(subStreams, resolved);
+        if (hadStreams) extraTried++;
+        if (subStreams.length === 0) continue;
+        if (this._distinctResolutions(subStreams) >= this.ENOUGH_RESOLUTIONS) break;
+        if (extraTried >= this.EXTRA_SERVERS_PER_TYPE) break;
       }
       return { sub: subStreams, dub: [] };
     } catch (e) {}
@@ -872,7 +958,10 @@ class DefaultExtension extends MProvider {
     try { serverPref = new SharedPreferences().get("anikoto_pref_server") || "megaplay"; } catch (e) {}
     var audioPref = "sub_dub";
     try { audioPref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
+    var qualityPref = "auto";
+    try { qualityPref = new SharedPreferences().get("anikoto_pref_quality") || "auto"; } catch (e) {}
 
+    this._seenSources = {};
     var subStreams = [], dubStreams = [];
 
     // Server list — VidPlay (VidTube CDN) / HD (MegaPlay CDN) / Vidstream / VidCloud
@@ -905,11 +994,16 @@ class DefaultExtension extends MProvider {
           var kiwi = mapData["Kiwi-Stream-"] || {};
           var subLinkId = kiwi.sub && kiwi.sub.url ? kiwi.sub.url : "";
           var dubLinkId = kiwi.dub && kiwi.dub.url ? kiwi.dub.url : "";
-          if (subLinkId) { var ks = await this._resolveStreams(subLinkId, "Sub [Kiwi-Stream]"); subStreams = subStreams.concat(ks); }
-          if (dubLinkId) { var kd = await this._resolveStreams(dubLinkId, "Dub [Kiwi-Stream]"); dubStreams = dubStreams.concat(kd); }
+          if (subLinkId) { this._seenSources = {}; var ks = await this._resolveStreams(subLinkId, "Sub [Kiwi-Stream]"); subStreams = subStreams.concat(ks); }
+          if (dubLinkId) { this._seenSources = {}; var kd = await this._resolveStreams(dubLinkId, "Dub [Kiwi-Stream]"); dubStreams = dubStreams.concat(kd); }
         }
       }
     }
+
+    // Sort each track on its own: the audio preference below decides which track
+    // leads, the quality preference only reorders within a track.
+    subStreams = this._sortByQualityPref(subStreams, qualityPref);
+    dubStreams = this._sortByQualityPref(dubStreams, qualityPref);
 
     if (audioPref === "dub_sub") return dubStreams.concat(subStreams);
     if (audioPref === "sub")     return subStreams;
@@ -927,7 +1021,7 @@ class DefaultExtension extends MProvider {
         key: "anikoto_pref_server",
         listPreference: {
           title: "Stream source",
-          summary: "Server List tries each AniKoto server in order (VidPlay → MegaPlay HD → Vidstream → VidCloud) and uses the first that returns a working stream. Kiwi-Stream is legacy and unlikely to work.",
+          summary: "Server List walks the AniKoto servers (VidPlay / MegaPlay HD / Vidstream / VidCloud) and merges the qualities they carry — they rarely offer the same ladder, so a 720p missing from one is often on the next. Kiwi-Stream is legacy and unlikely to work.",
           valueIndex: 0,
           entries: [
             "Server List (MegaPlay / VidPlay)",
@@ -942,6 +1036,22 @@ class DefaultExtension extends MProvider {
           title: "Episode thumbnails",
           summary: "Fetch per-episode thumbnails from ani.zip. Adds one extra network request when opening an anime.",
           value: false,
+        },
+      },
+      {
+        key: "anikoto_pref_quality",
+        listPreference: {
+          title: "Preferred quality",
+          summary: "Plays this resolution first when the episode has it. Every quality the servers carry stays in the picker either way — Auto keeps the server's own order, highest first.",
+          valueIndex: 0,
+          entries: [
+            "Auto (highest available)",
+            "1080p",
+            "720p",
+            "480p",
+            "360p",
+          ],
+          entryValues: ["auto", "1080", "720", "480", "360"],
         },
       },
       {
