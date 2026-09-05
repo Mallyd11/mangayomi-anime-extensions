@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.17",
+    "version": "0.4.18",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -865,9 +865,12 @@ class DefaultExtension extends MProvider {
     return n;
   }
 
-  // Enough for one audio track: a choice of resolution AND a choice of CDN.
-  _ladderIsComplete(streams) {
-    return this._distinctHosts(streams) >= this.ENOUGH_HOSTS &&
+  // Enough for one audio track: a choice of resolution, plus a choice of CDN
+  // when the viewer has actually switched on more than one server. With the
+  // default single server there is no second host to wait for.
+  _ladderIsComplete(streams, enabled) {
+    var wantHosts = (enabled && enabled.length > 1) ? this.ENOUGH_HOSTS : 1;
+    return this._distinctHosts(streams) >= wantHosts &&
            this._distinctResolutions(streams) >= this.ENOUGH_RESOLUTIONS;
   }
 
@@ -893,8 +896,9 @@ class DefaultExtension extends MProvider {
   // Mangayomi plays the first entry of the list, so both preferences are applied
   // by moving matches to the front; nothing is dropped, and streams keep their
   // relative order inside each group. Server outranks quality: a slow CDN stalls
-  // playback at every resolution, so honouring the resolution on the wrong
-  // server would hand back the stall the setting exists to escape.
+  // playback at every resolution, so honouring the resolution on a server the
+  // viewer ranked lower would hand back the stall. serverPref is the first
+  // switched-on server, not a setting of its own.
   _applyPlaybackPrefs(streams, serverPref, qualityPref) {
     var wantH  = parseInt(qualityPref) || 0;
     var wantSv = (serverPref && serverPref !== "auto") ? serverPref : "";
@@ -911,6 +915,84 @@ class DefaultExtension extends MProvider {
     return both.concat(svOnly, qOnly, rest);
   }
 
+  // The server names the site prints, grouped. Order matters twice over: it is
+  // the order servers are resolved in, and the order their streams appear in the
+  // picker, so the default (VidPlay) leads and auto-plays.
+  get KNOWN_SERVERS() { return ["vidplay", "hd", "vidstream", "vidcloud"]; }
+
+  // Which group a printed name like "VidPlay-1", "HD-2" or "Vidstream-2" belongs
+  // to. "" for a name the site invented since this was written.
+  _serverGroup(name) {
+    var n = String(name || "").trim().toLowerCase();
+    var known = this.KNOWN_SERVERS;
+    for (var i = 0; i < known.length; i++) if (n.indexOf(known[i]) === 0) return known[i];
+    return "";
+  }
+
+  // Servers the viewer has switched on, in KNOWN_SERVERS order. VidPlay alone by
+  // default: it is the one whose CDN reliably outruns playback (see the
+  // "Servers" preference), and every server added past it costs requests.
+  _enabledServers() {
+    var enabled;
+    try { enabled = new SharedPreferences().get("anikoto_pref_servers"); } catch (e) {}
+    if (!enabled || !enabled.length) enabled = ["vidplay"];
+    var picked = [];
+    var known = this.KNOWN_SERVERS;
+    for (var i = 0; i < known.length; i++) {
+      if (enabled.indexOf(known[i]) >= 0) picked.push(known[i]);
+    }
+    return picked.length ? picked : ["vidplay"];
+  }
+
+  // Split one type container's servers into what the viewer asked for and
+  // everything else. The second tier is a rescue lane only: plenty of titles
+  // carry no VidPlay copy at all (Solo Leveling S2 is MegaPlay-only), and an
+  // episode that refuses to play is worse than one that plays on a server the
+  // viewer did not tick.
+  _tierServers(serverEls, enabled) {
+    var chosen = [], rest = [], seenSvIds = {};
+    for (var i = 0; i < serverEls.length; i++) {
+      var el = serverEls[i];
+      var svId = el.attr("data-sv-id") || ("srv_" + i);
+      if (seenSvIds[svId]) continue;
+      seenSvIds[svId] = true;
+      var linkId = el.attr("data-link-id") || "";
+      if (!linkId) continue;
+      var name = (el.text || "").trim().slice(0, 20) || "Srv" + (i + 1);
+      var entry = { linkId: linkId, name: name, group: this._serverGroup(name) };
+      if (entry.group && enabled.indexOf(entry.group) >= 0) chosen.push(entry);
+      else rest.push(entry);
+    }
+    chosen.sort(function (a, b) {
+      return enabled.indexOf(a.group) - enabled.indexOf(b.group);
+    });
+    return [chosen, rest];
+  }
+
+  // Resolve one tier of servers, merging what they carry, until the ladder is
+  // good enough or a budget runs out. Returns the streams collected.
+  async _walkServers(entries, audioLabel, collected, enabled) {
+    var resolvedCount = 0, walked = 0;
+    var walkStart = Date.now();
+    for (var i = 0; i < entries.length; i++) {
+      var before = collected.length;
+      var label = entries[i].name + (audioLabel ? " [" + audioLabel + "]" : "");
+      var resolved = await this._resolveStreams(entries[i].linkId, label, before > 0);
+      collected = this._mergeStreams(collected, resolved);
+      walked++;
+      if (collected.length > before) resolvedCount++; // a duplicate file costs almost nothing
+      // Nothing playable yet: keep walking every server, as before.
+      if (collected.length === 0) continue;
+      if (this._ladderIsComplete(collected, enabled)) break;
+      if (resolvedCount >= this.MAX_RESOLVED_PER_TYPE) break;
+      if (walked >= this.MAX_SERVERS_PER_TYPE) break;
+      // A playable stream is already in hand; a slow origin must not hold the
+      // episode hostage while we shop for a second opinion.
+      if (Date.now() - walkStart > this.EXTRA_WALK_BUDGET_MS) break;
+    }
+    return collected;
+  }
+
   // Fetch servers from /ajax/server/list?servers={ids} and resolve sub and dub separately.
   // The response groups servers in .type[data-type="sub/hsub/dub"] containers, each with
   // its own li[data-link-id][data-sv-id] entries. Per type we resolve the first
@@ -922,6 +1004,7 @@ class DefaultExtension extends MProvider {
     if (!ids) return empty;
     var wantSub = !resolveTypes || resolveTypes.sub !== false;
     var wantDub = !resolveTypes || resolveTypes.dub !== false;
+    var enabled = this._enabledServers();
     try {
       var res = await this.client.get(
         this.source.baseUrl + "/ajax/server/list?servers=" + ids,
@@ -944,33 +1027,14 @@ class DefaultExtension extends MProvider {
           if (!isDub && (!wantSub || subStreams.length > 0)) continue;
           if (isDub && (!wantDub || dubStreams.length > 0)) continue;
           var audioLabel = isDub ? "Dub" : "Sub";
-          var typeServerEls = typeEl.select("li[data-link-id]");
-          var seenSvIds = {};
-          var collected = [], resolvedCount = 0, walked = 0;
+          var tiers = this._tierServers(typeEl.select("li[data-link-id]"), enabled);
+          var collected = [];
           this._seenSources = {}; // per audio track — sub and dub are different files
           this._trackSubs = null;
-          var walkStart = Date.now();
-          for (var i = 0; i < typeServerEls.length; i++) {
-            var el = typeServerEls[i];
-            var svId = el.attr("data-sv-id") || ("srv_" + t + "_" + i);
-            if (seenSvIds[svId]) continue;
-            seenSvIds[svId] = true;
-            var linkId = el.attr("data-link-id") || "";
-            if (!linkId) continue;
-            var svName = (el.text || "").trim().slice(0, 20) || "Srv";
-            var before = collected.length;
-            var resolved = await this._resolveStreams(linkId, svName + " [" + audioLabel + "]", before > 0);
-            collected = this._mergeStreams(collected, resolved);
-            walked++;
-            if (collected.length > before) resolvedCount++; // a duplicate file costs almost nothing
-            // Nothing playable yet: keep walking every server, as before.
-            if (collected.length === 0) continue;
-            if (this._ladderIsComplete(collected)) break;
-            if (resolvedCount >= this.MAX_RESOLVED_PER_TYPE) break;
-            if (walked >= this.MAX_SERVERS_PER_TYPE) break;
-            // A playable stream is already in hand; a slow origin must not hold
-            // the episode hostage while we shop for a second opinion.
-            if (Date.now() - walkStart > this.EXTRA_WALK_BUDGET_MS) break;
+          collected = await this._walkServers(tiers[0], audioLabel, collected, enabled);
+          // Rescue lane: only when the chosen servers gave this track nothing.
+          if (collected.length === 0) {
+            collected = await this._walkServers(tiers[1], audioLabel, collected, enabled);
           }
           if (isDub) dubStreams = dubStreams.concat(collected);
           else       subStreams = subStreams.concat(collected);
@@ -979,30 +1043,12 @@ class DefaultExtension extends MProvider {
       }
 
       // Fallback: untyped list — treat all as sub.
-      var serverEls = doc.select("li[data-link-id]");
-      var seenSvIds = {};
-      var resolvedCount = 0, walked = 0;
+      var flatTiers = this._tierServers(doc.select("li[data-link-id]"), enabled);
       this._seenSources = {};
       this._trackSubs = null;
-      var walkStart = Date.now();
-      for (var i = 0; i < serverEls.length; i++) {
-        var el = serverEls[i];
-        var svId = el.attr("data-sv-id") || ("srv" + i);
-        if (seenSvIds[svId]) continue;
-        seenSvIds[svId] = true;
-        var linkId = el.attr("data-link-id") || "";
-        if (!linkId) continue;
-        var svName = (el.text || "").trim().slice(0, 20) || "Srv" + (i + 1);
-        var before = subStreams.length;
-        var resolved = await this._resolveStreams(linkId, svName, before > 0);
-        subStreams = this._mergeStreams(subStreams, resolved);
-        walked++;
-        if (subStreams.length > before) resolvedCount++;
-        if (subStreams.length === 0) continue;
-        if (this._ladderIsComplete(subStreams)) break;
-        if (resolvedCount >= this.MAX_RESOLVED_PER_TYPE) break;
-        if (walked >= this.MAX_SERVERS_PER_TYPE) break;
-        if (Date.now() - walkStart > this.EXTRA_WALK_BUDGET_MS) break;
+      subStreams = await this._walkServers(flatTiers[0], "", subStreams, enabled);
+      if (subStreams.length === 0) {
+        subStreams = await this._walkServers(flatTiers[1], "", subStreams, enabled);
       }
       return { sub: subStreams, dub: [] };
     } catch (e) {}
@@ -1035,8 +1081,9 @@ class DefaultExtension extends MProvider {
     try { audioPref = new SharedPreferences().get("anikoto_pref_audio") || "sub_dub"; } catch (e) {}
     var qualityPref = "auto";
     try { qualityPref = new SharedPreferences().get("anikoto_pref_quality") || "auto"; } catch (e) {}
-    var serverOrder = "auto";
-    try { serverOrder = new SharedPreferences().get("anikoto_pref_server_order") || "auto"; } catch (e) {}
+    // The first switched-on server leads the picker, so it is also what the
+    // quality sort must not reorder around.
+    var serverOrder = this._enabledServers()[0];
 
     this._seenSources = {};
     var subStreams = [], dubStreams = [];
@@ -1116,19 +1163,13 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "anikoto_pref_server_order",
-        listPreference: {
-          title: "Preferred server",
-          summary: "Plays this server first when the episode has it. The servers deliver at very different speeds — MegaPlay's CDN has been measured throttled to about the video bitrate, which stalls playback, while VidPlay's served the same episode far faster. If episodes buffer on Auto, pin VidPlay here.",
-          valueIndex: 0,
-          entries: [
-            "Auto (order the site gives)",
-            "VidPlay",
-            "MegaPlay HD",
-            "Vidstream",
-            "VidCloud",
-          ],
-          entryValues: ["auto", "vidplay", "hd", "vidstream", "vidcloud"],
+        key: "anikoto_pref_servers",
+        multiSelectListPreference: {
+          title: "Servers",
+          summary: "VidPlay only, by default: its CDN was measured delivering an episode 70-300x faster than realtime, while MegaPlay's ran at 0.95-0.99x — slower than playback, which is what makes episodes stall. Tick more to widen the quality picker at the cost of a slower start. Titles with no VidPlay copy fall back to whatever the site does have, whatever is ticked here.",
+          values:      ["vidplay"],
+          entries:     ["VidPlay (fast CDN)", "MegaPlay HD (often stalls)", "Vidstream (often stalls)", "VidCloud"],
+          entryValues: ["vidplay", "hd", "vidstream", "vidcloud"],
         },
       },
       {
