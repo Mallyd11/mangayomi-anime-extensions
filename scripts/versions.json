@@ -1,27 +1,27 @@
 {
     "manga": {
-        "ReadComicOnline": {
-            "name": "ReadComicOnline",
-            "version": "0.3.1",
-            "langs": "en",
-            "lastUpd": 1779415180.160092
-        },
         "Weeb Central": {
             "name": "Weeb Central",
             "version": "0.1.1",
             "langs": "en",
             "lastUpd": 1779415180.160092
         },
-        "WeLoMa": {
-            "name": "WeLoMa",
-            "version": "1.0.0",
-            "langs": "ja",
-            "lastUpd": 1779410651.044824
+        "ReadComicOnline": {
+            "name": "ReadComicOnline",
+            "version": "0.3.1",
+            "langs": "en",
+            "lastUpd": 1779415180.160092
         },
         "Mangapill": {
             "name": "Mangapill",
             "version": "1.0.4",
             "langs": "en",
+            "lastUpd": 1779410651.044824
+        },
+        "WeLoMa": {
+            "name": "WeLoMa",
+            "version": "1.0.0",
+            "langs": "ja",
             "lastUpd": 1779410651.044824
         }
     },
@@ -106,14 +106,14 @@
         }
     },
     "novel": {
-        "bookReadFree": {
-            "name": "bookReadFree",
+        "NovelFire": {
+            "name": "NovelFire",
             "version": "0.1.0",
             "langs": "en",
             "lastUpd": 1787511418.409035
         },
-        "NovelFire": {
-            "name": "NovelFire",
+        "bookReadFree": {
+            "name": "bookReadFree",
             "version": "0.1.0",
             "langs": "en",
             "lastUpd": 1787511418.409035
