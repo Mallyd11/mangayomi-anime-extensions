@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.at",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.1",
+    "version": "0.5.2",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -429,17 +429,26 @@ class DefaultExtension extends MProvider {
         subtitles.push({ file: subs[i].src, label: (subs[i].label || subs[i].lang || "Subtitle").trim() });
       }
 
-      // Split the master into per-quality entries so the picker offers 1080/720/…
-      var variants = await this.resolveHlsPlaylist(data.src, hdrs);
-      if (variants && variants.length) {
-        for (var v = 0; v < variants.length; v++) {
+      // Hand back the MEDIA playlist, never the master.
+      //
+      // resolveHlsPlaylist returns {kind, variants} — not an array. Testing it
+      // for .length always failed, so every episode fell through to the master
+      // URL. libmpv follows a master fine, which is why playback looked correct,
+      // but the app's m3u8 downloader treats every non-comment line as a segment
+      // (it has no #EXT-X-STREAM-INF handling), so it downloaded "1080/index.m3u8"
+      // as if it were video and the download failed.
+      var resolved = await this.resolveHlsPlaylist(data.src, hdrs);
+      if (resolved.kind === "master") {
+        for (var v = 0; v < resolved.variants.length; v++) {
           streams.push({
-            url: variants[v].url, originalUrl: data.src,
-            quality: variants[v].label + " - ZokoAnime [" + audioLabel + "]",
+            url: resolved.variants[v].url, originalUrl: data.src,
+            quality: resolved.variants[v].label + " - ZokoAnime [" + audioLabel + "]",
             headers: hdrs, subtitles: subtitles,
           });
         }
       } else {
+        // "flat" is already a media playlist; the error kinds leave nothing
+        // better to offer than the URL the site gave us.
         streams.push({
           url: data.src, originalUrl: data.src,
           quality: "ZokoAnime [" + audioLabel + "]",
