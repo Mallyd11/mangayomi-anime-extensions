@@ -3,11 +3,11 @@ const mangayomiSources = [
     "name": "HiAnime",
     "id": 1183439094,
     "lang": "en",
-    "baseUrl": "https://hianime.ms",
-    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.ms",
+    "baseUrl": "https://hianime.at",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.at",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.11",
+    "version": "0.5.0",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -22,6 +22,42 @@ const mangayomiSources = [
     "notes": "",
   },
 ];
+
+// Pre-filled address of the unwrapping proxy (proxy/proxy.js in this repo), so
+// switching the fix on is one toggle per machine instead of a URL anyone has to
+// be told.
+//
+// This replaces two upstream proxies that both went dark: shirayuki
+// (shirayuki.eastasia.cloudapp.azure.com:1818) no longer answers at all, and
+// vibevibe.workers.dev — the single host servesRawTs() used to whitelist — is
+// gone too, which is why every episode ended up on a disguised CDN with nothing
+// able to decode it.
+//
+// NOTE: localhost means *that* PC — this is not a shared address. Every machine
+// needs proxy/proxy.js running locally (Node + a Startup shortcut). To cover
+// several machines, and phones, from one place, deploy proxy/worker.js and put
+// its https URL here instead; the toggle then needs no per-machine setup.
+var DEFAULT_PROXY = "http://localhost:8765";
+
+// Hosts measured serving raw MPEG-TS that is merely *named* .jpg — libmpv
+// rejects them on the extension alone, so the proxy only has to rename them and
+// can 302 straight back to the CDN (mode=redirect): full CDN speed, a few
+// hundred bytes through the proxy per episode instead of gigabytes.
+//
+// Everything else is assumed PNG-wrapped and read through the proxy so the
+// header can be stripped. That is the safe default — tsStart() returns 0 for a
+// clean transport stream, so routing a raw-TS host this way still plays, it just
+// carries bytes it did not need to. Re-measure before trusting: these hosts
+// rotate (nekostream became kotocdn within days) and the wrapper is currently
+// 252 bytes, not the 70 it used to be.
+var RAW_TS_HOSTS = ["s1.akirax.buzz", "s2.norami.top", "vibevibe.workers.dev", "hls2.aniwatchtv.uk", "aniwatchtv.uk"];
+
+// ZokoAnime hides its player payload in `window.__P`: base64 of the JSON XORed
+// with this literal repeating key. Straight out of the site's own
+// zokoanime1.pages.dev/core/obfuscate.js — there is no server-side secret and no
+// session, which is exactly why this server is usable from an extension when
+// TryEmbed (same CDN, Cloudflare-fingerprinted) is not.
+var ZOKO_KEY = "otaku-embed-v1";
 
 class DefaultExtension extends MProvider {
   constructor() {
@@ -150,7 +186,7 @@ class DefaultExtension extends MProvider {
   }
 
   async getLatestUpdates(page) {
-    var p = await this.fetchPage("/browse?page=" + page);
+    var p = await this.fetchPage("/recently-updated?page=" + page);
     var list = this.parseList(p.doc, p.html);
     return { list: list, hasNextPage: this.hasNextPage(p.doc, list.length) };
   }
@@ -175,209 +211,111 @@ class DefaultExtension extends MProvider {
     return 5;
   }
 
-  // Extract anime slug+id from a /details/ URL or build it from a watch URL
-  // /details/{slug}-{id} or /watch-{slug}-episode-{n}-{id}
-  extractAnimeIdAndSlug(url) {
-    var path = url.replace(this.source.baseUrl, "").replace(/^https?:\/\/[^\/]+/, "");
-    var m = path.match(/\/details\/(.+)$/);
-    if (m) {
-      return { slug: m[1].replace(/[?#].*$/, ""), full: m[1].replace(/[?#].*$/, "") };
-    }
-    m = path.match(/\/watch-(.+)-episode-\d+-([\w]+)/);
-    if (m) {
-      return { slug: m[1] + "-" + m[2], full: m[1] + "-" + m[2] };
-    }
-    return { slug: "", full: "" };
-  }
-
-  // Build the watch URL for episode 1 from a slug
-  // The watch URL format: /watch-{slugBase}-episode-1-{animeId}
-  // where {slug} = "{slugBase}-{animeId}"
-  buildWatchUrl(slug, episodeNum) {
-    var lastDash = slug.lastIndexOf("-");
-    if (lastDash < 0) return null;
-    var slugBase = slug.substring(0, lastDash);
-    var animeId = slug.substring(lastDash + 1);
-    return "/watch-" + slugBase + "-episode-" + (episodeNum || 1) + "-" + animeId;
-  }
-
-  // Decode a base64url stream token: "MjE0Mjo2MDVmMjBkYg" -> "2142:605f20db" -> realEpId="2142"
-  decodeStreamToken(token) {
-    if (!token) return null;
-    try {
-      var t = token.replace(/-/g, "+").replace(/_/g, "/");
-      while (t.length % 4 !== 0) t += "=";
-      var decoded = this._b64decode(t);
-      var colonIdx = decoded.indexOf(":");
-      if (colonIdx > 0) return decoded.substring(0, colonIdx);
-      return decoded || null;
-    } catch (e) {
-      return null;
-    }
-  }
-
+  // NOTE: '=' padding must survive the sanitising pass. Stripping it loses the
+  // record of how many bytes the final group really carries, and the loop then
+  // emits a full 3 bytes for it — which is where the trailing NULs on decoded
+  // server URLs came from, poisoning the Referer header and killing extraction.
   _b64decode(s) {
     var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var str = String(s).replace(/[^A-Za-z0-9+/=]/g, "");
     var output = "";
-    s = String(s).replace(/[^A-Za-z0-9+/]/g, "");
-    for (var i = 0; i < s.length; i += 4) {
-      var c0 = chars.indexOf(s.charAt(i));
-      var c1 = chars.indexOf(s.charAt(i + 1));
-      var c2 = chars.indexOf(s.charAt(i + 2));
-      var c3 = chars.indexOf(s.charAt(i + 3));
-      var n = (c0 << 18) | (c1 << 12) | ((c2 & 0x3f) << 6) | (c3 & 0x3f);
+    for (var i = 0; i < str.length; i += 4) {
+      var c0 = chars.indexOf(str.charAt(i));
+      var c1 = chars.indexOf(str.charAt(i + 1));
+      var c2 = chars.indexOf(str.charAt(i + 2));   // -1 for '=' padding
+      var c3 = chars.indexOf(str.charAt(i + 3));
+      if (c0 < 0 || c1 < 0) break;
+      var n = (c0 << 18) | (c1 << 12) | ((c2 < 0 ? 0 : c2) << 6) | (c3 < 0 ? 0 : c3);
       output += String.fromCharCode((n >> 16) & 0xff);
-      if (c2 !== -1) output += String.fromCharCode((n >> 8) & 0xff);
-      if (c3 !== -1) output += String.fromCharCode(n & 0xff);
+      if (c2 >= 0) output += String.fromCharCode((n >> 8) & 0xff);
+      if (c3 >= 0) output += String.fromCharCode(n & 0xff);
     }
     return output;
   }
 
+  // Anime links come off the grid as /watch/<slug>-<id>; the metadata lives on
+  // /<slug>-<id> instead, so accept either and keep both ids.
+  parseAnimeUrl(url) {
+    var u = String(url || "").split("?")[0].replace(/\/+$/, "");
+    var path = u.replace(/^https?:\/\/[^/]+/, "");
+    path = path.replace(/^\/watch\//, "/").replace(/^\//, "");
+    var animeId = (path.match(/-(\d+)$/) || [])[1] || "";
+    return { slug: path, animeId: animeId };
+  }
+
+  // Pull one labelled row out of the detail sidebar. The app's CSS engine has no
+  // :contains(), so the label has to be matched by walking the rows.
+  infoValue(doc, label) {
+    var items = doc.select(".anisc-info .item");
+    for (var i = 0; i < items.length; i++) {
+      var head = items[i].selectFirst(".item-head");
+      if (!head) continue;
+      if (head.text.trim().toLowerCase().indexOf(label.toLowerCase()) !== 0) continue;
+      var links = items[i].select("a");
+      if (links.length) {
+        var out = [];
+        for (var j = 0; j < links.length; j++) out.push(links[j].text.trim());
+        return out.join(", ");
+      }
+      var name = items[i].selectFirst(".name");
+      if (name) return name.text.trim();
+      return items[i].text.replace(head.text, "").trim();
+    }
+    return "";
+  }
+
   async getDetail(url) {
-    var info = this.extractAnimeIdAndSlug(url);
-    if (!info.slug) {
-      throw new Error("Could not parse anime slug from URL: " + url);
-    }
+    var info = this.parseAnimeUrl(url);
+    if (!info.animeId) throw new Error("Could not parse anime id from URL: " + url);
 
-    // Fetch watch page (episodes + metadata) and details page (description, IDs) in parallel
-    var watchPath = this.buildWatchUrl(info.slug, 1);
-    var watchUrl  = this.source.baseUrl + watchPath;
-    var infoUrl   = this.source.baseUrl + "/details/" + info.slug;
-    var [res, infoRes] = await Promise.all([
-      this.client.get(watchUrl, this.headers),
-      this.client.get(infoUrl, this.headers).catch(function() { return { body: "" }; }),
-    ]);
-    var html    = res.body;
-    var infoHtml = infoRes.body || "";
-    var doc = new Document(html);
-    var infoDoc = infoHtml ? new Document(infoHtml) : null;
+    var detailUrl = this.source.baseUrl + "/" + info.slug;
+    var res = await this.client.get(detailUrl, this.headers);
+    var doc = new Document(res.body || "");
 
-    // Title - prefer the h1/h2 on the page, fall back to og:title
     var name = "";
-    var nameEl = doc.selectFirst("h1.anime-title, h1.film-name, .ws-anime__name, .anime__details__title h3");
+    var nameEl = doc.selectFirst(".anisc-detail .film-name") || doc.selectFirst("h2.film-name");
     if (nameEl) name = nameEl.text.trim();
-    if (!name) {
-      var ogTitle = doc.selectFirst("meta[property='og:title']");
-      if (ogTitle) {
-        name = (ogTitle.attr("content") || "")
-          .replace(/^Watch\s+/i, "")
-          .replace(/\s+Episode\s+\d+.*$/i, "")
-          .replace(/\s+\(\d{4}\).*$/, "")
-          .trim();
-      }
-    }
 
-    // Image - og:image
     var imageUrl = "";
-    var ogImage = doc.selectFirst("meta[property='og:image']");
-    if (ogImage) imageUrl = ogImage.attr("content") || "";
+    var img = doc.selectFirst(".anisc-poster .film-poster-img") || doc.selectFirst(".film-poster-img");
+    if (img) imageUrl = img.attr("src") || img.attr("data-src") || "";
 
-    // Description - full synopsis from details page (#synopsis-text), fall back to meta
     var description = "";
-    if (infoDoc) {
-      var synopsisEl = infoDoc.selectFirst("#synopsis-text, .film-description .text");
-      if (synopsisEl) description = synopsisEl.text.trim();
-    }
-    if (!description) {
-      var descMeta = doc.selectFirst("meta[name='description'], meta[property='og:description']");
-      if (descMeta) {
-        description = (descMeta.attr("content") || "")
-          .replace(/^Watch\s+[^.]+\.\s*/i, "")
-          .replace(/^[^.]+anime with Sub\/Dub\.\s*/i, "")
-          .trim();
-      }
-    }
+    var desc = doc.selectFirst(".film-description .text") || doc.selectFirst(".film-description");
+    if (desc) description = desc.text.trim();
 
-    // Genres - use badge--genre anchors on the watch page (accurate, no nav pollution)
     var genre = [];
-    var genreEls = doc.select("a.badge--genre");
-    var seenGenre = {};
-    for (var i = 0; i < genreEls.length; i++) {
-      var g = genreEls[i].text.trim();
-      if (g && !seenGenre[g.toLowerCase()]) {
-        seenGenre[g.toLowerCase()] = true;
-        genre.push(g);
-      }
-    }
+    var genreStr = this.infoValue(doc, "Genres");
+    if (genreStr) genre = genreStr.split(",").map(function (g) { return g.trim(); }).filter(Boolean);
 
-    // Status - look for status text near labels
-    var status = 5;
-    var statusMatch = html.match(/Status[\s\S]{0,80}?(Currently Airing|Finished Airing|Ongoing|Completed|Releasing|Not Yet Released|Upcoming)/i);
-    if (statusMatch) status = this.statusCode(statusMatch[1]);
+    var status = this.statusCode(this.infoValue(doc, "Status"));
 
-    // Parse AniList/MAL IDs from page JS vars — needed for stream URLs and thumbnails
-    var combined = html + infoHtml;
-    var anilistId = null;
-    var malId = null;
-    var aMatch = combined.match(/var\s+anilistId\s*=\s*(\d+)/i)
-              || combined.match(/anilist\.co\/anime\/(\d+)/i)
-              || combined.match(/anilist[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i);
-    var mMatch = combined.match(/var\s+malId\s*=\s*(\d+)/i)
-              || combined.match(/myanimelist\.net\/anime\/(\d+)/i)
-              || combined.match(/mal[_\-]?id["'\s]*[:=]["'\s]*(\d+)/i);
-    if (aMatch) anilistId = aMatch[1];
-    if (mMatch) malId = mMatch[1];
-
-    // Episode thumbnails via ani.zip (only if user has enabled them in settings).
-    var thumbsEnabled = false;
-    try { thumbsEnabled = new SharedPreferences().get("hianime_pref_thumbnails") === true; } catch (e) {}
-
-    var thumbMap = {};
-    if (thumbsEnabled) try {
-      var zipUrl = anilistId
-        ? "https://api.ani.zip/mappings?anilist_id=" + anilistId
-        : malId
-          ? "https://api.ani.zip/mappings?mal_id=" + malId
-          : null;
-
-      if (zipUrl) {
-        var zipRes = await this.client.get(zipUrl, {});
-        if (zipRes.statusCode === 200) {
-          var zipData = JSON.parse(zipRes.body);
-          if (zipData && zipData.episodes) {
-            Object.keys(zipData.episodes).forEach(function(k) {
-              if (zipData.episodes[k].image) thumbMap[k] = zipData.episodes[k].image;
-            });
-          }
-        }
+    // Episodes come from the theme API, not the page. Note the route is
+    // /api/theme/episode/..., NOT the classic /ajax/v2/episode/... which 404s here.
+    var chapters = [];
+    try {
+      var epRes = await this.client.get(
+        this.source.baseUrl + "/api/theme/episode/list/" + info.animeId,
+        { "User-Agent": this.ua, "Referer": detailUrl, "X-Requested-With": "XMLHttpRequest",
+          "Accept": "application/json, text/javascript, */*; q=0.01" }
+      );
+      var epJson = JSON.parse(epRes.body || "{}");
+      var epDoc = new Document(epJson.html || "");
+      var items = epDoc.select("a.ep-item");
+      for (var i = 0; i < items.length; i++) {
+        var el = items[i];
+        var epId = el.attr("data-id") || "";
+        var epNum = el.attr("data-number") || String(i + 1);
+        if (!epId) continue;
+        var title = (el.attr("title") || "").trim();
+        var label = "Episode " + epNum;
+        if (title && title !== label) label += ": " + title;
+        // chapter url: "{episodeId}|{animeId}|{episodeNumber}"
+        chapters.push({ name: label, url: epId + "|" + info.animeId + "|" + epNum });
       }
     } catch (e) {}
 
-    // Episodes - parse every <a> with data-stream-token attribute
-    var chapters = [];
-    var epAnchors = doc.select("a[data-stream-token]");
-    for (var j = 0; j < epAnchors.length; j++) {
-      var ep = epAnchors[j];
-      var token = ep.attr("data-stream-token");
-      var realEpId = this.decodeStreamToken(token);
-      if (!realEpId) continue;
-      var epNum = ep.attr("data-episode") || String(j + 1);
-      var hasSub = ep.attr("data-has-sub") === "1";
-      var hasDub = ep.attr("data-has-dub") === "1";
-      var titleSpan = ep.selectFirst(".ws-ep__title, .ep-name");
-      var epTitle = titleSpan ? titleSpan.text.trim() : "";
-      // Skip non-Latin titles: walk chars and reject any CJK/hiragana/katakana codepoint
-      var isNonLatin = false;
-      for (var ci = 0; ci < epTitle.length; ci++) {
-        var cp = epTitle.charCodeAt(ci);
-        if ((cp >= 0x3000 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFFEF)) {
-          isNonLatin = true; break;
-        }
-      }
-      var label = "Episode " + epNum;
-      if (epTitle && !isNonLatin) label += ": " + epTitle;
-      var langs = [];
-      if (hasSub) langs.push("Sub");
-      if (hasDub) langs.push("Dub");
-      if (langs.length) label += " [" + langs.join("+") + "]";
-      // chapter url: realEpId|hasSub|hasDub|malId|anilistId|episodeNum
-      var chUrl = realEpId + "|" + (hasSub ? "1" : "0") + "|" + (hasDub ? "1" : "0") + "|" + (malId || "") + "|" + (anilistId || "") + "|" + epNum;
-      var thumbnailUrl = thumbMap[epNum] || thumbMap[String(parseInt(epNum, 10))] || null;
-      chapters.push({ name: label, url: chUrl, thumbnailUrl: thumbnailUrl });
-    }
-
-    // Reverse so newest episodes are at the top (Mangayomi convention)
-    chapters.reverse();
+    chapters.reverse(); // newest first, Mangayomi convention
 
     return {
       name: name,
@@ -385,9 +323,123 @@ class DefaultExtension extends MProvider {
       description: description,
       genre: genre,
       status: status,
-      link: this.source.baseUrl + "/details/" + info.slug,
+      link: detailUrl,
       chapters: chapters,
     };
+  }
+
+  // Decode a binary string (one char per byte, as _b64decode returns) as UTF-8.
+  // The site does this with the escape/unescape trick, which the app's JS engine
+  // does not reliably provide, so decode the byte sequences directly.
+  _utf8Decode(bytes) {
+    var out = "";
+    for (var i = 0; i < bytes.length; i++) {
+      var c = bytes.charCodeAt(i) & 0xff;
+      if (c < 0x80) { out += String.fromCharCode(c); continue; }
+      if (c >= 0xc0 && c < 0xe0 && i + 1 < bytes.length) {
+        out += String.fromCharCode(((c & 0x1f) << 6) | (bytes.charCodeAt(++i) & 0x3f));
+      } else if (c >= 0xe0 && c < 0xf0 && i + 2 < bytes.length) {
+        var b1 = bytes.charCodeAt(++i) & 0x3f, b2 = bytes.charCodeAt(++i) & 0x3f;
+        out += String.fromCharCode(((c & 0x0f) << 12) | (b1 << 6) | b2);
+      } else if (c >= 0xf0 && i + 3 < bytes.length) {
+        var c1 = bytes.charCodeAt(++i) & 0x3f, c2 = bytes.charCodeAt(++i) & 0x3f, c3 = bytes.charCodeAt(++i) & 0x3f;
+        var cp = (((c & 0x07) << 18) | (c1 << 12) | (c2 << 6) | c3) - 0x10000;
+        out += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+      } else {
+        out += String.fromCharCode(c);
+      }
+    }
+    return out;
+  }
+
+  // base64 -> repeating-key XOR -> JSON. See ZOKO_KEY.
+  deobfuscateZoko(blob) {
+    try {
+      var raw = this._b64decode(String(blob).replace(/-/g, "+").replace(/_/g, "/"));
+      var out = "";
+      for (var i = 0; i < raw.length; i++) {
+        out += String.fromCharCode(raw.charCodeAt(i) ^ ZOKO_KEY.charCodeAt(i % ZOKO_KEY.length));
+      }
+      return JSON.parse(this._utf8Decode(out));
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ZokoAnime: the one server that hands back a playable stream with no proxy.
+  // Its master playlist lives on hls2.aniwatchtv.uk and its segments are real
+  // MPEG-TS at real .ts URLs, so libmpv plays them untouched — unlike every
+  // MegaPlay-family CDN, which disguises its segments as PNG images.
+  async extractZokoStreams(embedUrl, audioLabel) {
+    var streams = [];
+    try {
+      var res = await this.client.get(embedUrl, { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/" });
+      var html = res.body || "";
+      var m = html.match(/window\.__P\s*=\s*"([^"]+)"/);
+      if (!m) return streams;
+      var data = this.deobfuscateZoko(m[1]);
+      if (!data || !data.src) return streams;
+
+      var hdrs = { "User-Agent": this.ua, "Referer": "https://zokoanime.video/" };
+      var subtitles = [];
+      var subs = data.subtitles || [];
+      for (var i = 0; i < subs.length; i++) {
+        if (!subs[i] || !subs[i].src) continue;
+        subtitles.push({ file: subs[i].src, label: (subs[i].label || subs[i].lang || "Subtitle").trim() });
+      }
+
+      // Split the master into per-quality entries so the picker offers 1080/720/…
+      var variants = await this.resolveHlsPlaylist(data.src, hdrs);
+      if (variants && variants.length) {
+        for (var v = 0; v < variants.length; v++) {
+          streams.push({
+            url: variants[v].url, originalUrl: data.src,
+            quality: variants[v].label + " - ZokoAnime [" + audioLabel + "]",
+            headers: hdrs, subtitles: subtitles,
+          });
+        }
+      } else {
+        streams.push({
+          url: data.src, originalUrl: data.src,
+          quality: "ZokoAnime [" + audioLabel + "]",
+          headers: hdrs, subtitles: subtitles,
+        });
+      }
+    } catch (e) {}
+    return streams;
+  }
+
+  // The episode's server list. Each entry's data-hash is simply base64 of the
+  // embed URL, so no per-server "sources" round trip is needed.
+  async fetchServers(episodeId) {
+    var out = [];
+    try {
+      var res = await this.client.get(
+        this.source.baseUrl + "/api/theme/episode/servers?episodeId=" + episodeId,
+        { "User-Agent": this.ua, "Referer": this.source.baseUrl + "/", "X-Requested-With": "XMLHttpRequest",
+          "Accept": "application/json, text/javascript, */*; q=0.01" }
+      );
+      var json = JSON.parse(res.body || "{}");
+      var doc = new Document(json.html || "");
+      var items = doc.select(".server-item");
+      for (var i = 0; i < items.length; i++) {
+        var el = items[i];
+        var hash = el.attr("data-hash") || "";
+        if (!hash) continue;
+        var url = "";
+        try { url = this._utf8Decode(this._b64decode(hash.replace(/-/g, "+").replace(/_/g, "/"))); } catch (e) { continue; }
+        // Belt and braces: a stray control byte here ends up in a Referer header,
+        // and the whole extraction dies on "invalid header value".
+        url = url.replace(/[\u0000-\u001F\s]+$/g, "").trim();
+        if (!/^https?:\/\//.test(url)) continue;
+        out.push({
+          type: (el.attr("data-type") || "sub").toLowerCase(),
+          name: (el.attr("data-server-name") || "Server").trim(),
+          url: url,
+        });
+      }
+    } catch (e) {}
+    return out;
   }
 
   // Fetch a MegaPlay page URL and extract sources.
@@ -472,14 +524,80 @@ class DefaultExtension extends MProvider {
     return srt || vtt;
   }
 
-  // vibevibe.workers.dev serves plain MPEG-TS that libmpv can decode directly.
-  // All other HiAnime CDNs (vivibebe.site, nekostream-family, etc.) prepend a
-  // 70-byte PNG header to every segment; iOS AVPlayer scans for the 0x47 sync
-  // byte and plays through it, but libmpv on Windows fails format detection and
-  // races to #EXT-X-ENDLIST.  Those streams are only offered when no raw-TS
-  // source is available — the player falls back to them automatically.
+  // Whether a stream plays untouched on libmpv (Windows/Android).
+  //
+  // Nothing does, at present. Every CDN HiAnime hands out disguises its segments
+  // one of two ways, both measured 2026-09-07:
+  //   - PNG-wrapped: a 252-byte PNG header in front of real MPEG-TS, served as
+  //     image/png at .image URLs (megap.akirax.buzz, megap.shiora.site,
+  //     nekostream-family). iOS AVPlayer scans forward to the 0x47 sync byte and
+  //     plays; libmpv treats it as a zero-duration image and races to ENDLIST.
+  //   - raw MPEG-TS named .jpg (s1.akirax.buzz): the bytes are already clean and
+  //     only the extension makes libmpv refuse it (extension_picky).
+  //
+  // Both need the proxy — the segment URLs live inside the provider's playlist
+  // body, so nothing this extension returns can reach them. This predicate is
+  // kept because it is the honest answer to "can the player use this as-is", and
+  // it is what decides whether an unwrapped twin is worth emitting.
   servesRawTs(url) {
-    return (url || "").indexOf("vibevibe.workers.dev") >= 0;
+    var u = url || "";
+    for (var i = 0; i < RAW_TS_HOSTS.length; i++) {
+      // Raw TS still fails on a .jpg/.image name, so only a sane extension counts.
+      if (u.indexOf(RAW_TS_HOSTS[i]) >= 0) return !/\.(jpg|jpeg|png|image)(\?|$)/i.test(u);
+    }
+    return false;
+  }
+
+  // Segments on these hosts are already clean MPEG-TS, so the proxy can 302
+  // rather than read every byte. See RAW_TS_HOSTS.
+  servesCleanBytes(url) {
+    var u = url || "";
+    for (var i = 0; i < RAW_TS_HOSTS.length; i++) if (u.indexOf(RAW_TS_HOSTS[i]) >= 0) return true;
+    return false;
+  }
+
+  // Base URL of the unwrapping proxy, or "" when it is switched off.
+  //
+  // The URL is pre-filled so turning this on is a single toggle — nobody has to
+  // know or type the address. The box stays editable for anyone pointing at a
+  // deployed worker, and anything that is not an http(s) origin is ignored
+  // rather than pasted into a stream URL.
+  proxyBase() {
+    var on = false;
+    try { on = new SharedPreferences().get("hianime_pref_proxy_enabled"); } catch (e) {}
+    if (on !== true) return "";
+    var raw = "";
+    try { raw = String(new SharedPreferences().get("hianime_pref_proxy_url") || "").trim(); } catch (e) {}
+    if (!raw) raw = DEFAULT_PROXY;
+    if (!/^https?:\/\/[^/\s]+/.test(raw)) return "";
+    return raw.replace(/\/+$/, "");
+  }
+
+  // The Referer a CDN demands, which the proxy must send upstream on the
+  // extension's behalf. MegaPlay-family hosts 403 without it.
+  proxyRefererFor(stream) {
+    var h = (stream && stream.headers) || {};
+    return h["Referer"] || h["referer"] || "https://megaplay.buzz/";
+  }
+
+  // An "⟨unwrapped⟩" twin of one stream, routed through the proxy, or null when
+  // the proxy is off or the stream already plays as-is.
+  //
+  // The proxy attaches the upstream Referer itself; forwarding ours would make
+  // Mangayomi send it to the proxy instead of the CDN.
+  unwrappedTwin(stream, referer) {
+    var proxy = this.proxyBase();
+    if (!proxy || !stream || !stream.url) return null;
+    if (this.servesRawTs(stream.url)) return null;
+    var mode = this.servesCleanBytes(stream.url) ? "&mode=redirect" : "";
+    var twin = {};
+    for (var k in stream) if (Object.prototype.hasOwnProperty.call(stream, k)) twin[k] = stream[k];
+    twin.url = proxy + "/m3u8?url=" + encodeURIComponent(stream.url) +
+               "&referer=" + encodeURIComponent(referer || "https://megaplay.buzz/") + mode;
+    twin.originalUrl = stream.url;
+    twin.quality = String(stream.quality || "") + " ⟨unwrapped⟩";
+    twin.headers = { "User-Agent": this.ua };
+    return twin;
   }
 
   // Resolve a playlist URI that may be absolute or relative to its playlist.
@@ -615,275 +733,91 @@ class DefaultExtension extends MProvider {
     return { kind: "master", variants: variants };
   }
 
-  // MegaPlay stream fetch.
-  // HiAnime's player tries /stream/ani/{epId}/{type} first (stream-token based),
-  // then falls back to /stream/mal/{malId}/{epNum}/{type} (MAL ID based).
-  // The mal URL is the reliable path — ani often returns an error page.
-  async extractMegaplaySources(realEpId, audioType, audioLabel, malId, episodeNum) {
-    var streams = await this.extractMegaplayFromPageUrl(
-      "https://megaplay.buzz/stream/ani/" + realEpId + "/" + audioType,
-      this.source.baseUrl + "/",
-      audioType, audioLabel
-    );
-    if (streams.length > 0) return streams;
-    if (malId && episodeNum) {
-      streams = await this.extractMegaplayFromPageUrl(
-        "https://megaplay.buzz/stream/mal/" + malId + "/" + episodeNum + "/" + audioType,
-        this.source.baseUrl + "/",
-        audioType, audioLabel
-      );
-    }
-    return streams;
-  }
-
-  // Decode a vidnest/megaplay encrypted API response.
-  // APIs return {encrypted:true, data:"<custom_b64_string>"} where the alphabet is
-  // "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/="
-  _decodeVidnestResponse(json) {
-    if (!json.encrypted) return json;
-    var alpha = "RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/=";
-    var lookup = {};
-    for (var i = 0; i < alpha.length; i++) lookup[alpha[i]] = i;
-    var enc = json.data || "";
-    var result = [];
-    for (var i = 0; i < enc.length; i += 4) {
-      var chunk = enc.substring(i, i + 4);
-      var vals = [64, 64, 64, 64];
-      for (var c = 0; c < 4; c++) {
-        var ch = chunk[c] || "=";
-        vals[c] = lookup[ch] !== undefined ? lookup[ch] : 64;
-      }
-      result.push((vals[0] << 2) | (vals[1] >> 4));
-      if (vals[2] !== 64) result.push(((vals[1] & 15) << 4) | (vals[2] >> 2));
-      if (vals[3] !== 64) result.push(((vals[2] & 3) << 6) | vals[3]);
-    }
-    var str = "";
-    for (var j = 0; j < result.length; j++) str += String.fromCharCode(result[j]);
-    return JSON.parse(str);
-  }
-
-  // VidNest fallback: used for older anime that MegaPlay doesn't carry.
-  // Hits new.vidnest.fun which backends against the same nekostream/lostproject
-  // CDN as MegaPlay — same stream quality, different routing.
-  async fetchVidnestSources(anilistId, epNum, audioType, audioLabel) {
-    var streams = [];
-    if (!anilistId || !epNum) return streams;
-    try {
-      var apiUrl = "https://new.vidnest.fun/hianime/anime/" + anilistId + "/" + epNum + "/" + audioType;
-      var res = await this.client.get(apiUrl, {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
-        "Accept": "*/*",
-        "Origin": "https://megaplay.buzz",
-        "Referer": "https://megaplay.buzz/",
-      });
-      var data = this._decodeVidnestResponse(JSON.parse(res.body));
-      if (!data || !data.sources || !data.sources.length) return streams;
-      var subtitles = audioType === "sub" ? await this.inlineMegaplayTracks(data.tracks) : [];
-      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
-      for (var s = 0; s < data.sources.length; s++) {
-        var src = data.sources[s];
-        var fileUrl = src.file || src.url;
-        if (!fileUrl) continue;
-        if (fileUrl.indexOf(".m3u8") >= 0) {
-          var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
-          if (resolved.kind === "master") {
-            for (var v = 0; v < resolved.variants.length; v++) {
-              streams.push({ url: resolved.variants[v].url, originalUrl: fileUrl, quality: resolved.variants[v].label + " - VidNest [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
-            }
-          } else if (resolved.kind === "flat") {
-            streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "VidNest [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
-          }
-        } else {
-          streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "VidNest [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
-        }
-      }
-    } catch (e) {}
-    return streams;
-  }
-
-  // HD-2 source via the MyroniX/shirayuki API. The API hands back a shirayuki
-  // proxy URL wrapping the real CDN URL; we pull the inner URL out and hit the
-  // CDN directly, which is ~17x faster than going through the proxy.
-  // Two CDNs appear here and they differ in segment format (see wrapProxyStream):
-  // vibevibe.workers.dev serves raw MPEG-TS, vivibebe.site serves PNG-wrapped TS.
-  async fetchBibiembSources(anilistId, epNum, audioType, audioLabel) {
-    var streams = [];
-    if (!anilistId || !epNum) return streams;
-    try {
-      var apiHeaders = {
-        "User-Agent": this.ua,
-        "Accept": "application/json",
-        "Referer": "https://myronix.strangled.net/",
-      };
-      var sourcesUrl = "https://myronix.strangled.net/api/v2/shirayuki/hianime/episode/sources" +
-        "?animeEpisodeId=" + encodeURIComponent(anilistId) +
-        "&ep=" + encodeURIComponent(epNum) +
-        "&server=hd-2&category=" + audioType + "&provider=anilist";
-      var res = await this.client.get(sourcesUrl, apiHeaders);
-      var data = JSON.parse(res.body);
-      if (!data || !data.success || !data.data || !data.data.sources || !data.data.sources.length) return streams;
-
-      var src = data.data.sources[0];
-      // src.source is a shirayuki proxy URL of the form:
-      //   http://shirayuki.eastasia.cloudapp.azure.com:1818/api/v2/hianime/proxy/m3u8?url={encoded_cdn_url}
-      // Extract the inner CDN URL from the proxy URL's `url=` param.
-      var urlMatch = (src.source || "").match(/[?&]url=([^&]+)/);
-      if (!urlMatch) return streams;
-      var vibeUrl = decodeURIComponent(urlMatch[1]);
-
-      // Subtitles from MyroniX (anizara.store VTTs — standard WebVTT format)
-      var subtitles = [];
-      if (audioType === "sub" && Array.isArray(data.data.tracks)) {
-        for (var t = 0; t < data.data.tracks.length; t++) {
-          var track = data.data.tracks[t];
-          if (!track || !track.file || (track.kind && track.kind === "thumbnails")) continue;
-          subtitles.push({ file: track.file, label: track.label || "Unknown" });
-        }
-      }
-
-      // Fetch the CDN master m3u8 directly (no shirayuki proxy)
-      var vibeHeaders = {
-        "User-Agent": this.ua,
-        "Referer": "https://bibiemb.xyz/",
-        "Origin": "https://bibiemb.xyz",
-      };
-      var masterRes = await this.client.get(vibeUrl, vibeHeaders);
-      var masterLines = (masterRes.body || "").split('\n');
-
-      // Parse EXT-X-STREAM-INF → URL pairs. vibevibe lists absolute variant URLs
-      // but vivibebe lists them relative to the master, so resolve either form.
-      var curLabel = null;
-      var curHeight = 0;
-      for (var l = 0; l < masterLines.length; l++) {
-        var line = masterLines[l].trim();
-        if (line.startsWith('#EXT-X-STREAM-INF:')) {
-          var nm = line.match(/NAME="([^"]+)"/);
-          curLabel = nm ? nm[1] : "Unknown";
-          var rm = line.match(/RESOLUTION=\d+x(\d+)/);
-          curHeight = rm ? parseInt(rm[1], 10) : 0;
-        } else if (line && !line.startsWith('#') && curLabel) {
-          var variantUrl = this.resolveUrl(line, vibeUrl);
-          streams.push({
-            url: variantUrl,
-            originalUrl: variantUrl,
-            quality: curLabel + " - HD2 [" + audioLabel + "]",
-            headers: vibeHeaders,
-            subtitles: subtitles,
-            height: curHeight,
-          });
-          curLabel = null;
-        }
-      }
-      // Best quality first — these masters list 360p before 1080p, and whatever
-      // lands at index 0 is what the player starts with.
-      streams.sort(function(a, b) { return b.height - a.height; });
-      for (var s = 0; s < streams.length; s++) delete streams[s].height;
-    } catch (e) {}
-    return streams;
-  }
-
-  // API approach: use HiAnime's own AJAX to discover servers and get embed URLs
-  async getStreamsViaHiAnimeApi(hiAnimeEpId, audioType, audioLabel) {
-    var streams = [];
-    if (!hiAnimeEpId) return streams;
-    try {
-      var apiHeaders = {
-        "User-Agent": this.ua,
-        "Referer": this.source.baseUrl + "/",
-        "X-Requested-With": "XMLHttpRequest",
-      };
-      var sRes = await this.client.get(
-        this.source.baseUrl + "/ajax/v2/episode/servers?episodeId=" + hiAnimeEpId,
-        apiHeaders
-      );
-      var sData = JSON.parse(sRes.body);
-      if (!sData || !sData.html) return streams;
-      var sDoc = new Document(sData.html);
-      var items = sDoc.select("div.server-item");
-      for (var i = 0; i < items.length; i++) {
-        var item = items[i];
-        if ((item.attr("data-type") || "").toLowerCase() !== audioType) continue;
-        var serverId = item.attr("data-id");
-        if (!serverId) continue;
-        try {
-          var srcRes = await this.client.get(
-            this.source.baseUrl + "/ajax/v2/episode/sources?id=" + serverId,
-            apiHeaders
-          );
-          var srcData = JSON.parse(srcRes.body);
-          var embedUrl = srcData && (srcData.link || srcData.url);
-          if (!embedUrl) continue;
-          if (embedUrl.indexOf("megaplay.buzz") >= 0) {
-            var epStreams = await this.extractMegaplayFromPageUrl(embedUrl, this.source.baseUrl + "/", audioType, audioLabel);
-            streams = streams.concat(epStreams);
-          }
-        } catch (e) {}
-      }
-    } catch (e) {}
-    return streams;
-  }
-
   async getVideoList(url) {
-    // chapter url: "{realEpId}|{hasSub}|{hasDub}|{malId}|{anilistId}|{episodeNum}"
-    var parts = url.split("|");
-    var realEpId  = parts[0];
-    var hasSub    = parts[1] === "1";
-    var hasDub    = parts[2] === "1";
-    var malId     = parts[3] || "";
-    var anilistId = parts[4] || "";
-    var episodeNum = parts[5] || "";
+    // chapter url: "{episodeId}|{animeId}|{episodeNumber}"
+    var parts = String(url).split("|");
+    var episodeId = parts[0];
+    if (!episodeId || !/^\d+$/.test(episodeId)) {
+      // A URL saved by an older version, from the previous site. The ids do not
+      // carry over, so there is nothing to resolve — the anime needs a Refresh.
+      return [];
+    }
 
     var pref = "sub";
     try { pref = new SharedPreferences().get("hianime_pref_audio") || "sub"; } catch (e) {}
-    var server = "auto";
-    try { server = new SharedPreferences().get("hianime_pref_server") || "auto"; } catch (e) {}
 
-    var getStreams = async (audioType, audioLabel) => {
-      // MegaPlay / VidNest pipeline (may use ad-poisoned nekostream CDN)
-      var getMegaplayPipeline = async () => {
-        var streams;
-        if (server === "ani") {
-          streams = await this.extractMegaplayFromPageUrl(
-            "https://megaplay.buzz/stream/ani/" + realEpId + "/" + audioType,
-            this.source.baseUrl + "/", audioType, audioLabel
-          );
-        } else if (server === "mal") {
-          streams = await this.extractMegaplayFromPageUrl(
-            "https://megaplay.buzz/stream/mal/" + malId + "/" + episodeNum + "/" + audioType,
-            this.source.baseUrl + "/", audioType, audioLabel
-          );
-        } else {
-          streams = await this.extractMegaplaySources(realEpId, audioType, audioLabel, malId, episodeNum);
-        }
-        if (streams.length === 0 && anilistId && episodeNum) {
-          streams = await this.fetchVidnestSources(anilistId, episodeNum, audioType, audioLabel);
-        }
-        return streams;
-      };
+    var servers = await this.fetchServers(episodeId);
+    if (!servers.length) return [];
 
-      // Run MegaPlay and HD-2/vibevibe pipelines in parallel.
-      // HD-2 uses vibevibe.workers.dev which is ad-free and works correctly on Windows.
-      var results = await Promise.all([
-        getMegaplayPipeline(),
-        (anilistId && episodeNum) ? this.fetchBibiembSources(anilistId, episodeNum, audioType, audioLabel) : Promise.resolve([]),
-      ]);
-      return results[0].concat(results[1]);
+    // ZokoAnime leads: it is the only server whose segments are real MPEG-TS at
+    // real .ts URLs, so it plays untouched everywhere. Everything else is
+    // MegaPlay-family and needs the unwrap proxy on Windows/Android, so those
+    // are resolved only as a fallback — see the "Servers" preference.
+    var wanted = "zoko";
+    try { wanted = new SharedPreferences().get("hianime_pref_servers") || "zoko"; } catch (e) {}
+    var isZoko = function (sv) { return /zoko/i.test(sv.name) || /zokoanime/i.test(sv.url); };
+
+    var zoko = [], rest = [];
+    for (var i = 0; i < servers.length; i++) (isZoko(servers[i]) ? zoko : rest).push(servers[i]);
+
+    var audioOrder = pref === "dub" ? ["dub", "sub"] : ["sub", "dub"];
+    var label = function (t) { return t === "dub" ? "Dub" : "Sub"; };
+
+    var runZoko = async () => {
+      var out = [];
+      for (var a = 0; a < audioOrder.length; a++) {
+        for (var i = 0; i < zoko.length; i++) {
+          if (zoko[i].type !== audioOrder[a]) continue;
+          var got = await this.extractZokoStreams(zoko[i].url, label(audioOrder[a]));
+          out = out.concat(got);
+        }
+      }
+      return out;
     };
 
-    var results = await Promise.all([
-      hasSub ? getStreams("sub", "Sub") : Promise.resolve([]),
-      hasDub ? getStreams("dub", "Dub") : Promise.resolve([]),
-    ]);
-    var direct = pref === "dub" ? results[1].concat(results[0]) : results[0].concat(results[1]);
+    // MegaPlay embeds reached through the same server list. These are the
+    // PNG-wrapped ones; they are kept because ZokoAnime does not carry every
+    // title, and an episode that plays on a disguised CDN beats one that does
+    // not play at all.
+    var runRest = async () => {
+      var out = [];
+      for (var a = 0; a < audioOrder.length; a++) {
+        for (var i = 0; i < rest.length; i++) {
+          var sv = rest[i];
+          if (sv.type !== audioOrder[a]) continue;
+          if (!/megaplay|vidtube|vidnest/i.test(sv.url)) continue;
+          try {
+            var got = await this.extractMegaplayFromPageUrl(
+              sv.url, this.source.baseUrl + "/", audioOrder[a],
+              sv.name + " [" + label(audioOrder[a]) + "]"
+            );
+            out = out.concat(got || []);
+          } catch (e) {}
+        }
+      }
+      return out;
+    };
 
-    // Prefer vibevibe.workers.dev (raw TS, decodes correctly on all platforms).
-    // Fall back to direct streams when no raw-TS source is available for the episode.
-    var raw = [];
-    for (var i = 0; i < direct.length; i++) {
-      if (this.servesRawTs(direct[i].url)) raw.push(direct[i]);
+    var streams = await runZoko();
+    if (wanted === "all" || streams.length === 0) {
+      streams = streams.concat(await runRest());
     }
-    var ordered = raw.length ? raw : direct;
-    return this.normalizeSubtitles(ordered);
+
+    // Anything that needs the proxy gets an "⟨unwrapped⟩" twin ahead of it when
+    // the viewer has one running; ZokoAnime never does, so this is a no-op for
+    // the common case and only rescues the MegaPlay fallback.
+    var playsAsIs = [], disguised = [];
+    for (var k = 0; k < streams.length; k++) {
+      if (this.servesRawTs(streams[k].url)) playsAsIs.push(streams[k]);
+      else disguised.push(streams[k]);
+    }
+    var twins = [];
+    for (var t = 0; t < disguised.length; t++) {
+      var twin = this.unwrappedTwin(disguised[t], this.proxyRefererFor(disguised[t]));
+      if (twin) twins.push(twin);
+    }
+
+    return this.normalizeSubtitles(playsAsIs.concat(twins, disguised));
   }
 
   // Make English turn on by itself.
@@ -951,38 +885,34 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "hianime_pref_server",
-        listPreference: {
-          title: "MegaPlay URL mode",
-          summary: "Auto tries stream/ani first then stream/mal. Use stream/mal if Auto is slow (mal is the reliable fallback HiAnime uses).",
-          valueIndex: 0,
-          entries: ["Auto (ani → mal)", "stream/mal only", "stream/ani only"],
-          entryValues: ["auto", "mal", "ani"],
-        },
-      },
-      {
-        key: "hianime_pref_routing",
-        listPreference: {
-          title: "Stream routing",
-          summary: "Most HiAnime CDNs disguise video segments as PNG images. iOS plays them anyway, " +
-            "but Windows/Android skip straight to the last episode. Default lists only streams that " +
-            "decode everywhere, routing the disguised ones through an unwrap proxy (~0.9 vs ~15 MB/s). " +
-            "Pick Direct for full speed on iOS.",
-          valueIndex: 0,
-          entries: [
-            "Playable only (fixes Windows)",
-            "Direct only (fastest, iOS)",
-            "Everything",
-          ],
-          entryValues: ["playable", "direct", "all"],
-        },
-      },
-      {
-        key: "hianime_pref_thumbnails",
-        switchPreferenceCompat: {
-          title: "Episode thumbnails",
-          summary: "Fetch episode thumbnails from ani.zip (adds a small delay when loading episodes)",
+        key: "hianime_pref_proxy_enabled",
+        checkBoxPreference: {
+          title: "Fix playback on Windows/Android",
+          summary: "Only affects the fallback servers. ZokoAnime, the default, plays everywhere untouched — leave this off unless a title has no ZokoAnime copy and the MegaPlay fallback buffers forever. Requires the proxy to be reachable at the address below.",
           value: false,
+        },
+      },
+      {
+        key: "hianime_pref_proxy_url",
+        editTextPreference: {
+          title: "Proxy address (advanced)",
+          summary: "Already filled in — only change this if you run the proxy somewhere other than this PC.",
+          value: DEFAULT_PROXY,
+          dialogTitle: "Proxy address",
+          dialogMessage: "HiAnime's CDNs hide video inside PNG images, which Windows/Android cannot decode (iOS plays them fine). The default points at proxy/proxy.js running on this PC. Replace it with a deployed worker's https URL to cover several devices from one place.",
+        },
+      },
+      {
+        key: "hianime_pref_servers",
+        listPreference: {
+          title: "Servers",
+          summary: "ZokoAnime only, by default: it is the one server whose segments are real " +
+            "MPEG-TS, so it plays on Windows and Android with nothing else switched on. The " +
+            "others disguise video as PNG images and need the unwrap proxy below. They are " +
+            "tried anyway when a title has no ZokoAnime copy, whichever option is picked here.",
+          valueIndex: 0,
+          entries: ["ZokoAnime only (recommended)", "All servers"],
+          entryValues: ["zoko", "all"],
         },
       },
     ];
