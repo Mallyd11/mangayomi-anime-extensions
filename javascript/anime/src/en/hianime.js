@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.at",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.0",
+    "version": "0.5.1",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -235,12 +235,47 @@ class DefaultExtension extends MProvider {
 
   // Anime links come off the grid as /watch/<slug>-<id>; the metadata lives on
   // /<slug>-<id> instead, so accept either and keep both ids.
+  //
+  // Entries saved before v0.5.0 point at the old site (hianime.ms/details/<slug>),
+  // whose slugs carry a hex suffix rather than a numeric id. Those must not throw:
+  // getDetail is exactly what Refresh calls, so an exception here would leave a
+  // library entry permanently stuck on unplayable episode URLs. Signal the miss
+  // with an empty animeId and let the caller look the title up on this site.
   parseAnimeUrl(url) {
     var u = String(url || "").split("?")[0].replace(/\/+$/, "");
     var path = u.replace(/^https?:\/\/[^/]+/, "");
-    path = path.replace(/^\/watch\//, "/").replace(/^\//, "");
+    path = path.replace(/^\/(?:watch|details|anime)\//, "/").replace(/^\//, "");
     var animeId = (path.match(/-(\d+)$/) || [])[1] || "";
     return { slug: path, animeId: animeId };
+  }
+
+  // Find this site's entry for a slug carried over from the old one, by
+  // searching for the slug's words and taking the closest match. Returns the
+  // parsed {slug, animeId} of the match, or null.
+  async resolveAnime(slug) {
+    var words = String(slug || "").replace(/-[0-9a-f]{4,}$/i, "").replace(/-/g, " ").trim();
+    if (!words) return null;
+    try {
+      var res = await this.client.get(
+        this.source.baseUrl + "/search?keyword=" + encodeURIComponent(words), this.headers);
+      var doc = new Document(res.body || "");
+      var anchors = doc.select(".film-poster-ahref");
+      if (!anchors.length) return null;
+      // Prefer a slug that starts the same way; otherwise the top hit, which is
+      // what a viewer searching that title would pick anyway.
+      var wanted = String(slug).replace(/-[0-9a-f]{4,}$/i, "");
+      var best = null;
+      for (var i = 0; i < anchors.length; i++) {
+        var href = anchors[i].attr("href") || "";
+        var cand = this.parseAnimeUrl(href);
+        if (!cand.animeId) continue;
+        if (!best) best = cand;
+        if (cand.slug.indexOf(wanted) === 0) return cand;
+      }
+      return best;
+    } catch (e) {
+      return null;
+    }
   }
 
   // Pull one labelled row out of the detail sidebar. The app's CSS engine has no
@@ -266,7 +301,13 @@ class DefaultExtension extends MProvider {
 
   async getDetail(url) {
     var info = this.parseAnimeUrl(url);
-    if (!info.animeId) throw new Error("Could not parse anime id from URL: " + url);
+    if (!info.animeId) {
+      // A library entry from the old site — find the same title here rather than
+      // failing, so Refresh can repair the entry instead of dead-ending.
+      var found = await this.resolveAnime(info.slug);
+      if (!found) throw new Error("Could not find this title on " + this.source.baseUrl + ": " + url);
+      info = found;
+    }
 
     var detailUrl = this.source.baseUrl + "/" + info.slug;
     var res = await this.client.get(detailUrl, this.headers);
@@ -734,17 +775,38 @@ class DefaultExtension extends MProvider {
   }
 
   async getVideoList(url) {
-    // chapter url: "{episodeId}|{animeId}|{episodeNumber}"
     var parts = String(url).split("|");
-    var episodeId = parts[0];
-    if (!episodeId || !/^\d+$/.test(episodeId)) {
-      // A URL saved by an older version, from the previous site. The ids do not
-      // carry over, so there is nothing to resolve — the anime needs a Refresh.
-      return [];
-    }
 
     var pref = "sub";
     try { pref = new SharedPreferences().get("hianime_pref_audio") || "sub"; } catch (e) {}
+    var audioOrder = pref === "dub" ? ["dub", "sub"] : ["sub", "dub"];
+
+    // Episode URLs saved before v0.5.0 have the old site's 6-part shape,
+    //   "{episodeId}|{hasSub}|{hasDub}|{malId}|{anilistId}|{episodeNumber}"
+    // and their episode ids mean nothing here. They are still playable without a
+    // Refresh, because ZokoAnime is addressed by MAL id and episode number —
+    // both of which that old URL already carries. Without this an entry already
+    // in the library just reports an empty video list, and Refresh is the only
+    // way out (and it appends episodes rather than replacing them, so the stale
+    // ones linger and keep failing).
+    if (parts.length >= 6) {
+      var legacyMal = parts[3] || "";
+      var legacyEp = parts[5] || "";
+      if (legacyMal && legacyEp) {
+        var legacy = [];
+        for (var la = 0; la < audioOrder.length; la++) {
+          var embed = "https://zokoanime.video/stream/mal/" + legacyMal + "/" + legacyEp + "/" + audioOrder[la];
+          var got = await this.extractZokoStreams(embed, audioOrder[la] === "dub" ? "Dub" : "Sub");
+          legacy = legacy.concat(got);
+        }
+        if (legacy.length) return this.normalizeSubtitles(legacy);
+      }
+      return [];
+    }
+
+    // Current shape: "{episodeId}|{animeId}|{episodeNumber}"
+    var episodeId = parts[0];
+    if (!episodeId || !/^\d+$/.test(episodeId)) return [];
 
     var servers = await this.fetchServers(episodeId);
     if (!servers.length) return [];
@@ -760,7 +822,6 @@ class DefaultExtension extends MProvider {
     var zoko = [], rest = [];
     for (var i = 0; i < servers.length; i++) (isZoko(servers[i]) ? zoko : rest).push(servers[i]);
 
-    var audioOrder = pref === "dub" ? ["dub", "sub"] : ["sub", "dub"];
     var label = function (t) { return t === "dub" ? "Dub" : "Sub"; };
 
     var runZoko = async () => {
