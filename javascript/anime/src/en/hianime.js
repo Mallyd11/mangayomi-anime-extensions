@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.at",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.2",
+    "version": "0.6.0",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -23,40 +23,10 @@ const mangayomiSources = [
   },
 ];
 
-// Pre-filled address of the unwrapping proxy (proxy/proxy.js in this repo), so
-// switching the fix on is one toggle per machine instead of a URL anyone has to
-// be told.
-//
-// This replaces two upstream proxies that both went dark: shirayuki
-// (shirayuki.eastasia.cloudapp.azure.com:1818) no longer answers at all, and
-// vibevibe.workers.dev — the single host servesRawTs() used to whitelist — is
-// gone too, which is why every episode ended up on a disguised CDN with nothing
-// able to decode it.
-//
-// NOTE: localhost means *that* PC — this is not a shared address. Every machine
-// needs proxy/proxy.js running locally (Node + a Startup shortcut). To cover
-// several machines, and phones, from one place, deploy proxy/worker.js and put
-// its https URL here instead; the toggle then needs no per-machine setup.
-var DEFAULT_PROXY = "http://localhost:8765";
-
-// Hosts measured serving raw MPEG-TS that is merely *named* .jpg — libmpv
-// rejects them on the extension alone, so the proxy only has to rename them and
-// can 302 straight back to the CDN (mode=redirect): full CDN speed, a few
-// hundred bytes through the proxy per episode instead of gigabytes.
-//
-// Everything else is assumed PNG-wrapped and read through the proxy so the
-// header can be stripped. That is the safe default — tsStart() returns 0 for a
-// clean transport stream, so routing a raw-TS host this way still plays, it just
-// carries bytes it did not need to. Re-measure before trusting: these hosts
-// rotate (nekostream became kotocdn within days) and the wrapper is currently
-// 252 bytes, not the 70 it used to be.
-var RAW_TS_HOSTS = ["s1.akirax.buzz", "s2.norami.top", "vibevibe.workers.dev", "hls2.aniwatchtv.uk", "aniwatchtv.uk"];
-
 // ZokoAnime hides its player payload in `window.__P`: base64 of the JSON XORed
 // with this literal repeating key. Straight out of the site's own
 // zokoanime1.pages.dev/core/obfuscate.js — there is no server-side secret and no
-// session, which is exactly why this server is usable from an extension when
-// TryEmbed (same CDN, Cloudflare-fingerprinted) is not.
+// session, which is why this server is reachable from an extension at all.
 var ZOKO_KEY = "otaku-embed-v1";
 
 class DefaultExtension extends MProvider {
@@ -492,240 +462,12 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
-  // Fetch a MegaPlay page URL and extract sources.
-  // Some pages return error HTML but still embed the player div — we check for
-  // data-id first and only bail if it's truly absent. Also follows iframe redirects.
-  async extractMegaplayFromPageUrl(pageUrl, referer, audioType, audioLabel) {
-    try {
-      var res = await this.client.get(pageUrl, { "User-Agent": this.ua, "Referer": referer });
-      if (!res || !res.body) return [];
-      // Look for player data-id even if the page also contains error HTML
-      var m = res.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
-      if (m) return await this.fetchMegaplaySourcesById(m[1], pageUrl, audioType, audioLabel);
-      // Follow any megaplay iframe redirect
-      var iframeM = res.body.match(/src="(https:\/\/megaplay\.buzz\/[^"]+)"/);
-      if (iframeM) {
-        var iRes = await this.client.get(iframeM[1], { "User-Agent": this.ua, "Referer": pageUrl });
-        if (iRes && iRes.body) {
-          var im = iRes.body.match(/id="megaplay-player"[\s\S]*?data-id="(\d+)"/);
-          if (im) return await this.fetchMegaplaySourcesById(im[1], iframeM[1], audioType, audioLabel);
-        }
-      }
-    } catch (e) {}
-    return [];
-  }
-
-
-  // Convert a WebVTT string to SRT format.
-  // lostproject.club VTTs use MM:SS.mmm timestamps (no hours prefix); libmpv's
-  // WebVTT parser misbehaves with this two-part format for standalone subtitle
-  // files. SRT's explicit HH:MM:SS,mmm format is unambiguous and well-tested.
-  _vttTsToSrt(ts) {
-    // "MM:SS.mmm" or "HH:MM:SS.mmm" → "HH:MM:SS,mmm"
-    var dotIdx = ts.lastIndexOf('.');
-    var ms = ts.substring(dotIdx + 1);
-    var parts = ts.substring(0, dotIdx).split(':');
-    while (parts.length < 3) parts.unshift('00');
-    return parts.join(':') + ',' + ms;
-  }
-
-  vttToSrt(vtt) {
-    var lines = vtt.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-    var srt = '';
-    var cueNum = 1;
-    var i = 0;
-    // Skip WEBVTT header block (lines until the first blank line)
-    while (i < lines.length && lines[i].trim() !== '') i++;
-    while (i < lines.length) {
-      // Skip blank lines between cues
-      while (i < lines.length && lines[i].trim() === '') i++;
-      if (i >= lines.length) break;
-      var line = lines[i];
-      // Skip NOTE / STYLE / REGION blocks
-      if (/^(NOTE|STYLE|REGION)\b/.test(line)) {
-        while (i < lines.length && lines[i].trim() !== '') i++;
-        continue;
-      }
-      // Skip optional cue identifier (not a timestamp line)
-      if (line.indexOf('-->') < 0) {
-        i++;
-        if (i >= lines.length) break;
-        line = lines[i];
-      }
-      if (line.indexOf('-->') < 0) { i++; continue; }
-      // Parse VTT timestamps — both MM:SS.mmm and HH:MM:SS.mmm
-      var m = line.match(/([\d:]+\.\d{3})\s*-->\s*([\d:]+\.\d{3})/);
-      if (!m) { i++; continue; }
-      var start = this._vttTsToSrt(m[1]);
-      var end = this._vttTsToSrt(m[2]);
-      i++;
-      var textLines = [];
-      while (i < lines.length && lines[i].trim() !== '') {
-        // Strip VTT inline timing tags (<00:01:00.000>), keep <i>/<b>/<u>
-        var t = lines[i].replace(/<[\d:]+\.\d{3}>/g, '');
-        textLines.push(t);
-        i++;
-      }
-      if (textLines.length > 0) {
-        srt += cueNum + '\n' + start + ' --> ' + end + '\n' + textLines.join('\n') + '\n\n';
-        cueNum++;
-      }
-    }
-    return srt || vtt;
-  }
-
-  // Whether a stream plays untouched on libmpv (Windows/Android).
-  //
-  // Nothing does, at present. Every CDN HiAnime hands out disguises its segments
-  // one of two ways, both measured 2026-09-07:
-  //   - PNG-wrapped: a 252-byte PNG header in front of real MPEG-TS, served as
-  //     image/png at .image URLs (megap.akirax.buzz, megap.shiora.site,
-  //     nekostream-family). iOS AVPlayer scans forward to the 0x47 sync byte and
-  //     plays; libmpv treats it as a zero-duration image and races to ENDLIST.
-  //   - raw MPEG-TS named .jpg (s1.akirax.buzz): the bytes are already clean and
-  //     only the extension makes libmpv refuse it (extension_picky).
-  //
-  // Both need the proxy — the segment URLs live inside the provider's playlist
-  // body, so nothing this extension returns can reach them. This predicate is
-  // kept because it is the honest answer to "can the player use this as-is", and
-  // it is what decides whether an unwrapped twin is worth emitting.
-  servesRawTs(url) {
-    var u = url || "";
-    for (var i = 0; i < RAW_TS_HOSTS.length; i++) {
-      // Raw TS still fails on a .jpg/.image name, so only a sane extension counts.
-      if (u.indexOf(RAW_TS_HOSTS[i]) >= 0) return !/\.(jpg|jpeg|png|image)(\?|$)/i.test(u);
-    }
-    return false;
-  }
-
-  // Segments on these hosts are already clean MPEG-TS, so the proxy can 302
-  // rather than read every byte. See RAW_TS_HOSTS.
-  servesCleanBytes(url) {
-    var u = url || "";
-    for (var i = 0; i < RAW_TS_HOSTS.length; i++) if (u.indexOf(RAW_TS_HOSTS[i]) >= 0) return true;
-    return false;
-  }
-
-  // Base URL of the unwrapping proxy, or "" when it is switched off.
-  //
-  // The URL is pre-filled so turning this on is a single toggle — nobody has to
-  // know or type the address. The box stays editable for anyone pointing at a
-  // deployed worker, and anything that is not an http(s) origin is ignored
-  // rather than pasted into a stream URL.
-  proxyBase() {
-    var on = false;
-    try { on = new SharedPreferences().get("hianime_pref_proxy_enabled"); } catch (e) {}
-    if (on !== true) return "";
-    var raw = "";
-    try { raw = String(new SharedPreferences().get("hianime_pref_proxy_url") || "").trim(); } catch (e) {}
-    if (!raw) raw = DEFAULT_PROXY;
-    if (!/^https?:\/\/[^/\s]+/.test(raw)) return "";
-    return raw.replace(/\/+$/, "");
-  }
-
-  // The Referer a CDN demands, which the proxy must send upstream on the
-  // extension's behalf. MegaPlay-family hosts 403 without it.
-  proxyRefererFor(stream) {
-    var h = (stream && stream.headers) || {};
-    return h["Referer"] || h["referer"] || "https://megaplay.buzz/";
-  }
-
-  // An "⟨unwrapped⟩" twin of one stream, routed through the proxy, or null when
-  // the proxy is off or the stream already plays as-is.
-  //
-  // The proxy attaches the upstream Referer itself; forwarding ours would make
-  // Mangayomi send it to the proxy instead of the CDN.
-  unwrappedTwin(stream, referer) {
-    var proxy = this.proxyBase();
-    if (!proxy || !stream || !stream.url) return null;
-    if (this.servesRawTs(stream.url)) return null;
-    var mode = this.servesCleanBytes(stream.url) ? "&mode=redirect" : "";
-    var twin = {};
-    for (var k in stream) if (Object.prototype.hasOwnProperty.call(stream, k)) twin[k] = stream[k];
-    twin.url = proxy + "/m3u8?url=" + encodeURIComponent(stream.url) +
-               "&referer=" + encodeURIComponent(referer || "https://megaplay.buzz/") + mode;
-    twin.originalUrl = stream.url;
-    twin.quality = String(stream.quality || "") + " ⟨unwrapped⟩";
-    twin.headers = { "User-Agent": this.ua };
-    return twin;
-  }
-
   // Resolve a playlist URI that may be absolute or relative to its playlist.
   resolveUrl(uri, playlistUrl) {
     if (uri.indexOf("http") === 0) return uri;
     var lastSlash = playlistUrl.lastIndexOf("/");
     var baseDir = lastSlash > 0 ? playlistUrl.substring(0, lastSlash + 1) : playlistUrl;
     return baseDir + uri;
-  }
-
-  // Download MegaPlay/VidNest subtitle tracks and inline them as SRT text.
-  // The VTTs live on lostproject.club, which 403s without a megaplay.buzz Referer —
-  // so a track that fails to download here must be dropped, not emitted as a URL
-  // for the player to retry (the player sends no Referer and would 403 too).
-  async inlineMegaplayTracks(tracks) {
-    if (!Array.isArray(tracks)) return [];
-    var pending = [];
-    for (var t = 0; t < tracks.length; t++) {
-      var track = tracks[t];
-      if (!track || !track.file || track.kind === "thumbnails") continue;
-      pending.push(this._inlineOneTrack(track));
-    }
-    var fetched = await Promise.all(pending);
-    var subtitles = [];
-    for (var r = 0; r < fetched.length; r++) {
-      if (fetched[r]) subtitles.push(fetched[r]);
-    }
-    return subtitles;
-  }
-
-  async _inlineOneTrack(track) {
-    try {
-      var res = await this.client.get(track.file, {
-        "User-Agent": this.ua,
-        "Referer": "https://megaplay.buzz/",
-      });
-      var body = (res.body || "").trimStart();
-      if (!body.startsWith("WEBVTT")) return null;
-      return { file: this.vttToSrt(body), label: track.label || "Unknown" };
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // Call the MegaPlay getSources API for a known data-id and build stream list
-  async fetchMegaplaySourcesById(dataId, refererUrl, audioType, audioLabel) {
-    var streams = [];
-    try {
-      var res = await this.client.get("https://megaplay.buzz/stream/getSources?id=" + dataId, {
-        "User-Agent": this.ua,
-        "Referer": refererUrl,
-        "X-Requested-With": "XMLHttpRequest",
-        "Accept": "application/json",
-      });
-      var data = JSON.parse(res.body);
-      if (!data || !data.sources) return streams;
-      var sourceList = Array.isArray(data.sources) ? data.sources : (data.sources.file ? [data.sources] : []);
-      var subtitles = audioType === "sub" ? await this.inlineMegaplayTracks(data.tracks) : [];
-      var streamHeaders = { "User-Agent": this.ua, "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" };
-      for (var s = 0; s < sourceList.length; s++) {
-        var src = sourceList[s];
-        var fileUrl = src.file || src.url;
-        if (!fileUrl) continue;
-        if (fileUrl.indexOf(".m3u8") >= 0) {
-          var resolved = await this.resolveHlsPlaylist(fileUrl, streamHeaders);
-          if (resolved.kind === "master") {
-            for (var v = 0; v < resolved.variants.length; v++) {
-              streams.push({ url: resolved.variants[v].url, originalUrl: fileUrl, quality: resolved.variants[v].label + " - MegaPlay [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
-            }
-          } else if (resolved.kind === "flat") {
-            streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "MegaPlay [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
-          }
-        } else {
-          streams.push({ url: fileUrl, originalUrl: fileUrl, quality: "MegaPlay [" + audioLabel + "]", headers: streamHeaders, subtitles: subtitles });
-        }
-      }
-    } catch (e) {}
-    return streams;
   }
 
   // Resolve an HLS playlist URL to one stream entry per variant.
@@ -820,74 +562,27 @@ class DefaultExtension extends MProvider {
     var servers = await this.fetchServers(episodeId);
     if (!servers.length) return [];
 
-    // ZokoAnime leads: it is the only server whose segments are real MPEG-TS at
-    // real .ts URLs, so it plays untouched everywhere. Everything else is
-    // MegaPlay-family and needs the unwrap proxy on Windows/Android, so those
-    // are resolved only as a fallback — see the "Servers" preference.
-    var wanted = "zoko";
-    try { wanted = new SharedPreferences().get("hianime_pref_servers") || "zoko"; } catch (e) {}
+    // ZokoAnime only.
+    //
+    // It is the sole server whose segments are real MPEG-TS at real .ts URLs, so
+    // it plays and downloads untouched. Every other server this site lists is
+    // MegaPlay-family: video disguised as PNG images, undecodable by libmpv
+    // without a local unwrap proxy. Those used to be offered as a fallback, but
+    // an entry nobody can play is not a fallback — it is a dead line in the
+    // quality picker — so they are no longer resolved at all.
     var isZoko = function (sv) { return /zoko/i.test(sv.name) || /zokoanime/i.test(sv.url); };
-
-    var zoko = [], rest = [];
-    for (var i = 0; i < servers.length; i++) (isZoko(servers[i]) ? zoko : rest).push(servers[i]);
-
     var label = function (t) { return t === "dub" ? "Dub" : "Sub"; };
 
-    var runZoko = async () => {
-      var out = [];
-      for (var a = 0; a < audioOrder.length; a++) {
-        for (var i = 0; i < zoko.length; i++) {
-          if (zoko[i].type !== audioOrder[a]) continue;
-          var got = await this.extractZokoStreams(zoko[i].url, label(audioOrder[a]));
-          out = out.concat(got);
-        }
+    var streams = [];
+    for (var a = 0; a < audioOrder.length; a++) {
+      for (var i = 0; i < servers.length; i++) {
+        if (!isZoko(servers[i]) || servers[i].type !== audioOrder[a]) continue;
+        var got = await this.extractZokoStreams(servers[i].url, label(audioOrder[a]));
+        streams = streams.concat(got);
       }
-      return out;
-    };
-
-    // MegaPlay embeds reached through the same server list. These are the
-    // PNG-wrapped ones; they are kept because ZokoAnime does not carry every
-    // title, and an episode that plays on a disguised CDN beats one that does
-    // not play at all.
-    var runRest = async () => {
-      var out = [];
-      for (var a = 0; a < audioOrder.length; a++) {
-        for (var i = 0; i < rest.length; i++) {
-          var sv = rest[i];
-          if (sv.type !== audioOrder[a]) continue;
-          if (!/megaplay|vidtube|vidnest/i.test(sv.url)) continue;
-          try {
-            var got = await this.extractMegaplayFromPageUrl(
-              sv.url, this.source.baseUrl + "/", audioOrder[a],
-              sv.name + " [" + label(audioOrder[a]) + "]"
-            );
-            out = out.concat(got || []);
-          } catch (e) {}
-        }
-      }
-      return out;
-    };
-
-    var streams = await runZoko();
-    if (wanted === "all" || streams.length === 0) {
-      streams = streams.concat(await runRest());
     }
 
-    // Anything that needs the proxy gets an "⟨unwrapped⟩" twin ahead of it when
-    // the viewer has one running; ZokoAnime never does, so this is a no-op for
-    // the common case and only rescues the MegaPlay fallback.
-    var playsAsIs = [], disguised = [];
-    for (var k = 0; k < streams.length; k++) {
-      if (this.servesRawTs(streams[k].url)) playsAsIs.push(streams[k]);
-      else disguised.push(streams[k]);
-    }
-    var twins = [];
-    for (var t = 0; t < disguised.length; t++) {
-      var twin = this.unwrappedTwin(disguised[t], this.proxyRefererFor(disguised[t]));
-      if (twin) twins.push(twin);
-    }
-
-    return this.normalizeSubtitles(playsAsIs.concat(twins, disguised));
+    return this.normalizeSubtitles(streams);
   }
 
   // Make English turn on by itself.
@@ -952,37 +647,6 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Sub", "Dub"],
           entryValues: ["sub", "dub"],
-        },
-      },
-      {
-        key: "hianime_pref_proxy_enabled",
-        checkBoxPreference: {
-          title: "Fix playback on Windows/Android",
-          summary: "Only affects the fallback servers. ZokoAnime, the default, plays everywhere untouched — leave this off unless a title has no ZokoAnime copy and the MegaPlay fallback buffers forever. Requires the proxy to be reachable at the address below.",
-          value: false,
-        },
-      },
-      {
-        key: "hianime_pref_proxy_url",
-        editTextPreference: {
-          title: "Proxy address (advanced)",
-          summary: "Already filled in — only change this if you run the proxy somewhere other than this PC.",
-          value: DEFAULT_PROXY,
-          dialogTitle: "Proxy address",
-          dialogMessage: "HiAnime's CDNs hide video inside PNG images, which Windows/Android cannot decode (iOS plays them fine). The default points at proxy/proxy.js running on this PC. Replace it with a deployed worker's https URL to cover several devices from one place.",
-        },
-      },
-      {
-        key: "hianime_pref_servers",
-        listPreference: {
-          title: "Servers",
-          summary: "ZokoAnime only, by default: it is the one server whose segments are real " +
-            "MPEG-TS, so it plays on Windows and Android with nothing else switched on. The " +
-            "others disguise video as PNG images and need the unwrap proxy below. They are " +
-            "tried anyway when a title has no ZokoAnime copy, whichever option is picked here.",
-          valueIndex: 0,
-          entries: ["ZokoAnime only (recommended)", "All servers"],
-          entryValues: ["zoko", "all"],
         },
       },
     ];
