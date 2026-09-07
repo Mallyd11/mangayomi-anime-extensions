@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.at",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.6.0",
+    "version": "0.7.0",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -163,7 +163,12 @@ class DefaultExtension extends MProvider {
 
   async search(query, page, filters) {
     try {
-      var p = await this.fetchPage("/search?keyword=" + encodeURIComponent(query) + "&page=" + page);
+      var f = this.buildFilterQuery(filters);
+      var parts = [];
+      if (query) parts.push("keyword=" + encodeURIComponent(query));
+      if (f.query) parts.push(f.query);
+      parts.push("page=" + page);
+      var p = await this.fetchPage(f.path + "?" + parts.join("&"));
       var list = this.parseList(p.doc, p.html);
       return { list: list, hasNextPage: this.hasNextPage(p.doc, list.length) };
     } catch (e) {
@@ -633,8 +638,123 @@ class DefaultExtension extends MProvider {
     return english.concat(other);
   }
 
+  // ── Filters ───────────────────────────────────────────────────────────────
+  //
+  // Everything routes through /filter, which accepts the same `keyword` the
+  // search box uses, so a text query and the filters below combine freely.
+  //
+  // Genre is the exception: the site has no genre field on the filter form and
+  // ignores a `genres=` query parameter entirely (measured — results come back
+  // identical to no filter at all). Genres live at their own /genres/<slug>
+  // pages, which *do* honour the other filter parameters, so picking a genre
+  // just swaps the base path and keeps every other choice working.
+  filterDefs() {
+    var genres = [
+      ["Action", "action"], ["Adult Cast", "adult-cast"], ["Adventure", "adventure"],
+      ["Animation", "animation"], ["Anthropomorphic", "anthropomorphic"], ["Avant Garde", "avant-garde"],
+      ["Award Winning", "award-winning"], ["Boys Love", "boys-love"], ["Cars", "cars"],
+      ["CGDCT", "cgdct"], ["Childcare", "childcare"], ["Combat Sports", "combat-sports"],
+      ["Comedy", "comedy"], ["Crossdressing", "crossdressing"], ["Delinquents", "delinquents"],
+      ["Dementia", "dementia"], ["Demons", "demons"], ["Detective", "detective"],
+      ["Drama", "drama"], ["Ecchi", "ecchi"], ["Educational", "educational"],
+      ["Erotica", "erotica"], ["Fantasy", "fantasy"], ["Gag Humor", "gag-humor"],
+      ["Game", "game"], ["Girls Love", "girls-love"], ["Gore", "gore"],
+      ["Gourmet", "gourmet"], ["Harem", "harem"], ["Hentai", "hentai"],
+      ["High Stakes Game", "high-stakes-game"], ["Historical", "historical"], ["Horror", "horror"],
+      ["Idols (Female)", "idols-female"], ["Idols (Male)", "idols-male"], ["Isekai", "isekai"],
+      ["Iyashikei", "iyashikei"], ["Josei", "josei"], ["Kids", "kids"],
+      ["Love Polygon", "love-polygon"], ["Magic", "magic"], ["Magical Sex Shift", "magical-sex-shift"],
+      ["Mahou Shoujo", "mahou-shoujo"], ["Martial Arts", "martial-arts"], ["Mecha", "mecha"],
+      ["Medical", "medical"], ["Military", "military"], ["Music", "music"],
+      ["Mystery", "mystery"], ["Mythology", "mythology"], ["Organized Crime", "organized-crime"],
+      ["Otaku Culture", "otaku-culture"], ["Parody", "parody"], ["Performing Arts", "performing-arts"],
+      ["Pets", "pets"], ["Police", "police"], ["Psychological", "psychological"],
+      ["Racing", "racing"], ["Reincarnation", "reincarnation"], ["Reverse Harem", "reverse-harem"],
+      ["Romance", "romance"], ["Samurai", "samurai"], ["School", "school"],
+      ["Sci-Fi", "sci-fi"], ["Seinen", "seinen"], ["Shoujo", "shoujo"],
+      ["Shoujo Ai", "shoujo-ai"], ["Shounen", "shounen"], ["Shounen Ai", "shounen-ai"],
+      ["Showbiz", "showbiz"], ["Slice of Life", "slice-of-life"], ["Space", "space"],
+      ["Sports", "sports"], ["Strategy Game", "strategy-game"], ["Super Power", "super-power"],
+      ["Supernatural", "supernatural"], ["Survival", "survival"], ["Suspense", "suspense"],
+      ["Team Sports", "team-sports"], ["Thriller", "thriller"], ["Time Travel", "time-travel"],
+      ["Urban Fantasy", "urban-fantasy"], ["Vampire", "vampire"], ["Video Game", "video-game"],
+      ["Villainess", "villainess"], ["Visual Arts", "visual-arts"], ["Workplace", "workplace"],
+    ];
+
+    var years = [
+      ["2027", "2027"], ["2026", "2026"], ["2025", "2025"], ["2024", "2024"], ["2023", "2023"], ["2022", "2022"], ["2021", "2021"], ["2020", "2020"], ["2019", "2019"], ["2018", "2018"],
+      ["2017", "2017"], ["2016", "2016"], ["2015", "2015"], ["2014", "2014"], ["2013", "2013"], ["2012", "2012"], ["2011", "2011"], ["2010", "2010"], ["2009", "2009"], ["2008", "2008"],
+      ["2007", "2007"], ["2006", "2006"], ["2005", "2005"], ["2004", "2004"], ["2003", "2003"], ["2002", "2002"], ["2001", "2001"], ["2000", "2000"], ["1999", "1999"], ["1998", "1998"],
+      ["1997", "1997"], ["1996", "1996"], ["1995", "1995"], ["1994", "1994"], ["1993", "1993"], ["1992", "1992"], ["1991", "1991"], ["1990", "1990"], ["1989", "1989"], ["1988", "1988"],
+      ["1987", "1987"], ["1986", "1986"], ["1985", "1985"], ["1984", "1984"], ["1983", "1983"], ["1982", "1982"], ["1981", "1981"], ["1980", "1980"], ["1979", "1979"], ["1978", "1978"],
+      ["1977", "1977"], ["1976", "1976"], ["1975", "1975"], ["1974", "1974"], ["1973", "1973"], ["1972", "1972"], ["1971", "1971"], ["1970", "1970"], ["1969", "1969"], ["1968", "1968"],
+      ["1967", "1967"], ["1966", "1966"], ["1965", "1965"], ["1964", "1964"], ["1963", "1963"], ["1962", "1962"], ["1961", "1961"], ["1960", "1960"],
+    ];
+
+    return [
+      { param: "__genre", name: "Genre", options: genres },
+      { param: "type", name: "Type", options: [
+        ["TV", "tv"], ["Movie", "movie"], ["OVA", "ova"], ["ONA", "ona"],
+        ["Special", "special"], ["Music", "music"],
+      ] },
+      { param: "status", name: "Status", options: [
+        ["Finished Airing", "completed"], ["Currently Airing", "airing"],
+        ["Not Yet Aired", "not_yet_aired"],
+      ] },
+      { param: "season", name: "Season", options: [
+        ["Spring", "spring"], ["Summer", "summer"], ["Fall", "fall"], ["Winter", "winter"],
+      ] },
+      { param: "sy", name: "Year", options: years },
+      { param: "rating", name: "Rating", options: [
+        ["G", "g"], ["PG", "pg"], ["PG-13", "pg_13"], ["R", "r_17"], ["R+", "r_plus"], ["Rx", "rx"],
+      ] },
+      { param: "score", name: "Minimum score", options: [
+        ["(10) Masterpiece", "10"], ["(9) Great", "9"], ["(8) Very Good", "8"],
+        ["(7) Good", "7"], ["(6) Fine", "6"], ["(5) Average", "5"],
+        ["(4) Bad", "4"], ["(3) Very Bad", "3"], ["(2) Horrible", "2"], ["(1) Appalling", "1"],
+      ] },
+      { param: "sort", name: "Sort by", options: [
+        ["Recently Updated", "updated_date"], ["Recently Added", "added_date"],
+        ["Release Date", "release_date"], ["Trending", "trending"],
+        ["Name A-Z", "title_az"], ["Score", "avg_score"], ["MAL Score", "mal_score"],
+        ["Most Watched", "most_watched"], ["Most Favourited", "most_favourited"],
+        ["Number of Episodes", "number_of_episodes"],
+      ] },
+    ];
+  }
+
   getFilterList() {
-    return [];
+    return this.filterDefs().map(function (def) {
+      return {
+        type_name: "SelectFilter",
+        name: def.name,
+        state: 0,
+        values: [{ type_name: "SelectOption", name: "Any", value: "" }].concat(
+          def.options.map(function (o) {
+            return { type_name: "SelectOption", name: o[0], value: o[1] };
+          })
+        ),
+      };
+    });
+  }
+
+  // Mangayomi hands filters back as a positional array matching getFilterList's
+  // order, with no names attached — so this must walk filterDefs() in the same
+  // order rather than looking anything up by name.
+  buildFilterQuery(filters) {
+    var path = "/filter", parts = [];
+    try {
+      var defs = this.filterDefs();
+      for (var i = 0; i < defs.length; i++) {
+        var f = (filters || [])[i];
+        if (!f) continue;
+        var opt = (f.values || [])[f.state || 0];
+        if (!opt || !opt.value) continue;
+        if (defs[i].param === "__genre") path = "/genres/" + opt.value;
+        else parts.push(defs[i].param + "=" + encodeURIComponent(opt.value));
+      }
+    } catch (e) {}
+    return { path: path, query: parts.join("&") };
   }
 
   getSourcePreferences() {
