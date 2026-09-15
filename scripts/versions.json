@@ -28,9 +28,9 @@
     "anime": {
         "AnimeHeaven": {
             "name": "AnimeHeaven",
-            "version": "0.0.8",
+            "version": "0.0.9",
             "langs": "en",
-            "lastUpd": 1789430607.1805632
+            "lastUpd": 1789513212.911886
         },
         "HiAnime": {
             "name": "HiAnime",

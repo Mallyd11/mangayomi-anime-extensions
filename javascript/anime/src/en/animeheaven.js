@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.8",
+    "version": "0.0.9",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -290,10 +290,18 @@ class DefaultExtension extends MProvider {
     }
     var html = res.body || "";
 
-    // Pull every distinct mp4 URL. Different subdomains rotate per refresh, but
-    // each page lists ax/ct/ck etc. as fallbacks. We surface them as quality options.
+    // Pull every distinct media URL. Different subdomains rotate per refresh,
+    // but each page lists ax/ct/ck etc. as fallbacks. We surface them as
+    // quality options.
+    //
+    // Match on the shape of a media URL rather than on the exact
+    // <sub>.animeheaven.me/video.mp4?<token> form the player used to emit: a
+    // host, a path or a container the pattern does not anticipate would leave
+    // the episode with no playable server at all, which looks from the app
+    // like the episode is broken or absent. Anything on an unfamiliar host is
+    // still offered, labelled by that host.
     var seen = {};
-    var rx = /['"](https?:\/\/[\w\-]+\.animeheaven\.me\/video\.mp4\?[^'"\s]+)['"]/g;
+    var rx = /(?:^|['"(=\s])(https?:\/\/[^'"()\s<>\\]+?\.(?:mp4|m3u8|mkv|webm)(?:\?[^'"()\s<>\\]*)?)(?=['")\s<>\\]|$)/g;
     var m;
     // The video CDN validates access via the token embedded in the URL query
     // string, not via cookies. Sending only UA + Referer keeps the request
@@ -302,8 +310,12 @@ class DefaultExtension extends MProvider {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
     };
+    var named = [];
+    var others = [];
     while ((m = rx.exec(html)) !== null) {
-      var u = m[1];
+      // URLs are embedded in HTML, so &amp; can stand in for &.
+      var u = this._decodeHtml(m[1]);
+
       // The player embeds three kinds of URL suffix:
       //   &error  → Server 2 fallback
       //   &error2 → Server 3 fallback
@@ -318,15 +330,28 @@ class DefaultExtension extends MProvider {
       seen[clean] = true;
 
       // Label by suffix so users can pick a fallback if the primary fails.
-      var label;
-      if (/&error2(\b|$)/.test(u)) label = "Server 3";
-      else if (/&error(\b|$)/.test(u)) label = "Server 2";
-      else label = "Server 1";
+      // A host we do not recognise is labelled by its hostname instead, so a
+      // server the site adds later still reaches the player.
+      var hostMatch = clean.match(/^https?:\/\/([^\/?#]+)/);
+      var host = hostMatch ? hostMatch[1] : "";
+      if (/(^|\.)animeheaven\.me$/.test(host)) {
+        var label;
+        if (/&error2(\b|$)/.test(u)) label = "Server 3";
+        else if (/&error(\b|$)/.test(u)) label = "Server 2";
+        else label = "Server 1";
+        named.push({ url: clean, label: label });
+      } else {
+        others.push({ url: clean, label: host });
+      }
+    }
 
+    // Keep the familiar Server 1–3 first; anything new goes after them.
+    var all = named.concat(others);
+    for (var i = 0; i < all.length; i++) {
       streams.push({
-        url: clean,
-        originalUrl: clean,
-        quality: label,
+        url: all[i].url,
+        originalUrl: all[i].url,
+        quality: all[i].label,
         headers: streamHeaders,
         subtitles: [],
       });
