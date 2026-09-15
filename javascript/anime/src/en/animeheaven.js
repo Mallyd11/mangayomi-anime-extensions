@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.7",
+    "version": "0.0.8",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -37,6 +37,12 @@ class DefaultExtension extends MProvider {
     return {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      // Without these an intermediary can hand back a copy of anime.php from
+      // before the newest episode was published, so the app shows one episode
+      // fewer than the site does.
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache",
     };
   }
 
@@ -142,35 +148,35 @@ class DefaultExtension extends MProvider {
 
     // Title
     var name = "";
-    var nameMatch = html.match(/<div class='infotitle c'>([^<]+)<\/div>/);
+    var nameMatch = html.match(/<div class=["']infotitle c["']>([^<]+)<\/div>/);
     if (nameMatch) name = this._decodeHtml(nameMatch[1].trim());
 
     // Cover image — detail page uses class='posterimg' for the main poster.
     // Do NOT match 'coverimg'; those are related-anime thumbnails lower on the page.
     // Fall back to og:image which always points to the correct art.
     var imageUrl = "";
-    var posterMatch = html.match(/<img[^>]+class='[^']*posterimg[^']*'[^>]+src='([^']+)'/);
+    var posterMatch = html.match(/<img[^>]+class=["'][^"']*posterimg[^"']*["'][^>]+src=["']([^"']+)["']/);
     if (posterMatch) {
       var rel = posterMatch[1];
       imageUrl = rel.indexOf("http") === 0 ? rel : this.source.baseUrl + "/" + rel.replace(/^\/+/, "");
     }
     if (!imageUrl) {
-      var og = html.match(/<meta property='og:image' content='([^']+)'/);
+      var og = html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/);
       if (og) imageUrl = og[1];
     }
 
     // Description
     var description = "";
-    var descMatch = html.match(/<div class='infodes c'>([\s\S]*?)<\/div>/);
+    var descMatch = html.match(/<div class=["']infodes c["']>([\s\S]*?)<\/div>/);
     if (descMatch) {
       description = this._decodeHtml(descMatch[1].replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim());
     }
 
     // Genres — every <a class='boxitem ...'> in the tags section is a genre tag.
     var genre = [];
-    var genreSection = html.match(/<div class='infotags[^']*'[^>]*>([\s\S]*?)<\/div>\s*<div class='infoyear/);
+    var genreSection = html.match(/<div class=["']infotags[^"']*["'][^>]*>([\s\S]*?)<\/div>\s*<div class=["']infoyear/);
     if (genreSection) {
-      var gRx = /<a[^>]+href='tags\.php\?[^']+'[^>]*>([^<]+)<\/a>/g;
+      var gRx = /<a[^>]+href=["']tags\.php\?[^"']+["'][^>]*>([^<]+)<\/a>/g;
       var gm;
       while ((gm = gRx.exec(genreSection[1])) !== null) {
         genre.push(this._decodeHtml(gm[1].trim()));
@@ -178,7 +184,7 @@ class DefaultExtension extends MProvider {
     }
     // Fallback: just look for any tags.php links
     if (genre.length === 0) {
-      var gRx2 = /<a[^>]+href='tags\.php\?tag=([^']+)'/g;
+      var gRx2 = /<a[^>]+href=["']tags\.php\?tag=([^"']+)["']/g;
       var seen = {};
       var gm2;
       while ((gm2 = gRx2.exec(html)) !== null) {
@@ -190,30 +196,69 @@ class DefaultExtension extends MProvider {
     // Status — site shows "Status:" inline followed by an inline div.
     // "Episodes:" 11 etc. are in inline divs after labels. Use "Status" label if present.
     var status = 5;
-    var statusBlock = html.match(/Status[\s\S]{0,40}?<div[^>]+class='inline c2'>([^<]+)</);
+    var statusBlock = html.match(/Status[\s\S]{0,40}?<div[^>]+class=["']inline c2["']>([^<]+)</);
     if (statusBlock) status = this.statusCode(statusBlock[1]);
     else {
       // If no status label, infer: if "Episodes" count appears followed by total, treat as completed; else default unknown
       // Site mostly shows finished anime; default to 5 (UNKNOWN) when not stated.
     }
 
-    // Episodes — every anchor with onclick="gatea(...)" is an episode.
-    var chapters = [];
-    var epRx = /<a[^>]*onclick='gatea\(\\?["']([a-f0-9]+)\\?["']\)'[^>]*>([\s\S]*?)<\/a>/g;
+    // Episodes — every anchor that calls gatea('<key>') is one episode. The key
+    // is what getVideoList() sends back to gate.php as the `key` cookie.
+    //
+    // Match on the gatea() call itself rather than on a whole <a ...>...</a>
+    // shape. The page mixes quote styles, sometimes escapes the quotes inside
+    // the onclick attribute, and the key alphabet is not guaranteed to stay
+    // lowercase hex — any anchor a stricter pattern misses is an episode that
+    // silently disappears from the list while still being visible on the site.
+    // Read the episode number out of the markup that follows the call.
+    var order = [];
+    var byHash = {};
+    var gateRx = /gatea\s*\(\s*(?:\\?["']|&quot;|&#0*39;|&#0*34;)([^"'\\()\s<>]{2,128})/g;
     var em;
-    while ((em = epRx.exec(html)) !== null) {
+    while ((em = gateRx.exec(html)) !== null) {
       var hash = em[1];
-      var body = em[2];
-      var numMatch = body.match(/watch2[^>]*>(\d+(?:\.\d+)?)/);
-      var epNum = numMatch ? numMatch[1] : String(chapters.length + 1);
+
+      // The number sits in the anchor body right after the onclick attribute,
+      // e.g. <div class='watch2 c'>12</div>. Stop the window at the next
+      // gatea() call so we can never read the following episode's number.
+      var after = html.slice(gateRx.lastIndex, gateRx.lastIndex + 500);
+      var nextGate = after.search(/gatea\s*\(/);
+      if (nextGate !== -1) after = after.slice(0, nextGate);
+      var numMatch = after.match(/watch2[^>]*>\s*(\d+(?:\.\d+)?)/);
+      if (!numMatch) numMatch = after.match(/>\s*(\d+(?:\.\d+)?)\s*</);
+      var num = numMatch ? numMatch[1] : "";
+
+      if (byHash[hash]) {
+        // Same episode linked twice (a "latest episode" shortcut above the
+        // grid, for instance). Keep the first position, but take the number
+        // from this copy if the first one carried none.
+        if (!byHash[hash].num && num) byHash[hash].num = num;
+        continue;
+      }
+      byHash[hash] = { hash: hash, num: num };
+      order.push(byHash[hash]);
+    }
+
+    // The site lists newest first (Mangayomi convention: most recent at top),
+    // so no reverse is needed. When every entry carries a number, sort by it so
+    // a stray duplicate link can't shuffle the list; entries whose number we
+    // could not read fall back to their position.
+    var allNumbered = order.length > 0;
+    for (var oi = 0; oi < order.length; oi++) {
+      if (order[oi].num === "") { allNumbered = false; break; }
+    }
+    if (allNumbered) {
+      order.sort(function (a, b) { return parseFloat(b.num) - parseFloat(a.num); });
+    }
+
+    var chapters = [];
+    for (var ci = 0; ci < order.length; ci++) {
       chapters.push({
-        name: "Episode " + epNum,
-        url: hash, // chapter URL is just the gate cookie key
+        name: "Episode " + (order[ci].num || String(order.length - ci)),
+        url: order[ci].hash, // chapter URL is just the gate cookie key
       });
     }
-    // Latest episode is usually first in the source; reverse so episode 1 is at the
-    // bottom (Mangayomi convention: most recent at top).
-    // The site already lists newest first, so no reverse needed.
 
     return {
       name: name,
