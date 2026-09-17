@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.18",
+    "version": "0.4.20",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -22,6 +22,31 @@ const mangayomiSources = [
     "notes": "",
   },
 ];
+
+// Pre-filled address of the unwrapping proxy (proxy/proxy.js in this repo), so
+// switching the fix on is one toggle per machine instead of a URL anyone has to
+// be told.
+//
+// NOTE: localhost means *that* PC — this is not a shared address. Every machine
+// needs proxy/proxy.js running locally (Node + a Startup shortcut). To cover
+// several machines, and phones, from one place, deploy proxy/worker.js and put
+// its https URL here instead; the toggle then needs no per-machine setup.
+var DEFAULT_PROXY = "http://localhost:8765";
+
+// MegaPlay stopped returning a plain `sources` array from /stream/getSources in
+// September 2026 — the response now carries `enc`, the same JSON under AES-256-CBC
+// with a key and IV its own player ships in the clear (lib/newclient.min.js, the
+// "segment-decrypt" module). Its CDN additionally refuses the master playlist
+// without a signed `token`, which lib/e1-player.min.js builds from an HMAC secret
+// it also ships in the clear. Both are read straight out of those two scripts;
+// if either rotates, playback goes empty again and they have to be re-read.
+var MEGAPLAY_ENC_KEY = "i?LMTAx0Q6,:}50U";              // padded to 32 bytes
+var MEGAPLAY_ENC_IV = "W0;27ToaUpl_P%'c";               // 16 bytes
+var MEGAPLAY_CDN_SECRET = "MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s";
+// The player signs for 90 seconds, which is fine when the page re-signs on every
+// request. An extension hands the URL over once, so sign for long enough that a
+// paused episode still resumes.
+var MEGAPLAY_TOKEN_TTL = 21600;
 
 class DefaultExtension extends MProvider {
   constructor() {
@@ -344,6 +369,275 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
+  // ---------------------------------------------------------------- crypto
+  //
+  // Mangayomi's QuickJS runtime has no WebCrypto and no Node crypto, so the two
+  // primitives MegaPlay's player relies on are implemented here: SHA-256 (for
+  // the HMAC that signs a CDN URL) and AES-256-CBC decryption (for the `enc`
+  // blob that replaced the plain sources array).
+
+  _bytesOf(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) out.push(str.charCodeAt(i) & 0xff);
+    return out;
+  }
+
+  _sha256(bytes) {
+    var K = [
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
+      0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+      0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+      0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+      0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+      0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+      0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+      0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+      0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+    var H = [
+      0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+      0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    ];
+    var msg = bytes.slice();
+    var bitLen = msg.length * 8;
+    msg.push(0x80);
+    while (msg.length % 64 !== 56) msg.push(0);
+    // Inputs here are a few hundred bytes at most, so the high length word is 0.
+    msg.push(0, 0, 0, 0);
+    msg.push((bitLen >>> 24) & 0xff, (bitLen >>> 16) & 0xff, (bitLen >>> 8) & 0xff, bitLen & 0xff);
+
+    var rotr = function (x, n) { return ((x >>> n) | (x << (32 - n))) >>> 0; };
+    var w = new Array(64);
+    for (var off = 0; off < msg.length; off += 64) {
+      for (var t = 0; t < 16; t++) {
+        w[t] = ((msg[off + t * 4] << 24) | (msg[off + t * 4 + 1] << 16) |
+                (msg[off + t * 4 + 2] << 8) | msg[off + t * 4 + 3]) >>> 0;
+      }
+      for (t = 16; t < 64; t++) {
+        var s0 = (rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3)) >>> 0;
+        var s1 = (rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10)) >>> 0;
+        w[t] = (((w[t - 16] + s0) >>> 0) + ((w[t - 7] + s1) >>> 0)) >>> 0;
+      }
+      var a = H[0], b = H[1], c = H[2], d = H[3];
+      var e = H[4], f = H[5], g = H[6], h = H[7];
+      for (t = 0; t < 64; t++) {
+        var S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0;
+        var ch = ((e & f) ^ (~e & g)) >>> 0;
+        var temp1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[t] + w[t]) >>> 0)) >>> 0;
+        var S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0;
+        var maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+        var temp2 = (S0 + maj) >>> 0;
+        h = g; g = f; f = e;
+        e = (d + temp1) >>> 0;
+        d = c; c = b; b = a;
+        a = (temp1 + temp2) >>> 0;
+      }
+      H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0;
+      H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+      H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0;
+      H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
+    }
+    var out = [];
+    for (var i = 0; i < 8; i++) {
+      out.push((H[i] >>> 24) & 0xff, (H[i] >>> 16) & 0xff, (H[i] >>> 8) & 0xff, H[i] & 0xff);
+    }
+    return out;
+  }
+
+  _hmacSha256(keyStr, msgStr) {
+    var key = this._bytesOf(keyStr);
+    if (key.length > 64) key = this._sha256(key);
+    while (key.length < 64) key.push(0);
+    var ipad = [], opad = [];
+    for (var i = 0; i < 64; i++) { ipad.push(key[i] ^ 0x36); opad.push(key[i] ^ 0x5c); }
+    var inner = this._sha256(ipad.concat(this._bytesOf(msgStr)));
+    return this._sha256(opad.concat(inner));
+  }
+
+  _aesTables() {
+    if (this._aesT) return this._aesT;
+    var sbox = new Array(256);
+    var inv = new Array(256);
+    var p = 1, q = 1;
+    // Walk the generator 3 through GF(2^8) to build the S-box affinely.
+    do {
+      p = (p ^ (p << 1) ^ (p & 0x80 ? 0x1b : 0)) & 0xff;
+      q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 0xff;
+      if (q & 0x80) q ^= 0x09;
+      var x = (q ^ ((q << 1) | (q >>> 7)) ^ ((q << 2) | (q >>> 6)) ^
+        ((q << 3) | (q >>> 5)) ^ ((q << 4) | (q >>> 4))) & 0xff;
+      sbox[p] = x ^ 0x63;
+    } while (p !== 1);
+    sbox[0] = 0x63;
+    for (var i = 0; i < 256; i++) inv[sbox[i]] = i;
+    this._aesT = { sbox: sbox, inv: inv };
+    return this._aesT;
+  }
+
+  _gmul(a, b) {
+    var r = 0;
+    for (var i = 0; i < 8; i++) {
+      if (b & 1) r ^= a;
+      var hi = a & 0x80;
+      a = (a << 1) & 0xff;
+      if (hi) a ^= 0x1b;
+      b >>= 1;
+    }
+    return r & 0xff;
+  }
+
+  // Key schedule for any AES key length. MegaPlay uses a 32-byte key (Nk 8,
+  // 14 rounds); the extra SubWord at i % Nk === 4 applies only at that size.
+  _expandKey(key) {
+    var T = this._aesTables();
+    var rcon = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
+    var nk = key.length / 4;
+    var rounds = nk + 6;
+    var w = [];
+    for (var i = 0; i < nk; i++) {
+      w.push([key[4 * i], key[4 * i + 1], key[4 * i + 2], key[4 * i + 3]]);
+    }
+    for (i = nk; i < 4 * (rounds + 1); i++) {
+      var t = w[i - 1].slice();
+      if (i % nk === 0) {
+        t.push(t.shift());
+        t = t.map(function (b) { return T.sbox[b]; });
+        t[0] ^= rcon[i / nk - 1];
+      } else if (nk > 6 && i % nk === 4) {
+        t = t.map(function (b) { return T.sbox[b]; });
+      }
+      var prev = w[i - nk];
+      w.push(t.map(function (b, j) { return b ^ prev[j]; }));
+    }
+    return { w: w, rounds: rounds };
+  }
+
+  _invShiftRows(s) {
+    for (var r = 1; r < 4; r++) {
+      var row = [s[r], s[4 + r], s[8 + r], s[12 + r]];
+      for (var c = 0; c < 4; c++) s[c * 4 + r] = row[(c - r + 4) % 4];
+    }
+  }
+
+  _invMixColumns(s) {
+    for (var c = 0; c < 4; c++) {
+      var a0 = s[c * 4], a1 = s[c * 4 + 1], a2 = s[c * 4 + 2], a3 = s[c * 4 + 3];
+      s[c * 4] = this._gmul(a0, 14) ^ this._gmul(a1, 11) ^ this._gmul(a2, 13) ^ this._gmul(a3, 9);
+      s[c * 4 + 1] = this._gmul(a0, 9) ^ this._gmul(a1, 14) ^ this._gmul(a2, 11) ^ this._gmul(a3, 13);
+      s[c * 4 + 2] = this._gmul(a0, 13) ^ this._gmul(a1, 9) ^ this._gmul(a2, 14) ^ this._gmul(a3, 11);
+      s[c * 4 + 3] = this._gmul(a0, 11) ^ this._gmul(a1, 13) ^ this._gmul(a2, 9) ^ this._gmul(a3, 14);
+    }
+  }
+
+  _decryptBlock(block, sched) {
+    var T = this._aesTables();
+    var w = sched.w;
+    var s = block.slice();
+    var addRound = function (round) {
+      for (var c = 0; c < 4; c++) {
+        for (var r = 0; r < 4; r++) s[c * 4 + r] ^= w[round * 4 + c][r];
+      }
+    };
+    addRound(sched.rounds);
+    for (var round = sched.rounds - 1; round >= 1; round--) {
+      this._invShiftRows(s);
+      for (var i = 0; i < 16; i++) s[i] = T.inv[s[i]];
+      addRound(round);
+      this._invMixColumns(s);
+    }
+    this._invShiftRows(s);
+    for (var j = 0; j < 16; j++) s[j] = T.inv[s[j]];
+    addRound(0);
+    return s;
+  }
+
+  _aesCbcDecrypt(cipher, key, iv) {
+    var sched = this._expandKey(key);
+    var out = [];
+    var prev = iv.slice();
+    for (var off = 0; off + 16 <= cipher.length; off += 16) {
+      var block = cipher.slice(off, off + 16);
+      var plain = this._decryptBlock(block, sched);
+      for (var i = 0; i < 16; i++) out.push(plain[i] ^ prev[i]);
+      prev = block;
+    }
+    // Strip PKCS#7 if it looks well-formed.
+    var pad = out[out.length - 1];
+    if (pad >= 1 && pad <= 16 && out.length >= pad) {
+      var ok = true;
+      for (var k = out.length - pad; k < out.length; k++) if (out[k] !== pad) ok = false;
+      if (ok) out = out.slice(0, out.length - pad);
+    }
+    return out;
+  }
+
+  _b64urlEncode(bytes) {
+    var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    var out = "", i = 0, n = bytes.length;
+    while (i < n) {
+      var a = bytes[i++];
+      out += t[a >> 2];
+      if (i === n) { out += t[(a & 3) << 4]; break; }
+      var b = bytes[i++];
+      out += t[((a & 3) << 4) | (b >> 4)];
+      if (i === n) { out += t[(b & 15) << 2]; break; }
+      var c = bytes[i++];
+      out += t[((b & 15) << 2) | (c >> 6)];
+      out += t[c & 63];
+    }
+    return out; // padding omitted, as the player's own encoder does
+  }
+
+  _b64urlDecodeBytes(str) {
+    return this._bytesOf(this._b64dec(String(str).replace(/-/g, "+").replace(/_/g, "/")));
+  }
+
+  // ------------------------------------------------------------- megaplay
+
+  // `enc` is AES-256-CBC over the JSON that used to sit in `sources`, keyed with
+  // constants the player hands out in plain text. Returns the playlist URL, or
+  // "" if the shape changed — a rotated key surfaces as an empty picker, not a
+  // crash, and the rest of the server walk carries on.
+  _decodeEncSources(enc) {
+    try {
+      var key = this._bytesOf(MEGAPLAY_ENC_KEY);
+      while (key.length < 32) key.push(0);
+      var iv = this._bytesOf(MEGAPLAY_ENC_IV);
+      while (iv.length < 16) iv.push(0);
+      var plain = this._aesCbcDecrypt(this._b64urlDecodeBytes(enc), key.slice(0, 32), iv.slice(0, 16));
+      var text = "";
+      for (var i = 0; i < plain.length; i++) text += String.fromCharCode(plain[i]);
+      var data = JSON.parse(text);
+      if (typeof data === "string") return data;
+      if (data && data.file) return data.file;
+      if (Array.isArray(data) && data.length) return data[0].file || data[0].url || "";
+      if (data && data.sources) {
+        if (typeof data.sources === "string") return data.sources;
+        if (data.sources.file) return data.sources.file;
+        if (Array.isArray(data.sources) && data.sources.length) return data.sources[0].file || "";
+      }
+    } catch (e) {}
+    return "";
+  }
+
+  // The CDN 403s a master playlist that carries no ?token=. The token is
+  // base64url("<expiry>|<id1>/<id2>") + "." + base64url(its HMAC-SHA256), where
+  // the two ids are the 32-hex path components of the playlist URL — exactly
+  // what lib/e1-player.min.js builds before handing the URL to jwplayer. Media
+  // playlists and segments below the master need no token.
+  _signCdnUrl(url) {
+    if (!url || /[?&]token=/.test(url)) return url;
+    var m = String(url).match(/\/([a-f0-9]{32})\/([a-f0-9]{32})\//i);
+    if (!m) return url;
+    var path = m[1].toLowerCase() + "/" + m[2].toLowerCase();
+    var msg = (Math.floor(Date.now() / 1000) + MEGAPLAY_TOKEN_TTL) + "|" + path;
+    var token = this._b64urlEncode(this._bytesOf(msg)) + "." +
+                this._b64urlEncode(this._hmacSha256(MEGAPLAY_CDN_SECRET, msg));
+    return url + (url.indexOf("?") >= 0 ? "&" : "?") + "token=" + token;
+  }
+
   // Rewrite a media playlist so every segment carries #EXT-X-BYTERANGE:N@70,
   // telling ExoPlayer to send Range: bytes=70- and skip the 70-byte PNG wrapper
   // that nekostream CDN prepends to every MPEG-TS segment. Returns a data URI.
@@ -364,6 +658,67 @@ class DefaultExtension extends MProvider {
       out.push(line);
     }
     return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
+  }
+
+  // Base URL of the unwrapping proxy, or "" when it is switched off.
+  //
+  // The URL is pre-filled so turning this on is a single toggle — nobody has to
+  // know or type the address. The box stays editable for anyone pointing at a
+  // deployed worker, and anything that is not an http(s) origin is ignored
+  // rather than pasted into a stream URL.
+  proxyBase() {
+    var on = false;
+    try { on = new SharedPreferences().get("anikoto_pref_proxy_enabled"); } catch (e) {}
+    if (on !== true) return "";
+    var raw = "";
+    try { raw = String(new SharedPreferences().get("anikoto_pref_proxy_url") || "").trim(); } catch (e) {}
+    // Empty box → fall back to the default rather than silently doing nothing.
+    if (!raw) raw = DEFAULT_PROXY;
+    if (!/^https?:\/\/[^/\s]+/.test(raw)) return "";
+    return raw.replace(/\/+$/, "");
+  }
+
+  // Emit one server's playlists into `streams`.
+  //
+  // When the playlists come from a PNG-wrapping CDN and the viewer has the proxy
+  // switched on, an "⟨unwrapped⟩" entry is emitted ahead of each direct one: on
+  // Windows/Android that is the only thing that plays. The direct entries stay
+  // as fallback so iOS — where the raw stream is fine — still has them, and so
+  // the source degrades to plain behaviour when the proxy is not running.
+  _emitStreams(streams, playlists, m3u8, audioLabel, hdrs, subtitles, proxyReferer) {
+    var proxy = playlists.wrapped ? this.proxyBase() : "";
+    for (var p = 0; proxy && p < playlists.length; p++) {
+      var pl = playlists[p];
+      streams.push({
+        url: proxy + "/m3u8?url=" + encodeURIComponent(pl.url) +
+             "&referer=" + encodeURIComponent(proxyReferer),
+        originalUrl: pl.url,
+        quality: (pl.label ? pl.label + " - " : "") + audioLabel + " ⟨unwrapped⟩",
+        // The proxy attaches the upstream Referer itself; forwarding ours would
+        // make Mangayomi send it to the proxy instead.
+        headers: { "User-Agent": this.ua },
+        subtitles: subtitles,
+      });
+    }
+    for (var v = 0; v < playlists.length; v++) {
+      streams.push({
+        url: playlists[v].url,
+        // An inlined playlist has no URL of its own; keep the real one here so
+        // the app still has something addressable to fall back on.
+        originalUrl: playlists[v].originalUrl || m3u8,
+        quality: (playlists[v].label ? playlists[v].label + " - " : "") + audioLabel,
+        headers: hdrs,
+        subtitles: subtitles,
+      });
+    }
+  }
+
+  // Tag a variant list as coming from a PNG-wrapping CDN. Carried as a property
+  // on the array so the existing callers, which only read length and indexes,
+  // keep working unchanged.
+  _markWrapped(list) {
+    list.wrapped = true;
+    return list;
   }
 
   // Known nekostream-family CDN hostnames that serve PNG-wrapped MPEG-TS segments.
@@ -518,19 +873,23 @@ class DefaultExtension extends MProvider {
         else if (srcData.sources.file) m3u8 = srcData.sources.file;
         else if (Array.isArray(srcData.sources) && srcData.sources.length) m3u8 = srcData.sources[0].file || srcData.sources[0].url || "";
       }
+      // September 2026: the sources array went away and `enc` took its place.
+      if (!m3u8 && srcData.enc) m3u8 = this._decodeEncSources(srcData.enc);
       if (!m3u8) return streams;
+      // Dedupe before signing — a token carries a timestamp, so two signatures
+      // of the same playlist never match.
       if (this._alreadyResolved(m3u8)) return streams; // another server, same file
+      m3u8 = this._signCdnUrl(m3u8);
       var hdrs = { "User-Agent": this.ua, "Referer": apiHost + "/" };
       var subtitles = await this._trackSubtitles(srcData.tracks, apiHost + "/");
       var variants = await this._resolveHlsVariants(m3u8, hdrs, isExtra);
       if (variants === null) return streams; // CDN blocked (Cloudflare) — skip this server
-      if (variants.length > 0) {
-        for (var v = 0; v < variants.length; v++) {
-          streams.push({ url: variants[v].url, originalUrl: m3u8, quality: variants[v].label + " - " + audioLabel, headers: hdrs, subtitles: subtitles });
-        }
-      } else {
-        streams.push({ url: m3u8, originalUrl: m3u8, quality: audioLabel, headers: hdrs, subtitles: subtitles });
+      var playlists = variants;
+      if (!playlists.length) {
+        playlists = [{ url: m3u8, label: "" }];
+        playlists.wrapped = variants.wrapped;
       }
+      this._emitStreams(streams, playlists, m3u8, audioLabel, hdrs, subtitles, apiHost + "/");
     } catch (e) {}
     return streams;
   }
@@ -560,19 +919,20 @@ class DefaultExtension extends MProvider {
         else if (srcData.sources.file) m3u8 = srcData.sources.file;
         else if (Array.isArray(srcData.sources) && srcData.sources.length) m3u8 = srcData.sources[0].file || srcData.sources[0].url || "";
       }
+      if (!m3u8 && srcData.enc) m3u8 = this._decodeEncSources(srcData.enc);
       if (!m3u8) return streams;
       if (this._alreadyResolved(m3u8)) return streams; // another server, same file
+      m3u8 = this._signCdnUrl(m3u8);
       var subtitles = await this._trackSubtitles(srcData.tracks, "https://vidtube.site/");
       var hdrs = { "User-Agent": this.ua, "Referer": "https://vidtube.site/" };
       var variants = await this._resolveHlsVariants(m3u8, hdrs, isExtra);
       if (variants === null) return streams; // CDN blocked (Cloudflare) — skip this server
-      if (variants.length > 0) {
-        for (var v = 0; v < variants.length; v++) {
-          streams.push({ url: variants[v].url, originalUrl: m3u8, quality: variants[v].label + " - " + audioLabel, headers: hdrs, subtitles: subtitles });
-        }
-      } else {
-        streams.push({ url: m3u8, originalUrl: m3u8, quality: audioLabel, headers: hdrs, subtitles: subtitles });
+      var playlists = variants;
+      if (!playlists.length) {
+        playlists = [{ url: m3u8, label: "" }];
+        playlists.wrapped = variants.wrapped;
       }
+      this._emitStreams(streams, playlists, m3u8, audioLabel, hdrs, subtitles, "https://vidtube.site/");
     } catch (e) {}
     return streams;
   }
@@ -674,37 +1034,137 @@ class DefaultExtension extends MProvider {
     return (foreignSec / total) > 0.5;
   }
 
+  // Extensions ffmpeg's HLS demuxer will open a segment under. Anything else is
+  // refused before a byte is read ("is not in allowed_extensions"), and the
+  // stricter extension_picky pass then wants the extension to match the detected
+  // format. Neither option is reachable from a Mangayomi extension, but both
+  // read the extension with strrchr('.') across the whole URL — query included.
+  get PLAYER_SAFE_SEGMENT_EXTS() {
+    return ["ts", "m2ts", "mts", "m4s", "mp4", "m4v", "m4a", "aac", "ac3", "eac3",
+            "mp3", "mpg", "mpeg", "mov", "vob", "wav", "flac", "ogg", "oga", "ogv",
+            "mkv", "avi", "3gp", "m3u8"];
+  }
+
+  _segmentExt(uri) {
+    var path = String(uri).split("#")[0].split("?")[0];
+    var last = path.split("/").pop();
+    var dot = last.lastIndexOf(".");
+    return dot > 0 ? last.substring(dot + 1).toLowerCase() : "";
+  }
+
+  // True when any segment in this media playlist carries an extension the player
+  // will refuse. MegaPlay rotates them per segment (.jpg, .html, .webp, .ico), so
+  // the whole list is checked rather than just the first entry.
+  _playlistNeedsExtFix(body) {
+    var safe = this.PLAYER_SAFE_SEGMENT_EXTS;
+    var lines = String(body).split("\n");
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line || line.charAt(0) === "#") continue;
+      var ext = this._segmentExt(line);
+      var ok = false;
+      for (var j = 0; j < safe.length; j++) if (ext === safe[j]) { ok = true; break; }
+      if (!ok) return true;
+    }
+    return false;
+  }
+
+  // Minimal absolutiser. Inlining a playlist throws away its base URL, so any
+  // relative URI in it has to be resolved first. No "../" handling — none of
+  // these CDNs emit it, and a wrong guess there is worse than leaving it alone.
+  _absUrl(ref, base) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(ref)) return ref;
+    var m = String(base).match(/^(https?:\/\/[^/]+)(\/[^?#]*)?/i);
+    if (!m) return ref;
+    if (ref.charAt(0) === "/") return m[1] + ref;
+    var dir = m[2] || "/";
+    return m[1] + dir.substring(0, dir.lastIndexOf("/") + 1) + ref;
+  }
+
+  // Hand the player the playlist body itself, with a dummy query that makes every
+  // segment URL end in ".ts".
+  //
+  // MegaPlay's CDN gives each segment a decorative extension over plain MPEG-TS
+  // and 404s when the same path is asked for as .ts, so the path cannot be
+  // corrected — only the URL. "?x=.ts" satisfies both of ffmpeg's extension
+  // checks (they scan the whole URL for the last dot) and the CDN ignores the
+  // extra parameter. Verified with ffprobe: the same episode goes from
+  // "is not in allowed_extensions" to 1080p h264 + aac, 1437s.
+  _rewritePlaylistExtensions(body, playlistUrl) {
+    var self = this;
+    var lines = String(body).split("\n");
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var trimmed = line.trim();
+      if (!trimmed) { out.push(line); continue; }
+      if (trimmed.charAt(0) === "#") {
+        // EXT-X-KEY / EXT-X-MAP carry their own URI and lose the same base.
+        out.push(line.replace(/URI="([^"]+)"/, function (whole, u) {
+          return 'URI="' + self._absUrl(u, playlistUrl) + '"';
+        }));
+        continue;
+      }
+      var abs = this._absUrl(trimmed, playlistUrl);
+      out.push(abs + (abs.indexOf("?") >= 0 ? "&" : "?") + "x=.ts");
+    }
+    return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
+  }
+
+  // Turn one resolved playlist into something the player will actually open.
+  // Returns the entry unchanged when nothing is wrong with it.
+  _preparePlaylist(entry, body, checkPoison) {
+    // Ad-injected playlists take the older byterange path: their segments are
+    // wrapped, not merely mislabelled.
+    if (checkPoison && this._playlistIsPoisoned(body, entry.url)) {
+      return { url: this._rewriteWithByterange(body), label: entry.label, originalUrl: entry.url };
+    }
+    if (this._playlistNeedsExtFix(body)) {
+      return { url: this._rewritePlaylistExtensions(body, entry.url), label: entry.label, originalUrl: entry.url };
+    }
+    return entry;
+  }
+
+  // Every variant we hand back is fetched once, where before only the leading
+  // one was probed for ad poisoning. A mislabelled segment makes an entry
+  // unplayable rather than merely worth skipping, so it is not something that
+  // can be left for the viewer to notice — and the CDN serves these in well
+  // under a second. The poison probe rides along on the same fetch.
+  async _preparePlaylists(variants, headers, isExtra) {
+    var out = [];
+    for (var i = 0; i < variants.length; i++) {
+      var body = "";
+      try { body = (await this.client.get(variants[i].url, headers)).body || ""; } catch (e) {}
+      // Unreadable playlist: hand back the URL and let the player try.
+      if (body.indexOf("#EXTM3U") < 0) { out.push(variants[i]); continue; }
+      out.push(this._preparePlaylist(variants[i], body, i === 0 && !isExtra));
+    }
+    return out;
+  }
+
   // Fetch a master HLS playlist and return one entry per quality variant.
   // Returns [] if the URL is a flat media playlist (no #EXT-X-STREAM-INF, use as-is).
   // Returns null if the response is not a valid m3u8 (Cloudflare block, error, or fetch failure).
   // nekostream.site streams are routed through the shirayuki proxy, which strips the
   // 70-byte PNG wrapper from every segment and serves clean MPEG-TS to libmpv.
   async _resolveHlsVariants(masterUrl, headers, isExtra) {
+    // Only a CDN that wraps MPEG-TS in a PNG header still needs the proxy —
+    // nothing an extension returns can strip bytes out of a segment body. A
+    // decorative segment *extension* is a different problem and is fixable here
+    // (see _rewritePlaylistExtensions), so a megaplay.buzz Referer no longer
+    // implies a proxy: its CDN serves clean TS behind .jpg/.html/.webp names.
     var isNeko = this._isWrappedCdnUrl(masterUrl);
-    // Streams whose playlist Referer is megaplay.buzz come from the same CDN
-    // family regardless of hostname rotation — proxy them unconditionally.
-    if (!isNeko) {
-      var ref = (headers["Referer"] || headers["referer"] || "");
-      if (ref.indexOf("megaplay.buzz") >= 0 || ref.indexOf("vidnest.fun") >= 0) isNeko = true;
-    }
     try {
       var res = await this.client.get(masterUrl, headers);
       var body = res.body || "";
       if (body.indexOf("#EXTM3U") < 0) return null; // not a valid m3u8 (blocked or error)
       if (body.indexOf("#EXT-X-STREAM-INF") < 0) {
-        // Flat media playlist — also detect by extension-less URL (CDN rotation).
-        if (!isNeko) {
-          var masterPath = (masterUrl || "").split("?")[0];
-          var masterLast = masterPath.split("/").pop();
-          if (masterLast && masterLast.indexOf(".") === -1) isNeko = true;
-        }
+        // Flat media playlist, and its body is already in hand.
         if (isNeko) {
-          return [{ url: masterUrl, label: "Auto" }];
+          return this._markWrapped([{ url: masterUrl, label: "Auto" }]);
         }
-        if (this._playlistIsPoisoned(body, masterUrl)) {
-          return [{ url: this._rewriteWithByterange(body), label: "Auto" }];
-        }
-        return []; // use master URL as-is
+        var flat = this._preparePlaylist({ url: masterUrl, label: "" }, body, !isExtra);
+        return flat.url === masterUrl ? [] : [flat]; // [] means "use master URL as-is"
       }
       var lastSlash = masterUrl.lastIndexOf("/");
       var baseDir = lastSlash > 0 ? masterUrl.substring(0, lastSlash + 1) : masterUrl;
@@ -725,35 +1185,16 @@ class DefaultExtension extends MProvider {
       }
       variants.sort(function(a, b) { return (parseInt(b.label) || 0) - (parseInt(a.label) || 0); });
 
-      // Fallback: extension-less variant URL is the other signature of CDNs whose
-      // segments libmpv rejects (extension_picky), regardless of hostname.
-      if (!isNeko && variants.length > 0) {
-        var samplePath = variants[0].url.split("?")[0];
-        var lastPart = samplePath.split("/").pop();
-        if (lastPart && lastPart.indexOf(".") === -1) isNeko = true;
-      }
-
       if (isNeko) {
-        // nekostream-family CDN: extension-less segment URLs + PNG-wrapped TS.
-        // Return the variants directly — iOS plays fine; Windows skips (known limitation).
-        return variants;
+        // nekostream-family CDN: MPEG-TS behind a PNG header. iOS AVPlayer scans
+        // forward to the 0x47 sync and plays; libmpv (Windows/Android) cannot,
+        // and the episode buffers forever. Flagged so the emitter can offer an
+        // unwrapped entry when the viewer has the proxy switched on — nothing an
+        // extension returns can fix the bytes.
+        return this._markWrapped(variants);
       }
 
-      // Not nekostream: check the top variant for ad-injected segments. Only for
-      // the server that leads the picker — the probe downloads a full media
-      // playlist, which cost 3s per alternate on a slow origin, and a poisoned
-      // alternate is a bad entry the viewer can simply skip past, not a stream
-      // that plays on its own.
-      if (variants.length > 0 && !isExtra) {
-        try {
-          var probe = await this.client.get(variants[0].url, headers);
-          var probeBody = probe.body || "";
-          if (probeBody.indexOf("#EXTM3U") >= 0 && this._playlistIsPoisoned(probeBody, variants[0].url)) {
-            return [{ url: this._rewriteWithByterange(probeBody), label: variants[0].label }];
-          }
-        } catch (e) {} // probe failure is not proof of poisoning — let it through
-      }
-      return variants;
+      return await this._preparePlaylists(variants, headers, isExtra);
     } catch (e) {}
     return null; // network/parse error
   }
@@ -1170,6 +1611,24 @@ class DefaultExtension extends MProvider {
           values:      ["vidplay"],
           entries:     ["VidPlay (fast CDN)", "MegaPlay HD (often stalls)", "Vidstream (often stalls)", "VidCloud"],
           entryValues: ["vidplay", "hd", "vidstream", "vidcloud"],
+        },
+      },
+      {
+        key: "anikoto_pref_proxy_enabled",
+        checkBoxPreference: {
+          title: "Fix playback on Windows/Android",
+          summary: "Turn on if episodes buffer forever or skip instantly. Not needed on iOS. Requires the proxy to be reachable at the address below.",
+          value: false,
+        },
+      },
+      {
+        key: "anikoto_pref_proxy_url",
+        editTextPreference: {
+          title: "Proxy address (advanced)",
+          summary: "Already filled in — only change this if you run the proxy somewhere other than this PC.",
+          value: DEFAULT_PROXY,
+          dialogTitle: "Proxy address",
+          dialogMessage: "AniKoto's CDN hides video segments inside PNG images, which Windows/Android cannot decode (iOS plays them fine). The default points at proxy/proxy.js running on this PC. Replace it with a deployed worker's https URL to cover several devices from one place.",
         },
       },
       {
