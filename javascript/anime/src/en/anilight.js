@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://anilight.live",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.1",
+    "version": "0.6.0",
     "pkgPath": "anime/src/en/anilight.js",
     "isManga": false,
     "isNsfw": false,
@@ -152,19 +152,42 @@ var DEFAULT_PROXY = "http://localhost:8765";
 // only answer under a replacement name.  The site ships the same mapping in
 // its own bundle and applies it before playing, so this is not a workaround
 // so much as the missing half of the response.
+//
+// cdn.mewstream.buzz/anime/... (misa's old edge) 404s outright as of
+// 2026-09-17; 9hjkrt.nekostream.site serves the exact same path with the
+// "/anime/" segment dropped — verified against 8 unrelated titles/episodes,
+// so this is a stable replacement host, not a per-video token.
 var HOST_REWRITES = [
   ["bd.24stream.xyz", "bd.aniwatchtv.site"],
   ["vibeplayer.site", "vivibebe.site"],
+  ["cdn.mewstream.buzz/anime/", "9hjkrt.nekostream.site/"],
 ];
 
-// Providers reachable through /sources that serve *clean* MPEG-TS.  Their
-// segments are misnamed (.jpg), which is the only reason libmpv rejects them,
-// so they need nothing more than a URL that ends in .ts — the proxy's redirect
-// mode, which passes no video bytes at all.
+// Providers reachable through /sources. misa/misora were clean MPEG-TS
+// (just misnamed .jpg) when this comment was first written; as of
+// 2026-09-17 misa's segments come back genuinely PNG-wrapped again — a
+// 252-byte synthetic 1x1 PNG ahead of the MPEG-TS payload, served from
+// *-ad-site-sign-sg.tiktokcdn.com. See PNG_WRAP_OFFSET / isPngWrapped()
+// below: the wrapper is unwrapped in-extension via EXT-X-BYTERANGE, so the
+// proxy's redirect mode is no longer required for this to play on
+// Windows/Android. Kept as TS_PROVIDERS (rather than folded into
+// resolveMegaplay) because the id this endpoint wants is the numeric
+// AniList id, not MegaPlay's own data-id.
 var TS_PROVIDERS = [
   { id: "misa",   name: "MegaPlay", referer: "https://megaplay.buzz/" },
   { id: "misora", name: "Misora",   referer: null },   // referer = its own origin
 ];
+
+// Size of the fake 1x1 PNG MegaPlay's tiktokcdn edge prepends to every
+// segment, measured 2026-09-17 across 8 titles (ids 19/630/791/1891/1899/
+// 2676/3132/590), multiple episodes each — always exactly 252 bytes, unlike
+// the byte-level scan this repo used before (see hianime-poisoned-playlists
+// notes): that scan is unsafe here anyway, since the app's HTTP client hands
+// segment bodies back as text, which would mangle the binary before any scan
+// ran. A previous measurement (2026-08-12) found 70 bytes — the CDN's
+// wrapper generator has changed size at least once, so if playback goes back
+// to buffering after an upstream change, re-measure this constant first.
+var PNG_WRAP_OFFSET = 252;
 
 class DefaultExtension extends MProvider {
   constructor() {
@@ -550,6 +573,96 @@ class DefaultExtension extends MProvider {
     }
   }
 
+  _b64enc(str) {
+    var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var out = "", i = 0, n = str.length;
+    while (i < n) {
+      var a = str.charCodeAt(i++);
+      out += t[a >> 2];
+      if (i === n) { out += t[(a & 3) << 4] + "=="; break; }
+      var b = str.charCodeAt(i++);
+      out += t[((a & 3) << 4) | (b >> 4)];
+      if (i === n) { out += t[(b & 15) << 2] + "="; break; }
+      var c = str.charCodeAt(i++);
+      out += t[((b & 15) << 2) | (c >> 6)];
+      out += t[c & 63];
+    }
+    return out;
+  }
+
+  // True for a segment URL on MegaPlay's PNG-wrapping edge. Host-based, not a
+  // byte probe: the app's HTTP client hands bodies back as text, which would
+  // mangle raw segment bytes before any magic-number scan ran, and a Range
+  // probe against this edge is one more request per variant for no benefit
+  // now the host is known. See PNG_WRAP_OFFSET above.
+  _isPngWrapped(url) {
+    var s = String(url || "");
+    return s.indexOf("tiktokcdn.com") >= 0 || /\.image(\?|$)/.test(s.split("#")[0]);
+  }
+
+  _absUrl(ref, base) {
+    if (/^https?:\/\//i.test(ref)) return ref;
+    var lastSlash = base.lastIndexOf("/");
+    return (lastSlash > 0 ? base.substring(0, lastSlash + 1) : base) + ref;
+  }
+
+  // Rewrite a media playlist so every segment carries an EXT-X-BYTERANGE that
+  // starts PNG_WRAP_OFFSET bytes in, and hand it back as a data: URI. ffmpeg's
+  // own HLS demuxer issues the ranged request for each segment — no bytes are
+  // ever touched here, only the playlist text — so this needs nothing from
+  // the player beyond HLS v4 support (bumped below; nekostream declares v3).
+  //
+  // BYTERANGE alone is not enough: ffmpeg's "is not in allowed_extensions"
+  // check runs against the segment URL even when it's only ever opened via a
+  // byte range, and these segments are named "....image" (a query string,
+  // not a real extension, but ffmpeg reads the last dot in the whole URL).
+  // Appending "?x=.ts"/"&x=.ts" satisfies that check without touching the
+  // CDN path — verified with ffprobe: BYTERANGE with no extension fix still
+  // fails ("is not in allowed_extensions" on the segment); both together
+  // decode to 1440x1080 h264 + aac.
+  _rewritePngWrapped(body, playlistUrl) {
+    var self = this;
+    var lines = String(body).split("\n");
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var trimmed = line.trim();
+      if (!trimmed) { out.push(line); continue; }
+      if (trimmed.charAt(0) === "#") {
+        if (/^#EXT-X-VERSION:[1-3]$/.test(trimmed)) { out.push("#EXT-X-VERSION:4"); continue; }
+        out.push(line);
+        continue;
+      }
+      var abs = self._absUrl(trimmed, playlistUrl);
+      out.push("#EXT-X-BYTERANGE:99999999@" + PNG_WRAP_OFFSET);
+      out.push(abs + (abs.indexOf("?") >= 0 ? "&" : "?") + "x=.ts");
+    }
+    return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
+  }
+
+  // Fetch a media playlist and, if its segments live on the PNG-wrapping
+  // edge, return a rewritten data: URI in its place. Any failure here just
+  // falls back to the original URL — same behaviour as before this fix
+  // existed, so a network hiccup degrades to the old (buffering) result
+  // instead of a broken one.
+  async fixPngWrappedPlaylist(url, headers) {
+    try {
+      var res = await this.client.get(url, headers);
+      var body = (res && res.body) || "";
+      if (body.indexOf("#EXTM3U") < 0) return { url: url, wrapped: false };
+      var firstSeg = null;
+      var lines = body.split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var t = lines[i].trim();
+        if (t && t.charAt(0) !== "#") { firstSeg = this._absUrl(t, url); break; }
+      }
+      if (!firstSeg || !this._isPngWrapped(firstSeg)) return { url: url, wrapped: false };
+      return { url: this._rewritePngWrapped(body, url), wrapped: true };
+    } catch (e) {
+      return { url: url, wrapped: false };
+    }
+  }
+
   // MegaPlay embed → playable streams.
   // The id in the embed path is a lookup key only; the page's data-id is what
   // /stream/getSources actually accepts.
@@ -710,8 +823,20 @@ class DefaultExtension extends MProvider {
       if (variants === null) return streams;   // host down — skip quietly
       var playlists = variants.length > 0 ? variants : [{ url: master, label: "Auto" }];
 
+      // Each variant is fetched once here to check whether its segments sit
+      // on the PNG-wrapping edge; when they do, fixPngWrappedPlaylist hands
+      // back an already-playable data: URI (see PNG_WRAP_OFFSET above), which
+      // makes the proxy's redirect-mode "⟨fixed⟩" entry redundant for that
+      // variant — redirect mode alone never stripped the PNG wrapper, only
+      // the misnamed extension, so it would still buffer.
+      var fixed = [];
+      for (var f = 0; f < playlists.length; f++) {
+        fixed.push(await this.fixPngWrappedPlaylist(playlists[f].url, hdrs));
+      }
+
       var proxy = this.proxyBase();
       for (var p = 0; p < playlists.length && proxy; p++) {
+        if (fixed[p].wrapped) continue;
         streams.push({
           url: proxy + "/m3u8?url=" + encodeURIComponent(playlists[p].url) +
                "&referer=" + encodeURIComponent(referer) + "&mode=redirect",
@@ -726,8 +851,8 @@ class DefaultExtension extends MProvider {
       }
       for (var v = 0; v < playlists.length; v++) {
         streams.push({
-          url: playlists[v].url,
-          originalUrl: master,
+          url: fixed[v].url,
+          originalUrl: fixed[v].wrapped ? playlists[v].url : master,
           quality: prov.name + " " + playlists[v].label + " [" + audioLabel + "]",
           headers: hdrs,
           subtitles: subtitles,

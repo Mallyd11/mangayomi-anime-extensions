@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AniLight": {
+            "name": "AniLight",
+            "version": "0.6.0",
+            "langs": "en",
+            "lastUpd": 1789686640.02902
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.20",
@@ -67,12 +73,6 @@
             "version": "0.2.4",
             "langs": "en",
             "lastUpd": 1787164944.014409
-        },
-        "AniLight": {
-            "name": "AniLight",
-            "version": "0.5.1",
-            "langs": "en",
-            "lastUpd": 1786570748.525859
         },
         "Just4Anime": {
             "name": "Just4Anime",
