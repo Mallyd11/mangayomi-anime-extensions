@@ -21,7 +21,6 @@ This repository contains the available javascript extension catalogues for the M
 |------|---------|-----------|---------|--------------|
 | AniKoto | 0.4.18 | Yes | Sub+Dub | 2026/09/05 |
 | AniLight | 0.5.1 | Yes | Sub+Dub | 2026/08/12 |
-| AniNeko | 0.1.1 | Yes | Sub+Dub | 2026/08/12 |
 | AniWave | 0.2.3 | Yes | Sub+Dub | 2026/08/11 |
 | Anidap | 1.6.0 | No | Sub+Dub | 2026/08/20 |
 | AnimeHeaven | 0.0.9 | Yes | Sub Only | 2026/09/15 |
