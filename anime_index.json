@@ -306,5 +306,27 @@
         "additionalParams": "",
         "sourceCodeLanguage": 1,
         "notes": "AniList-indexed catalogue. Plays the provider's progressive MKV (both audio tracks and every subtitle track are inside the file, so switch them from the player menu). The CDN link expires 15 minutes after an episode is opened, so if seeking fails late in a long session reopen the episode."
+    },
+    {
+        "name": "Senshi",
+        "id": 728461935,
+        "baseUrl": "https://senshi.to",
+        "lang": "en",
+        "typeSource": "single",
+        "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
+        "dateFormat": "",
+        "dateFormatLocale": "",
+        "isNsfw": false,
+        "hasCloudflare": false,
+        "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/senshi.js",
+        "apiUrl": "",
+        "version": "0.1.0",
+        "isManga": false,
+        "itemType": 1,
+        "isFullData": false,
+        "appMinVerReq": "0.5.0",
+        "additionalParams": "",
+        "sourceCodeLanguage": 1,
+        "notes": "Playback needs the playlist proxy: Senshi encrypts its HLS playlists, so run proxy/proxy.js (default http://localhost:8765) or deploy proxy/worker.js and set its address in the source settings. Only playlists go through it, video streams straight from the CDN."
     }
 ]
