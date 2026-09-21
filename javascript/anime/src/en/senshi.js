@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -20,7 +20,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "Playback needs the playlist proxy: Senshi encrypts its HLS playlists, so run proxy/proxy.js (default http://127.0.0.1:8765) or deploy proxy/worker.js and set its address in the source settings. Only playlists go through it, video streams straight from the CDN.",
+    "notes": "",
   },
 ];
 
