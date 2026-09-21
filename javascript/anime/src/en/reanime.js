@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.3.3",
+    "version": "0.4.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -435,9 +435,21 @@ const EMBED_HOST = "https://flixcloud.cc";
 //     to the next episode — so on iOS nothing ever played;
 //   - rundowncdn works over HTTP/1.1 and under mbedtls (checked with the mpv
 //     0.36 / FFmpeg 6 / mbedtls stack iOS ships) as well as on desktop.
-// So every segment is pinned to one rundowncdn vault.  Any vault serves any
-// video.  Override via the "Segment CDN host" preference if it moves.
-const DEFAULT_SEGMENT_HOST = "vault-93.rundowncdn.top";
+// So the "servers" offered are the rundowncdn vaults — vault-90 to vault-95 all
+// resolve, play on both player generations and serve any video (atomic4cdn is
+// left out on purpose: it is fast, but only works off iOS).  Every segment is
+// pinned to the first server the viewer ticked; each further one is the same
+// stream on another host, so it costs no extra requests.  Download speed is not
+// what separates them (all measured 3-10 MB/s against ~0.6 MB/s needed), so the
+// default is simply the one already proven on iOS.
+const SERVERS = [
+  { id: "vault-93", host: "vault-93.rundowncdn.top", label: "Vault 93" },
+  { id: "vault-90", host: "vault-90.rundowncdn.top", label: "Vault 90" },
+  { id: "vault-91", host: "vault-91.rundowncdn.top", label: "Vault 91" },
+  { id: "vault-92", host: "vault-92.rundowncdn.top", label: "Vault 92" },
+  { id: "vault-94", host: "vault-94.rundowncdn.top", label: "Vault 94" },
+  { id: "vault-95", host: "vault-95.rundowncdn.top", label: "Vault 95" },
+];
 
 // The CDN wraps a segment requested with a fake image extension: a fake header
 // (8 bytes for .png) and the MPEG-TS XORed with this fixed 16-byte key.
@@ -712,7 +724,10 @@ class DefaultExtension extends MProvider {
   async fetchAllEpisodes(animeId) {
     const all = [];
     let offset = 0;
-    const limit = 100;
+    // The API hands back the whole list in one request (1,179 One Piece
+    // episodes in 0.27 s, against twelve sequential pages of 100); the loop
+    // still pages if it is ever capped.
+    const limit = 1000;
     for (let guard = 0; guard < 100; guard++) {
       const data = await this.getJSON(
         this.apiUrl + "/api/v1/anime/" + animeId + "/episodes?limit=" + limit + "&offset=" + offset
@@ -773,7 +788,8 @@ class DefaultExtension extends MProvider {
     if (!anilistId || !epNum) return [];
 
     const audioPref = this.getPreference("reanime_audio_pref") || "sub";
-    const cacheKey = url + "|" + audioPref;
+    const serverKey = this.enabledServers().map((sv) => sv.id).join(",");
+    const cacheKey = url + "|" + audioPref + "|" + serverKey;
     const now = Date.now();
     if (_vlCache[cacheKey] && now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
       return _vlCache[cacheKey];
@@ -816,10 +832,11 @@ class DefaultExtension extends MProvider {
   async getVideoListDirect(embeds, audioPref) {
     const streams = [];
     this._segKey = null;
-    // HD-1 and HD-2 are alternate CDNs for the same video; with every segment
-    // pinned to one host they come out identical, and a second entry that plays
-    // exactly the same thing is just noise in the picker.
-    const seen = {};
+    this._primary = this.enabledServers()[0].host;
+    // HD-1 and HD-2 are alternate CDNs for the same video, and with every
+    // segment pinned to one host they give the identical stream — resolving the
+    // second costs nine more requests to produce a copy.  So HD-2 is only tried
+    // if HD-1 comes back empty.
     for (const emb of embeds) {
       let r = null;
       try {
@@ -827,14 +844,12 @@ class DefaultExtension extends MProvider {
       } catch (e) {
         r = null;
       }
-      if (!r || !r.variants) continue;
+      if (!r || !r.variants || r.variants.length === 0) continue;
       r.variants.forEach((vrt) => {
-        if (seen[vrt.url]) return;
-        seen[vrt.url] = true;
         streams.push({
           url: vrt.url,
           originalUrl: vrt.url,
-          quality: emb.label,
+          quality: vrt.label,
           // The player fetches the segments itself, so it needs the same
           // browser-shaped header set the CDN demands (see cdnHeaders).
           headers: this.cdnHeaders,
@@ -842,6 +857,7 @@ class DefaultExtension extends MProvider {
           audios: vrt.audios || [],
         });
       });
+      break;
     }
     return streams;
   }
@@ -1068,14 +1084,19 @@ class DefaultExtension extends MProvider {
     return this.decryptPlaylist(res.body, pk);
   }
 
-  // Empty preference means "leave the playlist's own host alone".
-  get segmentHost() {
-    const p = this.getPreference("reanime_segment_host");
-    if (p === null || p === undefined) return DEFAULT_SEGMENT_HOST;
-    const host = ("" + p).trim();
-    // The old default, possibly saved when the settings screen was opened.
-    // atomic4cdn cannot complete a TLS handshake on iOS (see above).
-    return /atomic4cdn\.top$/i.test(host) ? DEFAULT_SEGMENT_HOST : host;
+  // The servers the viewer has ticked, in SERVERS order (the first is what the
+  // player opens with).  Vault 93 alone by default, and if nothing valid is
+  // ticked.
+  enabledServers() {
+    let picked = null;
+    try { picked = this.getPreference("reanime_servers"); } catch (e) { picked = null; }
+    const on = SERVERS.filter((sv) => picked && picked.indexOf && picked.indexOf(sv.id) >= 0);
+    return on.length ? on : [SERVERS[0]];
+  }
+
+  // The same segments on another server's host.
+  swapHost(segs, host) {
+    return segs.map((sg) => ({ url: sg.url.replace(/^(https?:\/\/)[^/]+/i, "$1" + host), dur: sg.dur }));
   }
 
   // Rewrite every segment/URI line to an absolute URL, and ask the CDN for the
@@ -1107,9 +1128,8 @@ class DefaultExtension extends MProvider {
     path = path.slice(0, slash + 1) + (dot > 0 ? file.slice(0, dot) : file) + ".ts";
 
     let out = path + query;
-    const host = this.segmentHost;
-    if (host) out = out.replace(/^(https?:\/\/)[^/]+/i, "$1" + host);
-    return out;
+    const host = this._primary || SERVERS[0].host;
+    return out.replace(/^(https?:\/\/)[^/]+/i, "$1" + host);
   }
 
   // The segments of a media playlist as {url, dur}, in order.
@@ -1139,15 +1159,20 @@ class DefaultExtension extends MProvider {
   // Fetches the master playlist and, if it references separate audio/video
   // renditions, the video playlist and each audio playlist — exactly once each.
   // The video becomes one edl:// URL and every audio rendition another, handed
-  // to the player as external audio tracks with the preferred one first.
+  // to the player as external audio tracks with the preferred one first.  One
+  // stream comes back per ticked server (same segments, different host).
   async buildVariants(masterUrl, pk, audioPref) {
     const masterBase = this.baseOf(masterUrl);
     const master = await this.fetchPlaylist(masterUrl, pk);
+    const servers = this.enabledServers();
+    // Segments were built on the first server's host; the others swap it.
+    const onServer = (segs, i) => (i === 0 ? segs : this.swapHost(segs, servers[i].host));
 
     // No variants → already a flat, muxed media playlist.
     if (master.indexOf("#EXT-X-STREAM-INF") < 0) {
       const flat = this.parseSegments(master, masterBase);
-      return flat.length ? [{ label: "Stream", url: this.toEdl(flat, "video", "") }] : [];
+      if (flat.length === 0) return [];
+      return servers.map((sv, i) => ({ label: sv.label, url: this.toEdl(onServer(flat, i), "video", "") }));
     }
 
     // Parse audio renditions and the (single) video variant.
@@ -1174,41 +1199,50 @@ class DefaultExtension extends MProvider {
     const vCodec = this.edlCodec(codecs, "video");
     const aCodec = this.edlCodec(codecs, "audio");
 
-    const vUrl = this.absUrl(videoUri, masterBase);
-    const vText = await this.fetchPlaylist(vUrl, pk);
-    const vSegs = this.parseSegments(vText, this.baseOf(vUrl));
-    if (vSegs.length === 0) return [];
-    // Only the lazy form needs it (see toEdl); one small ranged request each.
-    const vPts = vCodec ? await this.firstPts(vSegs[0].url, await this.segmentKey(vText, this.baseOf(vUrl))) : null;
-
-    // Fetch each audio playlist one at a time (the bridged HTTP client is not
-    // reliably concurrency-safe).
-    const tracks = []; // { file, label, dub }
-    for (const a of audios) {
-      const u = this.absUrl(a.uri, masterBase);
-      const aText = await this.fetchPlaylist(u, pk);
-      const segs = this.parseSegments(aText, this.baseOf(u));
-      if (segs.length === 0) continue;
-      const aPts = aCodec ? await this.firstPts(segs[0].url, await this.segmentKey(aText, this.baseOf(u))) : null;
-      tracks.push({
-        file: this.toEdl(segs, "audio", aCodec, aPts),
-        label: a.name || a.lang || "Audio",
-        dub: /eng/i.test(a.lang) || /english|dub/i.test(a.name),
-      });
-    }
+    // Each track is its own little chain — playlist, then its key, then the
+    // first timestamp — and the chains do not depend on one another, so they run
+    // side by side: the episode starts after the slowest chain, not after all of
+    // them one by one (about 2.6 s of waiting for three tracks, measured).  A
+    // failed audio track is just left out; a failed video track fails the lot.
+    const jobs = [{ uri: videoUri, video: true }].concat(audios.map((a) => ({ uri: a.uri, video: false, meta: a })));
+    const done = await Promise.all(jobs.map(async (j) => {
+      try {
+        const u = this.absUrl(j.uri, masterBase);
+        const base = this.baseOf(u);
+        const text = await this.fetchPlaylist(u, pk);
+        const segs = this.parseSegments(text, base);
+        if (segs.length === 0) {
+          if (j.video) throw new Error("empty video playlist");
+          return null;
+        }
+        const codec = j.video ? vCodec : aCodec;
+        // Only the lazy form needs it (see toEdl); one small ranged request.
+        const pts = codec ? await this.firstPts(segs[0].url, await this.segmentKey(text, base)) : null;
+        return { job: j, segs: segs, pts: pts };
+      } catch (e) {
+        if (j.video) throw e;
+        return null;
+      }
+    }));
+    const video = done[0];
+    if (!video) return [];
 
     // Put the preferred audio first: "dub" = the English rendition, "sub" =
     // the original (everything else).  The player can still switch.
     const wantDub = audioPref === "dub";
-    const ordered = tracks.filter((t) => t.dub === wantDub)
-      .concat(tracks.filter((t) => t.dub !== wantDub))
-      .map((t) => ({ file: t.file, label: t.label }));
+    const tracks = done.slice(1).filter((t) => t).map((t) => ({
+      segs: t.segs,
+      pts: t.pts,
+      label: t.job.meta.name || t.job.meta.lang || "Audio",
+      dub: /eng/i.test(t.job.meta.lang) || /english|dub/i.test(t.job.meta.name),
+    }));
+    const ordered = tracks.filter((t) => t.dub === wantDub).concat(tracks.filter((t) => t.dub !== wantDub));
 
-    return [{
-      label: "Stream",
-      url: this.toEdl(vSegs, "video", vCodec, vPts),
-      audios: ordered,
-    }];
+    return servers.map((sv, i) => ({
+      label: sv.label,
+      url: this.toEdl(onServer(video.segs, i), "video", vCodec, video.pts),
+      audios: ordered.map((t) => ({ file: this.toEdl(onServer(t.segs, i), "audio", aCodec, t.pts), label: t.label })),
+    }));
   }
 
   matchOne(str, rx) {
@@ -1311,15 +1345,15 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "reanime_segment_host",
-        editTextPreference: {
-          title: "Segment CDN host",
-          summary: "Mirror that serves the video segments. The default works " +
-            "on desktop and iOS; the site's other mirrors fail on iOS. Clear " +
-            "this to use whichever host the site picks.",
-          value: DEFAULT_SEGMENT_HOST,
-          dialogTitle: "Segment CDN host",
-          dialogMessage: "Hostname only, e.g. vault-93.rundowncdn.top",
+        key: "reanime_servers",
+        multiSelectListPreference: {
+          title: "Servers",
+          summary: "Vault 93 by default. Every vault plays the same episode from a different mirror, " +
+            "so ticking more just adds backups to the quality picker (no slower to start). Tick a " +
+            "different one, or add it, if the default is slow or fails.",
+          values: ["vault-93"],
+          entries: ["Vault 93 (default)", "Vault 90", "Vault 91", "Vault 92", "Vault 94", "Vault 95"],
+          entryValues: ["vault-93", "vault-90", "vault-91", "vault-92", "vault-94", "vault-95"],
         },
       },
       {
