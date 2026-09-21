@@ -14,14 +14,14 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
     "appMinVerReq": "0.5.0",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "Experimental: streams as an mpv edl:// segment list (no proxy). The numbered entries in the quality picker are playback diagnostics.",
+    "notes": "",
     "pkgPath": "anime/src/en/reanime.js",
   },
 ];
@@ -146,7 +146,7 @@ function _gmul(a, b) {
 }
 
 function _aesExpandKey(key) {
-  const Nk = 8, Nr = 14, w = new Array(4 * (Nr + 1));
+  const Nk = key.length >> 2, Nr = Nk + 6, w = new Array(4 * (Nr + 1));
   for (let i = 0; i < Nk; i++) w[i] = [key[4 * i], key[4 * i + 1], key[4 * i + 2], key[4 * i + 3]];
   let rcon = 1;
   for (let i = Nk; i < 4 * (Nr + 1); i++) {
@@ -155,7 +155,7 @@ function _aesExpandKey(key) {
       t = [t[1], t[2], t[3], t[0]].map((x) => _AES_SBOX[x]);
       t[0] ^= rcon;
       rcon = ((rcon << 1) ^ ((rcon & 0x80) ? 0x1b : 0)) & 0xff;
-    } else if (i % Nk === 4) {
+    } else if (Nk > 6 && i % Nk === 4) {
       t = t.map((x) => _AES_SBOX[x]);
     }
     w[i] = w[i - Nk].map((x, j) => x ^ t[j]);
@@ -164,7 +164,7 @@ function _aesExpandKey(key) {
 }
 
 function _aesInvCipher(blk, w) {
-  const Nr = 14;
+  const Nr = (w.length >> 2) - 1;
   const s = [[], [], [], []];
   for (let i = 0; i < 16; i++) s[i % 4][(i / 4) | 0] = blk[i];
   const ark = (r) => { for (let c = 0; c < 4; c++) for (let row = 0; row < 4; row++) s[row][c] ^= w[r * 4 + c][row]; };
@@ -192,7 +192,7 @@ function _aesInvCipher(blk, w) {
   return out;
 }
 
-function aesCbcDecrypt(key, iv, ct) {
+function aesCbcDecrypt(key, iv, ct, keepPadding) {
   const w = _aesExpandKey(key);
   const out = new Uint8Array(ct.length);
   let prev = iv;
@@ -202,6 +202,7 @@ function aesCbcDecrypt(key, iv, ct) {
     for (let i = 0; i < 16; i++) out[o + i] = dec[i] ^ prev[i];
     prev = blk;
   }
+  if (keepPadding) return out;
   const pad = out[out.length - 1];
   return out.slice(0, out.length - (pad > 0 && pad <= 16 ? pad : 0));
 }
@@ -422,14 +423,21 @@ function wasmModule(bytes) {
 const PAGE_SIZE = 30;
 const EMBED_HOST = "https://flixcloud.cc";
 
-// Segments are load-balanced across several mirror CDNs — *.stronghole.site,
-// *.slopnet.site and *.atomic4cdn.top — which serve byte-identical files at the
-// same path.  They do NOT have identical bot rules: stronghole and slopnet only
-// answer over HTTP/2, so ffmpeg/libmpv (HTTP/1.1 only) gets a 403 and playback
-// dies, while atomic4cdn answers over HTTP/1.1 as well.  Pinning every segment
-// to the atomic4cdn mirror is what makes this play on desktop as well as on
-// HTTP/2 players.  Override via the "Segment CDN host" preference if it moves.
-const DEFAULT_SEGMENT_HOST = "vault-98.atomic4cdn.top";
+// The site's playlists hand out segment URLs on a random mix of mirror CDNs
+// (currently *.rundowncdn.top and *.atomic4cdn.top; earlier *.stronghole.site
+// and *.slopnet.site), which serve byte-identical files at the same path.  They
+// do NOT behave the same for every player:
+//   - stronghole/slopnet answered only over HTTP/2, so an HTTP/1.1-only player
+//     got a 403;
+//   - atomic4cdn fails its TLS handshake under mbedtls ("mbedtls_ssl_handshake
+//     returned -0x3e80"), which is the TLS library in the iOS player.  Every
+//     segment then fails to open, the stream "ends" at once, and the app jumps
+//     to the next episode — so on iOS nothing ever played;
+//   - rundowncdn works over HTTP/1.1 and under mbedtls (checked with the mpv
+//     0.36 / FFmpeg 6 / mbedtls stack iOS ships) as well as on desktop.
+// So every segment is pinned to one rundowncdn vault.  Any vault serves any
+// video.  Override via the "Segment CDN host" preference if it moves.
+const DEFAULT_SEGMENT_HOST = "vault-93.rundowncdn.top";
 
 // The CDN wraps a segment requested with a fake image extension: a fake header
 // (8 bytes for .png) and the MPEG-TS XORed with this fixed 16-byte key.
@@ -794,30 +802,30 @@ class DefaultExtension extends MProvider {
   // Decrypt and build the stream client-side.
   async getVideoListDirect(embeds, audioPref) {
     const streams = [];
-    // Diagnostics only need to appear once, not once per mirror.
-    const diag = this.getPreference("reanime_diag") !== false;
-    let first = true;
+    this._segKey = null;
+    // HD-1 and HD-2 are alternate CDNs for the same video; with every segment
+    // pinned to one host they come out identical, and a second entry that plays
+    // exactly the same thing is just noise in the picker.
+    const seen = {};
     for (const emb of embeds) {
       let r = null;
       try {
-        r = await this.resolveEmbed(emb.link, audioPref, diag && first);
+        r = await this.resolveEmbed(emb.link, audioPref);
       } catch (e) {
         r = null;
       }
       if (!r || !r.variants) continue;
-      first = false;
       r.variants.forEach((vrt) => {
-        // The control entry points at a third-party CDN; sending flixcloud's
-        // Origin/Referer to it would confound the very thing it is testing.
-        const external = /^https?:\/\//.test(vrt.url) && vrt.url.indexOf("flixcloud") < 0;
+        if (seen[vrt.url]) return;
+        seen[vrt.url] = true;
         streams.push({
           url: vrt.url,
           originalUrl: vrt.url,
-          quality: emb.label + " · " + vrt.label,
+          quality: emb.label,
           // The player fetches the segments itself, so it needs the same
           // browser-shaped header set the CDN demands (see cdnHeaders).
-          headers: external ? { "User-Agent": this.ua } : this.cdnHeaders,
-          subtitles: external ? [] : r.subtitles,
+          headers: this.cdnHeaders,
+          subtitles: r.subtitles,
           audios: vrt.audios || [],
         });
       });
@@ -828,7 +836,7 @@ class DefaultExtension extends MProvider {
   // Resolve a flixcloud embed into one or more directly playable streams
   // (edl:// URLs plus separate audio tracks) and subtitles.
   // See memory/reanime-extension.md.
-  async resolveEmbed(embedUrl, audioPref, withDiag) {
+  async resolveEmbed(embedUrl, audioPref) {
     const pageRes = await this.client.get(embedUrl, this.embedHeaders);
     if (pageRes.statusCode !== 200 || !pageRes.body) return null;
     const html = pageRes.body;
@@ -885,7 +893,7 @@ class DefaultExtension extends MProvider {
     if (!/^https?:\/\//.test(masterUrl)) return null;
 
     let variants = [];
-    try { variants = await this.buildVariants(masterUrl, pk, audioPref, withDiag); } catch (e3) { variants = []; }
+    try { variants = await this.buildVariants(masterUrl, pk, audioPref); } catch (e3) { variants = []; }
     if (variants.length === 0) return null;
     return { variants: variants, subtitles: this.parseSubtitles(html) };
   }
@@ -938,6 +946,34 @@ class DefaultExtension extends MProvider {
     return "edl://" + parts.join(";");
   }
 
+  // The AES-128 key a playlist advertises (#EXT-X-KEY … URI="key.bin",IV=0x…),
+  // or null.  It never touches playback — segments requested as ".ts" are not
+  // encrypted — but on the rundowncdn mirror it is the key for the disguised
+  // ".png"/".webp" form, which firstPts reads.  The HD-2 playlists leave the tag
+  // out although the CDN serves the very same encrypted form, so a playlist
+  // without one reuses the key already seen for this video (this._segKey,
+  // cleared per getVideoList).
+  async segmentKey(text, base) {
+    try {
+      const tag = /#EXT-X-KEY:([^\n]*)/.exec(text);
+      const uri = tag && /URI="([^"]+)"/.exec(tag[1]);
+      const iv = tag && /IV=0x([0-9a-fA-F]{32})/.exec(tag[1]);
+      if (!uri || !iv) return this._segKey || null;
+      const res = await this.client.get(this.absUrl(uri[1], base), this.cdnHeaders);
+      // application/octet-stream carries no charset: one character per byte.
+      if (res.statusCode !== 200 || !res.body || res.body.length !== 16) return this._segKey || null;
+      const key = new Uint8Array(16), ivb = new Uint8Array(16);
+      for (let i = 0; i < 16; i++) {
+        const c = res.body.charCodeAt(i);
+        if (c > 255) return this._segKey || null;
+        key[i] = c;
+        ivb[i] = parseInt(iv[1].substr(2 * i, 2), 16);
+      }
+      this._segKey = { key: key, iv: ivb };
+      return this._segKey;
+    } catch (e) { return this._segKey || null; }
+  }
+
   // The first presentation timestamp (seconds) in a rendition's first segment,
   // or null if it cannot be read — the caller then falls back to
   // EDL_PTS_FALLBACK, which is close enough to keep playing.
@@ -945,27 +981,40 @@ class DefaultExtension extends MProvider {
   // The extension only sees response bodies as text, and ".ts" is served as
   // "text/…; charset=utf-8", which would mangle every byte above 0x7f.  The
   // ".png" form of the same segment is "image/png" with no charset, so it
-  // arrives one character per byte; it is the 8-byte PNG signature followed by
-  // the MPEG-TS XORed with SEGMENT_WRAP_KEY.  A PES packet header carries the
-  // PTS in five bytes (33 bits, 90 kHz).  Everything is sanity-checked, so a
-  // client that decodes differently just yields null.
-  async firstPts(segUrl) {
+  // arrives one character per byte.  What it holds depends on the mirror:
+  //   atomic4cdn:   an 8-byte PNG signature, then the MPEG-TS XORed with
+  //                 SEGMENT_WRAP_KEY;
+  //   rundowncdn:   the MPEG-TS AES-128-CBC encrypted with the playlist's
+  //                 #EXT-X-KEY (keyInfo).
+  // A PES packet header carries the PTS in five bytes (33 bits, 90 kHz).  The
+  // first one sits in the fourth packet, so 1 KB is plenty.  Everything is
+  // sanity-checked, so a client that decodes differently just yields null.
+  async firstPts(segUrl, keyInfo) {
     try {
       const q = segUrl.indexOf("?");
       const base = q < 0 ? segUrl : segUrl.slice(0, q);
       const url = base.replace(/\.ts$/, ".png");
       if (url === base) return null;
-      const res = await this.client.get(url, Object.assign({}, this.cdnHeaders, { Range: "bytes=0-8199" }));
+      const res = await this.client.get(url, Object.assign({}, this.cdnHeaders, { Range: "bytes=0-1023" }));
       if ((res.statusCode !== 206 && res.statusCode !== 200) || !res.body) return null;
       const s = res.body;
-      const n = s.length - 8;
-      if (n < 188 * 2) return null;
-      const ts = new Uint8Array(n);
-      for (let i = 0; i < n; i++) {
-        const c = s.charCodeAt(i + 8);
+      if (s.length < 1024) return null;
+      const raw = new Uint8Array(1024);
+      for (let i = 0; i < 1024; i++) {
+        const c = s.charCodeAt(i);
         if (c > 255) return null;
-        ts[i] = c ^ SEGMENT_WRAP_KEY[i & 15];
+        raw[i] = c;
       }
+      let ts;
+      if (raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4e && raw[3] === 0x47) {
+        ts = new Uint8Array(1016);
+        for (let i = 0; i < 1016; i++) ts[i] = raw[i + 8] ^ SEGMENT_WRAP_KEY[i & 15];
+      } else if (keyInfo) {
+        ts = aesCbcDecrypt(keyInfo.key, keyInfo.iv, raw, true);
+      } else {
+        return null;
+      }
+      const n = ts.length;
       if (ts[0] !== 0x47 || ts[188] !== 0x47) return null;
       for (let p = 0; p + 188 <= n; p += 188) {
         if (ts[p] !== 0x47) return null;
@@ -1009,7 +1058,11 @@ class DefaultExtension extends MProvider {
   // Empty preference means "leave the playlist's own host alone".
   get segmentHost() {
     const p = this.getPreference("reanime_segment_host");
-    return p === null || p === undefined ? DEFAULT_SEGMENT_HOST : ("" + p).trim();
+    if (p === null || p === undefined) return DEFAULT_SEGMENT_HOST;
+    const host = ("" + p).trim();
+    // The old default, possibly saved when the settings screen was opened.
+    // atomic4cdn cannot complete a TLS handshake on iOS (see above).
+    return /atomic4cdn\.top$/i.test(host) ? DEFAULT_SEGMENT_HOST : host;
   }
 
   // Rewrite every segment/URI line to an absolute URL, and ask the CDN for the
@@ -1074,7 +1127,7 @@ class DefaultExtension extends MProvider {
   // renditions, the video playlist and each audio playlist — exactly once each.
   // The video becomes one edl:// URL and every audio rendition another, handed
   // to the player as external audio tracks with the preferred one first.
-  async buildVariants(masterUrl, pk, audioPref, withDiag) {
+  async buildVariants(masterUrl, pk, audioPref) {
     const masterBase = this.baseOf(masterUrl);
     const master = await this.fetchPlaylist(masterUrl, pk);
 
@@ -1109,19 +1162,21 @@ class DefaultExtension extends MProvider {
     const aCodec = this.edlCodec(codecs, "audio");
 
     const vUrl = this.absUrl(videoUri, masterBase);
-    const vSegs = this.parseSegments(await this.fetchPlaylist(vUrl, pk), this.baseOf(vUrl));
+    const vText = await this.fetchPlaylist(vUrl, pk);
+    const vSegs = this.parseSegments(vText, this.baseOf(vUrl));
     if (vSegs.length === 0) return [];
     // Only the lazy form needs it (see toEdl); one small ranged request each.
-    const vPts = vCodec ? await this.firstPts(vSegs[0].url) : null;
+    const vPts = vCodec ? await this.firstPts(vSegs[0].url, await this.segmentKey(vText, this.baseOf(vUrl))) : null;
 
     // Fetch each audio playlist one at a time (the bridged HTTP client is not
     // reliably concurrency-safe).
     const tracks = []; // { file, label, dub }
     for (const a of audios) {
       const u = this.absUrl(a.uri, masterBase);
-      const segs = this.parseSegments(await this.fetchPlaylist(u, pk), this.baseOf(u));
+      const aText = await this.fetchPlaylist(u, pk);
+      const segs = this.parseSegments(aText, this.baseOf(u));
       if (segs.length === 0) continue;
-      const aPts = aCodec ? await this.firstPts(segs[0].url) : null;
+      const aPts = aCodec ? await this.firstPts(segs[0].url, await this.segmentKey(aText, this.baseOf(u))) : null;
       tracks.push({
         file: this.toEdl(segs, "audio", aCodec, aPts),
         label: a.name || a.lang || "Audio",
@@ -1136,24 +1191,11 @@ class DefaultExtension extends MProvider {
       .concat(tracks.filter((t) => t.dub !== wantDub))
       .map((t) => ({ file: t.file, label: t.label }));
 
-    const out = [{
-      label: withDiag ? "① Stream (real)" : "Stream",
+    return [{
+      label: "Stream",
       url: this.toEdl(vSegs, "video", vCodec, vPts),
       audios: ordered,
     }];
-
-    // Diagnostic ladder.  ① is the only entry with sound.  Reading the result:
-    // ③ plays but ①/② do not → the app does not pass edl:// through to mpv.
-    // ② plays but ① does not → the external audio track or the long timeline
-    // is the problem.
-    if (withDiag) {
-      out.push({ label: "② silent, first 3 segments", url: this.toEdl(vSegs.slice(0, 3), "video", vCodec, vPts) });
-      out.push({
-        label: "③ control — Apple HLS, no edl://",
-        url: "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8",
-      });
-    }
-    return out;
   }
 
   matchOne(str, rx) {
@@ -1256,26 +1298,15 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "reanime_diag",
-        switchPreferenceCompat: {
-          title: "Show playback diagnostic entries",
-          summary: "Adds numbered test entries to the quality picker to work out " +
-            "why playback fails. Entry ① is the real stream, ② is a short " +
-            "silent video-only test and ③ is a reference stream from Apple. " +
-            "Turn off once playback works.",
-          value: true,
-        },
-      },
-      {
         key: "reanime_segment_host",
         editTextPreference: {
           title: "Segment CDN host",
-          summary: "Mirror that serves the video segments. The default answers " +
-            "plain HTTP/1.1, which the desktop player needs; the other mirrors " +
-            "are HTTP/2-only. Clear this to use whichever host the site picks.",
+          summary: "Mirror that serves the video segments. The default works " +
+            "on desktop and iOS; the site's other mirrors fail on iOS. Clear " +
+            "this to use whichever host the site picks.",
           value: DEFAULT_SEGMENT_HOST,
           dialogTitle: "Segment CDN host",
-          dialogMessage: "Hostname only, e.g. vault-98.atomic4cdn.top",
+          dialogMessage: "Hostname only, e.g. vault-93.rundowncdn.top",
         },
       },
       {
