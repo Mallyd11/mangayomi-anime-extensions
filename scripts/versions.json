@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "ReAnime": {
+            "name": "ReAnime",
+            "version": "0.3.1",
+            "langs": "en",
+            "lastUpd": 1790005922.47304
+        },
         "Senshi": {
             "name": "Senshi",
             "version": "0.1.0",
@@ -37,12 +43,6 @@
             "version": "0.2.5",
             "langs": "en",
             "lastUpd": 1790004232.782937
-        },
-        "ReAnime": {
-            "name": "ReAnime",
-            "version": "0.3.0",
-            "langs": "en",
-            "lastUpd": 1790003851.642543
         },
         "1Anime": {
             "name": "1Anime",

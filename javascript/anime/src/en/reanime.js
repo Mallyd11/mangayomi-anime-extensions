@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -430,6 +430,18 @@ const EMBED_HOST = "https://flixcloud.cc";
 // to the atomic4cdn mirror is what makes this play on desktop as well as on
 // HTTP/2 players.  Override via the "Segment CDN host" preference if it moves.
 const DEFAULT_SEGMENT_HOST = "vault-98.atomic4cdn.top";
+
+// The CDN wraps a segment requested with a fake image extension: a fake header
+// (8 bytes for .png) and the MPEG-TS XORed with this fixed 16-byte key.
+const SEGMENT_WRAP_KEY = [
+  0x9d, 0x2a, 0xf1, 0x47, 0xb3, 0x8e, 0x5c, 0x70, 0xa6, 0x19, 0xe4, 0x3b, 0xd8, 0x62, 0x0f, 0xc5,
+];
+
+// See toEdl().  The lead is how far before a segment's first timestamp the seek
+// is aimed; the fallback is the first timestamp assumed when it cannot be read
+// (both renditions of the streams checked start at 1.4 s + a frame or two).
+const EDL_PTS_LEAD = 0.05;
+const EDL_PTS_FALLBACK = 1.4;
 
 // The "latest aired" feed paginates by opaque cursor, while Mangayomi requests
 // pages by number.  Mangayomi asks for pages sequentially as the user scrolls,
@@ -894,18 +906,81 @@ class DefaultExtension extends MProvider {
   // it is not recognised as HLS.  An EDL is native to mpv (libmpv is what
   // Mangayomi embeds) and chains the segments into one continuous timeline.
   //
-  // Each entry is "%<byte length>%<url>,length=<seconds>"; the length prefix
-  // makes the URL safe whatever characters it holds.  Without "!delay_open"
-  // mpv opens every segment up front to build the timeline (hundreds of
-  // requests before the first frame), so when the codec is known we declare
-  // the stream and let segments open as playback reaches them.
-  toEdl(segs, mediaType, codec) {
+  // Each entry is "%<byte length>%<url>,start=<pts>,length=<seconds>"; the
+  // length prefix makes the URL safe whatever characters it holds.
+  //
+  // Without "!delay_open" mpv opens every segment up front to learn its real
+  // start time — measured at ~2.6 segments/s, so ~100 s of frozen spinner for
+  // 260 segments, per track.  With it, segments open as playback reaches them,
+  // but mpv can no longer discover where each one starts and assumes 0.  These
+  // segments do not start at 0: each carries the running MPEG-TS timestamp
+  // (video 1.483 s, then 7.489 s, 13.495 s…), so every segment after the first
+  // reads as out of range, mpv skips it instantly, and the player sees the
+  // stream "end" after the first ~6 s — Mangayomi then marks the episode done
+  // and jumps to the next one.  So in lazy mode each part must carry its own
+  // start=.  The first timestamp comes from the stream (firstPts) and each
+  // following segment starts exactly one #EXTINF later (checked: 1.483 →
+  // 7.489 = +6.006 for video, 1.414 → 7.4275 = +6.0135 for audio).
+  //
+  // The seek to start= is aimed EDL_PTS_LEAD s early on purpose.  Aimed at the
+  // exact first-frame timestamp, ffmpeg's TS seek lands on the *next* keyframe
+  // and each segment loses its first ~4.5 s; aimed a hair early it lands on the
+  // segment's own start.  The cost is one frame trimmed per segment.
+  toEdl(segs, mediaType, codec, pts0) {
     const parts = [];
-    if (codec) parts.push("!delay_open,media_type=" + mediaType + ",codec=" + codec);
+    const lazy = !!codec;
+    if (lazy) parts.push("!delay_open,media_type=" + mediaType + ",codec=" + codec);
+    let at = (typeof pts0 === "number" ? pts0 : EDL_PTS_FALLBACK) - EDL_PTS_LEAD;
     segs.forEach((s) => {
-      parts.push("%" + s.url.length + "%" + s.url + ",length=" + s.dur);
+      parts.push("%" + s.url.length + "%" + s.url + (lazy ? ",start=" + at.toFixed(4) : "") + ",length=" + s.dur);
+      at += s.dur;
     });
     return "edl://" + parts.join(";");
+  }
+
+  // The first presentation timestamp (seconds) in a rendition's first segment,
+  // or null if it cannot be read — the caller then falls back to
+  // EDL_PTS_FALLBACK, which is close enough to keep playing.
+  //
+  // The extension only sees response bodies as text, and ".ts" is served as
+  // "text/…; charset=utf-8", which would mangle every byte above 0x7f.  The
+  // ".png" form of the same segment is "image/png" with no charset, so it
+  // arrives one character per byte; it is the 8-byte PNG signature followed by
+  // the MPEG-TS XORed with SEGMENT_WRAP_KEY.  A PES packet header carries the
+  // PTS in five bytes (33 bits, 90 kHz).  Everything is sanity-checked, so a
+  // client that decodes differently just yields null.
+  async firstPts(segUrl) {
+    try {
+      const q = segUrl.indexOf("?");
+      const base = q < 0 ? segUrl : segUrl.slice(0, q);
+      const url = base.replace(/\.ts$/, ".png");
+      if (url === base) return null;
+      const res = await this.client.get(url, Object.assign({}, this.cdnHeaders, { Range: "bytes=0-8199" }));
+      if ((res.statusCode !== 206 && res.statusCode !== 200) || !res.body) return null;
+      const s = res.body;
+      const n = s.length - 8;
+      if (n < 188 * 2) return null;
+      const ts = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        const c = s.charCodeAt(i + 8);
+        if (c > 255) return null;
+        ts[i] = c ^ SEGMENT_WRAP_KEY[i & 15];
+      }
+      if (ts[0] !== 0x47 || ts[188] !== 0x47) return null;
+      for (let p = 0; p + 188 <= n; p += 188) {
+        if (ts[p] !== 0x47) return null;
+        const afc = (ts[p + 3] >> 4) & 3;
+        if (!(ts[p + 1] & 0x40) || afc === 0 || afc === 2) continue; // no payload start here
+        const o = p + 4 + (afc === 3 ? ts[p + 4] + 1 : 0);
+        if (ts[o] !== 0 || ts[o + 1] !== 0 || ts[o + 2] !== 1) continue; // not a PES header
+        if ((ts[o + 7] >> 6) < 2) continue; // carries no PTS
+        const pts = ((ts[o + 9] >> 1) & 7) * 1073741824 + ts[o + 10] * 4194304 +
+          (ts[o + 11] >> 1) * 32768 + ts[o + 12] * 128 + (ts[o + 13] >> 1);
+        const sec = pts / 90000;
+        return sec >= 0 && sec < 60 ? sec : null;
+      }
+    } catch (e) { /* fall through */ }
+    return null;
   }
 
   // Codec names as mpv's !delay_open wants them, from the master's CODECS list.
@@ -1036,6 +1111,8 @@ class DefaultExtension extends MProvider {
     const vUrl = this.absUrl(videoUri, masterBase);
     const vSegs = this.parseSegments(await this.fetchPlaylist(vUrl, pk), this.baseOf(vUrl));
     if (vSegs.length === 0) return [];
+    // Only the lazy form needs it (see toEdl); one small ranged request each.
+    const vPts = vCodec ? await this.firstPts(vSegs[0].url) : null;
 
     // Fetch each audio playlist one at a time (the bridged HTTP client is not
     // reliably concurrency-safe).
@@ -1044,8 +1121,9 @@ class DefaultExtension extends MProvider {
       const u = this.absUrl(a.uri, masterBase);
       const segs = this.parseSegments(await this.fetchPlaylist(u, pk), this.baseOf(u));
       if (segs.length === 0) continue;
+      const aPts = aCodec ? await this.firstPts(segs[0].url) : null;
       tracks.push({
-        file: this.toEdl(segs, "audio", aCodec),
+        file: this.toEdl(segs, "audio", aCodec, aPts),
         label: a.name || a.lang || "Audio",
         dub: /eng/i.test(a.lang) || /english|dub/i.test(a.name),
       });
@@ -1060,20 +1138,18 @@ class DefaultExtension extends MProvider {
 
     const out = [{
       label: withDiag ? "① Stream (real)" : "Stream",
-      url: this.toEdl(vSegs, "video", vCodec),
+      url: this.toEdl(vSegs, "video", vCodec, vPts),
       audios: ordered,
     }];
 
-    // Diagnostic ladder, for the first run in the real app.  ① is the only
-    // entry with sound.  Reading the result: ④ plays but ①–③ do not → the app
-    // does not pass edl:// through to mpv.  ② plays but ① does not → the
-    // external audio track (or the long lazy timeline) is the problem.  ③
-    // plays but ① and ② do not → "!delay_open" is the problem.
+    // Diagnostic ladder.  ① is the only entry with sound.  Reading the result:
+    // ③ plays but ①/② do not → the app does not pass edl:// through to mpv.
+    // ② plays but ① does not → the external audio track or the long timeline
+    // is the problem.
     if (withDiag) {
-      out.push({ label: "② silent, first 3 segments", url: this.toEdl(vSegs.slice(0, 3), "video", vCodec) });
-      out.push({ label: "③ silent, all segments, opened up front", url: this.toEdl(vSegs, "video", "") });
+      out.push({ label: "② silent, first 3 segments", url: this.toEdl(vSegs.slice(0, 3), "video", vCodec, vPts) });
       out.push({
-        label: "④ control — Apple HLS, no edl://",
+        label: "③ control — Apple HLS, no edl://",
         url: "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8",
       });
     }
@@ -1184,9 +1260,9 @@ class DefaultExtension extends MProvider {
         switchPreferenceCompat: {
           title: "Show playback diagnostic entries",
           summary: "Adds numbered test entries to the quality picker to work out " +
-            "why playback fails. Entry ① is the real stream; ②/③ are silent " +
-            "video-only tests and ④ is a reference stream from Apple. Turn off " +
-            "once playback works.",
+            "why playback fails. Entry ① is the real stream, ② is a short " +
+            "silent video-only test and ③ is a reference stream from Apple. " +
+            "Turn off once playback works.",
           value: true,
         },
       },
