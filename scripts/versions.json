@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "ReAnime": {
+            "name": "ReAnime",
+            "version": "0.3.0",
+            "langs": "en",
+            "lastUpd": 1790003851.642543
+        },
         "AniLight": {
             "name": "AniLight",
             "version": "0.6.0",
