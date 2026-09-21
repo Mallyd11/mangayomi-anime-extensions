@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -65,6 +65,11 @@ var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/12
 var SOURCES_URL = "https://s.vidcloud.se/_v1/sources?id=";
 
 var PAGE_SIZE = 30;
+
+// Per-episode sub/dub lookups (see episodeBadges) are capped: beyond this many
+// episodes a title falls back to an estimate rather than one request each.
+var BADGE_LOOKUP_MAX = 150;
+var BADGE_BATCH = 15;
 
 var GENRES = [
   "Action", "Adventure", "Avant Garde", "Boys Love", "Comedy", "Demons", "Drama",
@@ -282,6 +287,61 @@ class DefaultExtension extends MProvider {
     return 5;
   }
 
+  badgeLabel(hasSub, hasDub) {
+    return hasSub && hasDub ? "Sub · Dub" : hasSub ? "Sub" : hasDub ? "Dub" : "";
+  }
+
+  // "Sub · Dub" / "Sub" / "Dub" under each episode before it is opened. The
+  // episode list carries no language data and the anime record only has totals
+  // (sub_count / dub_count), which are accurate but do not say WHICH episodes:
+  // dubs can skip some (e.g. 1-5, 7-13, 15). So:
+  //   every episode has a sub and there is no dub → "Sub" for all, no requests
+  //   every episode has both                      → "Sub · Dub" for all, no requests
+  //   anything in between                         → ask the site once per episode
+  // A 500-episode title would be 500 requests, so past BADGE_LOOKUP_MAX the dub is
+  // assumed to run from episode 1 instead. A failed lookup leaves that episode
+  // without a badge rather than showing a wrong one.
+  async episodeBadges(id, eps, info) {
+    var n = eps.length;
+    var subCount = parseInt(info.sub_count, 10) || 0;
+    var dubCount = parseInt(info.dub_count, 10) || 0;
+    var out = {};
+    var self = this;
+    var i;
+    if (n === 0) return out;
+
+    if (subCount >= n && (dubCount === 0 || dubCount >= n)) {
+      var label = this.badgeLabel(true, dubCount >= n);
+      for (i = 0; i < n; i++) out[eps[i].ep_id] = label;
+      return out;
+    }
+
+    if (n > BADGE_LOOKUP_MAX) {
+      for (i = 0; i < n; i++) {
+        out[eps[i].ep_id] = this.badgeLabel(subCount >= n || i < subCount, i < dubCount);
+      }
+      return out;
+    }
+
+    var base = this.source.baseUrl;
+    for (i = 0; i < n; i += BADGE_BATCH) {
+      var slice = eps.slice(i, i + BADGE_BATCH);
+      var rows = await Promise.all(slice.map(function (e) {
+        return self.getJson(base + "/episode-embeds/" + id + "/" + e.ep_id).catch(function () { return null; });
+      }));
+      for (var k = 0; k < slice.length; k++) {
+        if (!Array.isArray(rows[k])) continue;
+        var hasSub = false, hasDub = false;
+        rows[k].forEach(function (r) {
+          if (!r || !r.status) return;
+          if (r.status === "Dub") hasDub = true; else hasSub = true;
+        });
+        out[slice[k].ep_id] = self.badgeLabel(hasSub, hasDub);
+      }
+    }
+    return out;
+  }
+
   async getDetail(url) {
     var id = this.idFrom(url);
     var base = this.source.baseUrl;
@@ -291,6 +351,7 @@ class DefaultExtension extends MProvider {
     ]);
     var info = pair[0] || {};
     var eps = Array.isArray(pair[1]) ? pair[1] : [];
+    var badges = await this.episodeBadges(id, eps, info);
 
     var chapters = [];
     for (var i = 0; i < eps.length; i++) {
@@ -310,6 +371,7 @@ class DefaultExtension extends MProvider {
         // look like new episodes.
         url: base + "/watch/" + id + "/" + ep.ep_id,
         dateUpload: isNaN(uploaded) ? null : String(uploaded),
+        scanlator: badges[ep.ep_id] || "",
       });
     }
     // The API lists episode 1 first; Mangayomi shows the newest at the top.
