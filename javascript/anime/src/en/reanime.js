@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -691,7 +691,7 @@ class DefaultExtension extends MProvider {
           url: anilistId + "|" + num,
           dateUpload: isNaN(aired) ? null : "" + aired,
           thumbnailUrl: ep.thumbnail || thumbFallback || null,
-          scanlator: ep.is_filler ? "Filler" : null,
+          scanlator: this.episodeBadge(ep),
           description: this.episodeDescription(ep),
         });
       });
@@ -724,6 +724,19 @@ class DefaultExtension extends MProvider {
       if (offset >= total || batch.length === 0) break;
     }
     return all;
+  }
+
+  // The line under an episode's title in the list: which audio it has, plus
+  // filler/recap.  The API flags each episode with subbed/dubbed, and they match
+  // what the streams offer (a sub-only episode lists only "sub" servers).  An
+  // episode carrying neither flag gets no audio label rather than a guess.
+  episodeBadge(ep) {
+    const hasSub = ep.subbed === true;
+    const hasDub = ep.dubbed === true;
+    let badge = hasSub && hasDub ? "Sub | Dub" : hasDub ? "Dub" : hasSub ? "Sub" : "";
+    if (ep.is_filler) badge += (badge ? " • " : "") + "Filler";
+    if (ep.is_recap) badge += (badge ? " • " : "") + "Recap";
+    return badge || null;
   }
 
   // reanime usually leaves episode synopses empty, so compose a useful info
