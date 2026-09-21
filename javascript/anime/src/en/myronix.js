@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.4",
+    "version": "0.2.5",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -70,10 +70,11 @@ class DefaultExtension extends MProvider {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
   }
 
-  get getHeaders() {
+  // The app calls getHeaders(url) as a method (e.g. to load cover images), so this
+  // must not be a getter — a getter returns an object and the call throws "not a function".
+  getHeaders(url) {
     return {
       "User-Agent": this.ua,
-      "Accept": "application/json",
       "Referer": this.source.baseUrl + "/",
     };
   }
@@ -146,9 +147,11 @@ class DefaultExtension extends MProvider {
     // Fire AniList metadata + AllAnime episode list simultaneously
     var epUrl = this.source.baseUrl + "/api/v2/allanime/episodes/" +
       anilistId + "?provider=anilist&mode=sub";
+    var epHeaders = this.getHeaders(epUrl);
+    epHeaders["Accept"] = "application/json";
     var parallel = await Promise.all([
       this.gql(MEDIA_DETAIL_QUERY, { id: anilistId }),
-      this.client.get(epUrl, this.getHeaders).catch(function() { return null; }),
+      this.client.get(epUrl, epHeaders).catch(function() { return null; }),
     ]);
 
     var data = parallel[0];
