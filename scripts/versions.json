@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "1Anime": {
+            "name": "1Anime",
+            "version": "0.1.1",
+            "langs": "en",
+            "lastUpd": 1790006081.112376
+        },
         "Senshi": {
             "name": "Senshi",
             "version": "0.1.1",
@@ -43,12 +49,6 @@
             "version": "0.2.5",
             "langs": "en",
             "lastUpd": 1790004232.782937
-        },
-        "1Anime": {
-            "name": "1Anime",
-            "version": "0.1.0",
-            "langs": "en",
-            "lastUpd": 1790003654.43062
         },
         "AniLight": {
             "name": "AniLight",

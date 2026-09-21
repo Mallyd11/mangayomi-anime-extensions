@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -20,7 +20,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "AniList-indexed catalogue. Plays the provider's progressive MKV (both audio tracks and every subtitle track are inside the file, so switch them from the player menu). The CDN link expires 15 minutes after an episode is opened, so if seeking fails late in a long session reopen the episode.",
+    "notes": "",
   },
 ];
 
@@ -650,15 +650,17 @@ class DefaultExtension extends MProvider {
     return "";
   }
 
-  // The download link answers 302 -> a signed dl.spacedl.top/.../<hash>.mkv URL. Handing
-  // the player that final URL gives downloads a real ".mkv" path. The signature carries a
-  // 15-minute exp and is enforced per request (measured: 404 once past it, mid-file ranges
-  // included), so the URL is resolved fresh on every getVideoList and never cached.
-  // If the runtime follows redirects regardless, the Range keeps this to a 1-byte transfer
-  // instead of the whole file.
+  // The download link answers 302 -> a signed dl.spacedl.top/.../<hash>.mkv URL. The
+  // signature carries a 15-minute exp that is enforced per request (measured: 404 once past
+  // it, mid-file ranges included), so the URL is resolved fresh on every getVideoList and
+  // never cached.
+  // The app's default (Rust) HTTP client ignores a per-request followRedirects, because
+  // redirect policy is a client-level setting there. Only the Dart IO client honours it, so
+  // useDartHttpClient is required. The Range keeps this to a 1-byte transfer instead of the
+  // whole file if a runtime follows the redirect anyway.
   async resolveDownload(downloadUrl, headers) {
     try {
-      var c = new Client({ "followRedirects": false });
+      var c = new Client({ "useDartHttpClient": true, "followRedirects": false });
       var h = {};
       for (var k in headers) h[k] = headers[k];
       h["Range"] = "bytes=0-0";
@@ -696,15 +698,21 @@ class DefaultExtension extends MProvider {
     var dl = data.download && data.download[0] && data.download[0].url;
     if (!dl) return [];
 
-    // The API tells us exactly what the CDN wants; play it back the same way.
+    // The API tells us exactly what the CDN wants (just a Referer), so the player gets
+    // exactly that. No User-Agent: the CDN does not check it, and mpv splits its header
+    // list on commas, which a browser UA ("KHTML, like Gecko") would break.
     var cdnHeaders = {};
     var given = data.headers || {};
     for (var k in given) cdnHeaders[k] = given[k];
-    cdnHeaders["User-Agent"] = this.ua;
+
+    // Our own lookups do look like a browser.
+    var reqHeaders = {};
+    for (var k2 in cdnHeaders) reqHeaders[k2] = cdnHeaders[k2];
+    reqHeaders["User-Agent"] = this.ua;
 
     var master = data.sources && data.sources[0] && data.sources[0].url;
-    var jobs = [this.resolveDownload(dl, cdnHeaders)];
-    if (master) jobs.push(this.describeMaster(master, cdnHeaders));
+    var jobs = [this.resolveDownload(dl, reqHeaders)];
+    if (master) jobs.push(this.describeMaster(master, reqHeaders));
     var results = await Promise.all(jobs);
     var direct = results[0];
     var info = results[1] || { height: 0, audio: [] };
@@ -713,22 +721,36 @@ class DefaultExtension extends MProvider {
     var audio = this.audioLabel(info.audio);
     if (audio) label += " · " + audio + " audio";
 
-    var videos = [];
-    if (direct) {
-      videos.push({ url: direct, originalUrl: direct, quality: label, headers: cdnHeaders, subtitles: [] });
-    }
-    // The tokenised link is good for hours and the CDN signs a fresh 15-minute URL every
-    // time it is opened, so re-opening an episode always works. A player that reconnects
-    // mid-stream reuses the redirect it already followed, so this is a fallback for the
-    // direct entry (e.g. when the runtime would not hand back the redirect), not a cure.
-    videos.push({
+    // Mangayomi's downloader only offers a download when a video's originalUrl path ends in
+    // a known video extension (.mkv is on its list) and takes the FIRST entry that does.
+    // It then fetches `url`; originalUrl is never requested, so the tokenised link (no
+    // extension of its own) carries an ".mkv" alias in originalUrl purely to pass the check.
+    // That entry goes first on purpose: the CDN re-signs it on every request, so a queued
+    // batch or a retried transfer still works, whereas the direct URL below is dead 15
+    // minutes after it was issued.
+    var videos = [{
       url: dl,
-      originalUrl: dl,
-      quality: direct ? label + " (redirect link)" : label,
+      originalUrl: this.mkvAlias(dl),
+      quality: label,
       headers: cdnHeaders,
       subtitles: [],
-    });
+    }];
+    if (direct) {
+      videos.push({
+        url: direct,
+        originalUrl: direct,
+        quality: label + " (direct link)",
+        headers: cdnHeaders,
+        subtitles: [],
+      });
+    }
     return videos;
+  }
+
+  // https://host/download/<id>?token=... -> https://host/download/<id>.mkv?token=...
+  mkvAlias(url) {
+    var q = url.indexOf("?");
+    return q < 0 ? url + ".mkv" : url.slice(0, q) + ".mkv" + url.slice(q);
   }
 
   async getVideoList(url) {

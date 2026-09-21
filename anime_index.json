@@ -320,13 +320,13 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/oneanime.js",
         "apiUrl": "",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "isManga": false,
         "itemType": 1,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": "AniList-indexed catalogue. Plays the provider's progressive MKV (both audio tracks and every subtitle track are inside the file, so switch them from the player menu). The CDN link expires 15 minutes after an episode is opened, so if seeking fails late in a long session reopen the episode."
+        "notes": ""
     }
 ]
