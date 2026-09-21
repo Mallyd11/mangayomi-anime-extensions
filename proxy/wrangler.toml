@@ -1,0 +1,11 @@
+# Cloudflare Worker for the Senshi playlist proxy (worker.js + senshi-core.mjs).
+#
+#   cd proxy
+#   npx wrangler login      # once, opens the browser
+#   npx wrangler deploy     # prints https://senshi-proxy.<your-subdomain>.workers.dev
+#
+# Only playlists (a few KB per episode) pass through it, so the free plan is plenty.
+name = "senshi-proxy"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
