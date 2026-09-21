@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -624,6 +624,8 @@ class DefaultExtension extends MProvider {
     return OA_CRYPTO.decrypt(result, fresh);
   }
 
+  // A failure here is reported, not swallowed: getVideoList used to turn every error into an
+  // empty list, which the app shows as a bare "no videos" with nothing to report.
   async fetchStream(anilistId, episode, provider, lang) {
     var rid = this.newRequestId();
     var url = this.source.baseUrl + "/api/stream?anilistId=" + anilistId +
@@ -634,123 +636,81 @@ class DefaultExtension extends MProvider {
     h["Referer"] = this.source.baseUrl + "/watch/" + anilistId;
 
     var res = await this.client.get(url, h);
-    if (res.statusCode !== 200) return null;
+    if (res.statusCode !== 200) {
+      // The API answers {"error": "..."} and the wording names the upstream that failed.
+      var why = String(res.body || "").replace(/\s+/g, " ").slice(0, 120);
+      throw new Error("HTTP " + res.statusCode + (why ? " " + why : ""));
+    }
     var json = JSON.parse(res.body);
-    if (!json || !json.result) return null;
+    if (!json || !json.result) throw new Error("empty response");
     var data = await this.decryptStream(json.result);
-    return data && data.success !== false ? data : null;
+    if (!data || data.success === false) throw new Error("stream refused");
+    return data;
   }
 
-  headerValue(headers, name) {
-    if (!headers) return "";
-    var want = name.toLowerCase();
-    for (var k in headers) {
-      if (String(k).toLowerCase() === want) return String(headers[k] || "");
-    }
-    return "";
+  // The site's own Source menu lists ZenV2 and Zen as "Official Server". They are the same
+  // flixcloud video on two CDN mirrors (fetch8 / fetch9), so a server here is only the first
+  // hop of the download link - which is what to switch when one mirror is blocked or slow on
+  // someone's network. The menu also lists Pahe, Zone, Senshi, Anitaku, AnimeVerse and
+  // AnimeHeaven, but on every title and episode checked (2026-09-21) they fail on the
+  // site's own backend (dead upstream hosts, 522s, a 403, "no matching anime"), so there is
+  // nothing to play and they are deliberately not offered.
+  serverOrder() {
+    var all = ["ZenV2", "Zen"];
+    var pref = "auto";
+    try { pref = new SharedPreferences().get("oneanime_pref_server") || "auto"; } catch (e) {}
+    if (all.indexOf(pref) < 0) return all;
+    return [pref].concat(all.filter(function (s) { return s !== pref; }));
   }
 
-  // The download link answers 302 -> a signed dl.spacedl.top/.../<hash>.mkv URL. The
-  // signature carries a 15-minute exp that is enforced per request (measured: 404 once past
-  // it, mid-file ranges included), so the URL is resolved fresh on every getVideoList and
-  // never cached.
-  // The app's default (Rust) HTTP client ignores a per-request followRedirects, because
-  // redirect policy is a client-level setting there. Only the Dart IO client honours it, so
-  // useDartHttpClient is required. The Range keeps this to a 1-byte transfer instead of the
-  // whole file if a runtime follows the redirect anyway.
-  async resolveDownload(downloadUrl, headers) {
-    try {
-      var c = new Client({ "useDartHttpClient": true, "followRedirects": false });
-      var h = {};
-      for (var k in headers) h[k] = headers[k];
-      h["Range"] = "bytes=0-0";
-      var res = await c.get(downloadUrl, h);
-      var loc = this.headerValue(res.headers, "location");
-      if (res.statusCode >= 300 && res.statusCode < 400 && /^https?:\/\//.test(loc)) return loc;
-    } catch (e) {}
-    return null;
-  }
-
-  // Resolution and audio names live in the HLS master that ships with the same video.
-  async describeMaster(masterUrl, headers) {
-    var info = { height: 0, audio: [] };
-    try {
-      var res = await this.client.get(masterUrl, headers);
-      var body = res.body || "";
-      var best = 0;
-      var re = /RESOLUTION=\d+x(\d+)/g, m;
-      while ((m = re.exec(body)) !== null) best = Math.max(best, parseInt(m[1], 10));
-      info.height = best;
-      var lre = /#EXT-X-MEDIA:TYPE=AUDIO[^\n]*?LANGUAGE="([^"]+)"/g;
-      while ((m = lre.exec(body)) !== null) info.audio.push(m[1]);
-    } catch (e) {}
-    return info;
-  }
-
-  audioLabel(codes) {
-    var names = { jpn: "JPN", eng: "ENG", en: "ENG", ja: "JPN", kor: "KOR", chi: "CHI", zho: "CHI" };
-    var out = [];
-    for (var i = 0; i < codes.length; i++) out.push(names[codes[i]] || String(codes[i]).toUpperCase());
-    return out.join(" + ");
-  }
-
-  async videosFrom(data) {
-    var dl = data.download && data.download[0] && data.download[0].url;
-    if (!dl) return [];
-
-    // The API tells us exactly what the CDN wants (just a Referer), so the player gets
-    // exactly that. No User-Agent: the CDN does not check it, and mpv splits its header
-    // list on commas, which a browser UA ("KHTML, like Gecko") would break.
-    var cdnHeaders = {};
-    var given = data.headers || {};
-    for (var k in given) cdnHeaders[k] = given[k];
-
-    // Our own lookups do look like a browser.
-    var reqHeaders = {};
-    for (var k2 in cdnHeaders) reqHeaders[k2] = cdnHeaders[k2];
-    reqHeaders["User-Agent"] = this.ua;
-
-    var master = data.sources && data.sources[0] && data.sources[0].url;
-    var jobs = [this.resolveDownload(dl, reqHeaders)];
-    if (master) jobs.push(this.describeMaster(master, reqHeaders));
-    var results = await Promise.all(jobs);
-    var direct = results[0];
-    var info = results[1] || { height: 0, audio: [] };
-
-    var label = (info.height ? info.height + "p" : "MKV") + " MKV";
-    var audio = this.audioLabel(info.audio);
-    if (audio) label += " · " + audio + " audio";
-
-    // Mangayomi's downloader only offers a download when a video's originalUrl path ends in
-    // a known video extension (.mkv is on its list) and takes the FIRST entry that does.
-    // It then fetches `url`; originalUrl is never requested, so the tokenised link (no
-    // extension of its own) carries an ".mkv" alias in originalUrl purely to pass the check.
-    // That entry goes first on purpose: the CDN re-signs it on every request, so a queued
-    // batch or a retried transfer still works, whereas the direct URL below is dead 15
-    // minutes after it was issued.
-    var videos = [{
-      url: dl,
-      originalUrl: this.mkvAlias(dl),
-      quality: label,
-      headers: cdnHeaders,
-      subtitles: [],
-    }];
-    if (direct) {
-      videos.push({
-        url: direct,
-        originalUrl: direct,
-        quality: label + " (direct link)",
-        headers: cdnHeaders,
-        subtitles: [],
-      });
-    }
-    return videos;
+  audioLabel(flags) {
+    var sub = flags.charAt(0) !== "0", dub = flags.charAt(1) !== "0";
+    if (sub && dub) return "JPN + ENG";
+    return dub ? "ENG" : "JPN";
   }
 
   // https://host/download/<id>?token=... -> https://host/download/<id>.mkv?token=...
   mkvAlias(url) {
     var q = url.indexOf("?");
     return q < 0 ? url + ".mkv" : url.slice(0, q) + ".mkv" + url.slice(q);
+  }
+
+  videoFrom(data, server, flags) {
+    var dl = data.download && data.download[0] && data.download[0].url;
+    if (!dl) return null;
+
+    // The API says exactly what the CDN wants (just a Referer), so the player gets exactly
+    // that. No User-Agent: the CDN does not check it, and mpv splits its header list on
+    // commas, which a browser UA ("KHTML, like Gecko") would break.
+    var headers = {};
+    var given = data.headers || {};
+    for (var k in given) headers[k] = given[k];
+
+    // The link answers 302 -> a signed dl.spacedl.top/.../<hash>.mkv URL that is dead 15
+    // minutes after it is issued (404, mid-file ranges included). Handing over the redirecting
+    // link keeps it valid: the CDN re-signs it on every request, so queued and retried
+    // downloads still work.
+    // Mangayomi's downloader only offers a download when a video's originalUrl path ends in a
+    // known video extension (.mkv is on its list) and takes the FIRST entry that does. It then
+    // fetches `url`; originalUrl is never requested, so the extension-less link carries an
+    // ".mkv" alias there purely to pass the check.
+    return {
+      url: dl,
+      originalUrl: this.mkvAlias(dl),
+      quality: server + " · MKV · " + this.audioLabel(flags) + " audio",
+      headers: headers,
+      subtitles: [],
+    };
+  }
+
+  async tryServer(anilistId, episode, server, lang, flags) {
+    try {
+      var data = await this.fetchStream(anilistId, episode, server, lang);
+      var video = this.videoFrom(data, server, flags);
+      return video ? { video: video } : { error: server + ": no download link" };
+    } catch (e) {
+      return { error: server + ": " + (e && e.message ? e.message : String(e)) };
+    }
   }
 
   async getVideoList(url) {
@@ -760,21 +720,30 @@ class DefaultExtension extends MProvider {
     var flags = parts[2] || "11";
     if (!/^\d+$/.test(anilistId) || !episode) return [];
 
-    // Every subtitle track and both audio tracks are inside the MKV, so one request
-    // is enough - sub vs dub only changes which flag the API wants for a one-sided episode.
-    var lang = flags.charAt(0) === "0" && flags.charAt(1) !== "0" ? "d" : "s";
+    // The MKV carries both audio tracks and every subtitle, so sub vs dub only changes the
+    // flag the API wants. Ask for the natural one first, the other only if nothing came back.
+    var langs = flags.charAt(0) === "0" ? ["d"] : (flags.charAt(1) === "0" ? ["s"] : ["s", "d"]);
+    var order = this.serverOrder();
+    var self = this;
+    var errors = [];
 
-    // Zen and ZenV2 are the same video on two CDN mirrors.
-    var providers = ["ZenV2", "Zen"];
-    for (var p = 0; p < providers.length; p++) {
-      try {
-        var data = await this.fetchStream(anilistId, episode, providers[p], lang);
-        if (!data) continue;
-        var videos = await this.videosFrom(data);
-        if (videos.length) return videos;
-      } catch (e) {}
+    for (var l = 0; l < langs.length; l++) {
+      var lang = langs[l];
+      // Both servers are asked at once (the site's own player makes two calls per episode
+      // as well), so listing both mirrors costs no extra time.
+      var results = await Promise.all(order.map(function (server) {
+        return self.tryServer(anilistId, episode, server, lang, flags);
+      }));
+      var videos = [];
+      for (var r = 0; r < results.length; r++) {
+        if (results[r].video) videos.push(results[r].video);
+        else if (errors.indexOf(results[r].error) < 0) errors.push(results[r].error);
+      }
+      if (videos.length) return videos;
     }
-    return [];
+    // Throw rather than return []: the app then logs the reason (crash_reports.json) and
+    // shows it, instead of a bare "no videos".
+    throw new Error("1Anime has no playable stream for this episode (" + errors.join("; ") + ")");
   }
 
   // ── Filters & preferences ─────────────────────────────────────────────────
@@ -846,6 +815,16 @@ class DefaultExtension extends MProvider {
 
   getSourcePreferences() {
     return [
+      {
+        key: "oneanime_pref_server",
+        listPreference: {
+          title: "Server",
+          summary: "ZenV2 and Zen are two mirrors of the same stream. Every episode lists both, and this picks which one is tried first and used for downloads. Switch it if the current one will not play.",
+          valueIndex: 0,
+          entries: ["Auto (ZenV2 first)", "ZenV2", "Zen"],
+          entryValues: ["auto", "ZenV2", "Zen"],
+        },
+      },
       {
         key: "oneanime_pref_ep_thumbnails",
         checkBoxPreference: {

@@ -19,7 +19,7 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Downloads | Sub/Dub | Last Updated |
 |------|---------|-----------|---------|--------------|
-| 1Anime | 0.1.1 | ? | Sub+Dub | 2026/09/21 |
+| 1Anime | 0.1.2 | ? | Sub+Dub | 2026/09/21 |
 | AniKoto | 0.4.20 | Yes | Sub+Dub | 2026/09/17 |
 | AniLight | 0.6.0 | Yes | Sub+Dub | 2026/09/17 |
 | AniWave | 0.2.3 | Yes | Sub+Dub | 2026/08/11 |
