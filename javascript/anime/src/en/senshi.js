@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -20,7 +20,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "Playback needs the playlist proxy: Senshi encrypts its HLS playlists, so run proxy/proxy.js (default http://localhost:8765) or deploy proxy/worker.js and set its address in the source settings. Only playlists go through it, video streams straight from the CDN.",
+    "notes": "Playback needs the playlist proxy: Senshi encrypts its HLS playlists, so run proxy/proxy.js (default http://127.0.0.1:8765) or deploy proxy/worker.js and set its address in the source settings. Only playlists go through it, video streams straight from the CDN.",
   },
 ];
 
@@ -57,7 +57,7 @@ const mangayomiSources = [
 // HTTP). Verified in the app's own libmpv: 1080p H.264 + AAC, seeking and
 // sub/dub audio selection all work.
 
-var DEFAULT_PROXY = "http://localhost:8765";
+var DEFAULT_PROXY = "http://127.0.0.1:8765";
 
 // No comma anywhere in here: mpv splits http-header-fields on commas.
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36";
@@ -448,12 +448,39 @@ class DefaultExtension extends MProvider {
     }
   }
 
+  // libmpv never errors on an unreachable HTTP stream, it just spins, so a proxy
+  // that is not running would show up as endless buffering. Ask it first and fail
+  // with something the user can act on.
+  async checkProxy(proxy) {
+    var res;
+    try {
+      res = await this.client.get(proxy + "/senshi/ping", { "User-Agent": UA });
+    } catch (e) {
+      throw new Error(
+        "Senshi needs its playlist proxy, and nothing answered at " + proxy +
+        ". Start it with: node proxy/proxy.js  (or change the proxy address in the source settings)."
+      );
+    }
+    if (!res || res.statusCode !== 200 || String(res.body || "").indexOf("senshi-proxy") < 0) {
+      throw new Error(
+        "The proxy at " + proxy + " is running but does not know Senshi (an older proxy.js). " +
+        "Stop it and start the updated one: node proxy/proxy.js"
+      );
+    }
+  }
+
   async getVideoList(url) {
     var idM = String(url || "").match(/\/watch\/(\d+)\/(\d+)/);
     if (!idM) return [];
     var animeId = idM[1], epNum = idM[2];
 
-    var embeds = await this.getJson(this.source.baseUrl + "/episode-embeds/" + animeId + "/" + epNum);
+    var proxy = this.proxyBase();
+    // Checked alongside the lookup so a healthy proxy costs no extra time.
+    var pair = await Promise.all([
+      this.checkProxy(proxy),
+      this.getJson(this.source.baseUrl + "/episode-embeds/" + animeId + "/" + epNum),
+    ]);
+    var embeds = pair[1];
     if (!Array.isArray(embeds) || embeds.length === 0) return [];
 
     // One lookup per distinct backend id (a HardSub and a Dub row usually share it).
@@ -466,7 +493,6 @@ class DefaultExtension extends MProvider {
     var infoOf = {};
     ids.forEach(function (rid, i) { infoOf[rid] = infos[i]; });
 
-    var proxy = this.proxyBase();
     var headers = this.streamHeaders;
 
     var jobs = [];
@@ -583,7 +609,7 @@ class DefaultExtension extends MProvider {
           summary: "Required for playback. Senshi encrypts its HLS playlists, so they are decrypted by a small proxy (proxy/proxy.js on this PC, or proxy/worker.js on Cloudflare). Only playlists pass through it — video streams straight from the CDN.",
           value: DEFAULT_PROXY,
           dialogTitle: "Proxy address",
-          dialogMessage: "Use http://localhost:8765 when running proxy.js on this PC, or your worker's https URL.",
+          dialogMessage: "Use http://127.0.0.1:8765 when running proxy.js on this PC, or your worker's https URL.",
         },
       },
       {

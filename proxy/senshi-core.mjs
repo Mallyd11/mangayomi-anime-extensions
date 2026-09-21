@@ -213,6 +213,15 @@ async function buildMedia(params) {
 
 // Returns { status, headers, body }, or null when the path isn't a senshi route.
 export async function handleSenshi(pathname, searchParams, selfOrigin) {
+  // Liveness probe for the extension: proves this is a proxy that knows the
+  // Senshi routes (an older proxy.js answers 400 here), without touching the CDN.
+  if (pathname === "/senshi/ping") {
+    return {
+      status: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" },
+      body: "senshi-proxy ok",
+    };
+  }
   if (pathname !== "/senshi/master.m3u8" && pathname !== "/senshi/media.m3u8") return null;
   const headers = {
     "Content-Type": "application/vnd.apple.mpegurl",
