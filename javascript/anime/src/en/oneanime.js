@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -532,12 +532,17 @@ class DefaultExtension extends MProvider {
       if (pref === false) thumbs = false;
     } catch (e) {}
 
+    var audioPref = this.audioPref();
     var eps = epJson.episodes || [];
     var chapters = [];
     for (var i = 0; i < eps.length; i++) {
       var ep = eps[i];
       // Placeholder entries (no sub and no dub) have nothing to play.
       if (!ep.sub && !ep.dub) continue;
+      // "Sub only" / "Dub only" hide the episodes that lack that version (dubs lag behind
+      // the subs on airing shows, so this is what makes a Dub-only list useful).
+      if (audioPref === "sub" && !ep.sub) continue;
+      if (audioPref === "dub" && !ep.dub) continue;
 
       var label = "Episode " + ep.number;
       if (ep.title && !/^Episode\s+\d+$/i.test(ep.title)) label += " - " + ep.title;
@@ -655,18 +660,43 @@ class DefaultExtension extends MProvider {
   // AnimeHeaven, but on every title and episode checked (2026-09-21) they fail on the
   // site's own backend (dead upstream hosts, 522s, a 403, "no matching anime"), so there is
   // nothing to play and they are deliberately not offered.
-  serverOrder() {
-    var all = ["ZenV2", "Zen"];
-    var pref = "auto";
-    try { pref = new SharedPreferences().get("oneanime_pref_server") || "auto"; } catch (e) {}
-    if (all.indexOf(pref) < 0) return all;
-    return [pref].concat(all.filter(function (s) { return s !== pref; }));
+  get KNOWN_SERVERS() { return ["ZenV2", "Zen"]; }
+
+  readPref(key, fallback) {
+    var v;
+    try { v = new SharedPreferences().get(key); } catch (e) {}
+    return v === undefined || v === null || v === "" ? fallback : v;
   }
 
-  audioLabel(flags) {
+  // "both" | "sub" | "dub". An unset or unknown value reads as "both".
+  audioPref() {
+    var a = this.readPref("oneanime_pref_audio", "both");
+    return a === "sub" || a === "dub" ? a : "both";
+  }
+
+  // The servers the viewer ticked (both by default), in KNOWN_SERVERS order, with the
+  // "play first" choice moved to the front. Nothing is dropped by the reordering.
+  enabledServers() {
+    var all = this.KNOWN_SERVERS;
+    var ticked = this.readPref("oneanime_pref_servers", null);
+    var picked = all.filter(function (s) { return ticked && ticked.indexOf(s) >= 0; });
+    if (!picked.length) picked = all.slice();
+    var first = this.readPref("oneanime_pref_server", "auto");
+    if (picked.indexOf(first) > 0) {
+      picked = [first].concat(picked.filter(function (s) { return s !== first; }));
+    }
+    return picked;
+  }
+
+  // What the audio actually is. Every file carries both tracks, so the label describes the
+  // episode, not a choice the extension could make: which track starts playing is the
+  // player's call (its audio menu, or the app's preferred-audio-language setting).
+  audioLabel(flags, audio) {
+    if (audio === "sub") return "JPN audio (Sub)";
+    if (audio === "dub") return "ENG audio (Dub)";
     var sub = flags.charAt(0) !== "0", dub = flags.charAt(1) !== "0";
-    if (sub && dub) return "JPN + ENG";
-    return dub ? "ENG" : "JPN";
+    if (sub && dub) return "JPN + ENG audio";
+    return dub ? "ENG audio" : "JPN audio";
   }
 
   // https://host/download/<id>?token=... -> https://host/download/<id>.mkv?token=...
@@ -675,7 +705,7 @@ class DefaultExtension extends MProvider {
     return q < 0 ? url + ".mkv" : url.slice(0, q) + ".mkv" + url.slice(q);
   }
 
-  videoFrom(data, server, flags) {
+  videoFrom(data, server, flags, audio) {
     var dl = data.download && data.download[0] && data.download[0].url;
     if (!dl) return null;
 
@@ -697,16 +727,16 @@ class DefaultExtension extends MProvider {
     return {
       url: dl,
       originalUrl: this.mkvAlias(dl),
-      quality: server + " · MKV · " + this.audioLabel(flags) + " audio",
+      quality: server + " · MKV · " + this.audioLabel(flags, audio),
       headers: headers,
       subtitles: [],
     };
   }
 
-  async tryServer(anilistId, episode, server, lang, flags) {
+  async tryServer(anilistId, episode, server, lang, flags, audio) {
     try {
       var data = await this.fetchStream(anilistId, episode, server, lang);
-      var video = this.videoFrom(data, server, flags);
+      var video = this.videoFrom(data, server, flags, audio);
       return video ? { video: video } : { error: server + ": no download link" };
     } catch (e) {
       return { error: server + ": " + (e && e.message ? e.message : String(e)) };
@@ -720,29 +750,41 @@ class DefaultExtension extends MProvider {
     var flags = parts[2] || "11";
     if (!/^\d+$/.test(anilistId) || !episode) return [];
 
+    var audio = this.audioPref();
+
     // The MKV carries both audio tracks and every subtitle, so sub vs dub only changes the
     // flag the API wants. Ask for the natural one first, the other only if nothing came back.
-    var langs = flags.charAt(0) === "0" ? ["d"] : (flags.charAt(1) === "0" ? ["s"] : ["s", "d"]);
-    var order = this.serverOrder();
+    var hasSub = flags.charAt(0) !== "0", hasDub = flags.charAt(1) !== "0";
+    var langs = hasSub && hasDub ? (audio === "dub" ? ["d", "s"] : ["s", "d"]) : (hasDub ? ["d"] : ["s"]);
+
+    // Ticked servers first; the others only as a rescue lane. An episode that refuses to
+    // play is worse than one that plays on a server the viewer did not tick.
+    var enabled = this.enabledServers();
+    var rescue = this.KNOWN_SERVERS.filter(function (s) { return enabled.indexOf(s) < 0; });
+    var tiers = rescue.length ? [enabled, rescue] : [enabled];
+
     var self = this;
     var errors = [];
 
-    for (var l = 0; l < langs.length; l++) {
-      var lang = langs[l];
-      // Both servers are asked at once (the site's own player makes two calls per episode
-      // as well), so listing both mirrors costs no extra time.
-      var results = await Promise.all(order.map(function (server) {
-        return self.tryServer(anilistId, episode, server, lang, flags);
-      }));
-      var videos = [];
-      for (var r = 0; r < results.length; r++) {
-        if (results[r].video) videos.push(results[r].video);
-        else if (errors.indexOf(results[r].error) < 0) errors.push(results[r].error);
+    for (var t = 0; t < tiers.length; t++) {
+      var servers = tiers[t];
+      for (var l = 0; l < langs.length; l++) {
+        var lang = langs[l];
+        // Every server in the tier is asked at once (the site's own player makes two calls
+        // per episode as well), so listing several mirrors costs no extra time.
+        var results = await Promise.all(servers.map(function (server) {
+          return self.tryServer(anilistId, episode, server, lang, flags, audio);
+        }));
+        var videos = [];
+        for (var r = 0; r < results.length; r++) {
+          if (results[r].video) videos.push(results[r].video);
+          else if (errors.indexOf(results[r].error) < 0) errors.push(results[r].error);
+        }
+        if (videos.length) return videos;
       }
-      if (videos.length) return videos;
     }
-    // Throw rather than return []: the app then logs the reason (crash_reports.json) and
-    // shows it, instead of a bare "no videos".
+    // Throw rather than return []: the player then shows the reason with a Retry button
+    // instead of a bare "video list is empty".
     throw new Error("1Anime has no playable stream for this episode (" + errors.join("; ") + ")");
   }
 
@@ -816,13 +858,33 @@ class DefaultExtension extends MProvider {
   getSourcePreferences() {
     return [
       {
+        key: "oneanime_pref_servers",
+        multiSelectListPreference: {
+          title: "Servers",
+          summary: "Servers listed in the player's picker. ZenV2 and Zen are two mirrors of the same stream, so if one buffers or will not start, switch to the other in the player. A server you untick is only used if the ticked ones fail.",
+          values: ["ZenV2", "Zen"],
+          entries: ["ZenV2 (fetch8 mirror)", "Zen (fetch9 mirror)"],
+          entryValues: ["ZenV2", "Zen"],
+        },
+      },
+      {
         key: "oneanime_pref_server",
         listPreference: {
-          title: "Server",
-          summary: "ZenV2 and Zen are two mirrors of the same stream. Every episode lists both, and this picks which one is tried first and used for downloads. Switch it if the current one will not play.",
+          title: "Server to play first",
+          summary: "The server the player starts with, and the one downloads use. Auto starts with ZenV2.",
           valueIndex: 0,
-          entries: ["Auto (ZenV2 first)", "ZenV2", "Zen"],
+          entries: ["Auto (ZenV2)", "ZenV2", "Zen"],
           entryValues: ["auto", "ZenV2", "Zen"],
+        },
+      },
+      {
+        key: "oneanime_pref_audio",
+        listPreference: {
+          title: "Preferred audio",
+          summary: "Every file carries both the Japanese and the English audio plus all subtitles, so switch tracks from the player's audio menu (or set the app's preferred audio language). Sub only / Dub only hide the episodes that lack that version. Refresh the anime after changing this.",
+          valueIndex: 0,
+          entries: ["Sub and Dub (all episodes)", "Sub only", "Dub only"],
+          entryValues: ["both", "sub", "dub"],
         },
       },
       {
