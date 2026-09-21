@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "MyroniX": {
+            "name": "MyroniX",
+            "version": "0.2.5",
+            "langs": "en",
+            "lastUpd": 1790004232.782937
+        },
         "ReAnime": {
             "name": "ReAnime",
             "version": "0.3.0",
@@ -79,12 +85,6 @@
             "version": "0.2.8",
             "langs": "en",
             "lastUpd": 1787165614.772946
-        },
-        "MyroniX": {
-            "name": "MyroniX",
-            "version": "0.2.5",
-            "langs": "en",
-            "lastUpd": 1790004232.782937
         },
         "Just4Anime": {
             "name": "Just4Anime",
