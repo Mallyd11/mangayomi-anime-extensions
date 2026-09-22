@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.0",
+    "version": "0.4.0",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -65,10 +65,17 @@ const mangayomiSources = [
 //     while the target is still in the player's cache (32 MiB back buffer by default,
 //     about a minute); further back lands somewhere else. Forward seeks are fine.
 //
-// The "Via proxy" playback setting has neither problem (real HLS, one continuous
-// stream, any seek) but needs proxy/proxy.js running, so it is opt-in. No other
-// server-free route exists in this libmpv: hls+..., concat: and ffmpeg://data: do
-// not open, and mpv's own playlist reader splits a data playlist into files.
+// Every episode also gets a "(Proxy)" entry per audio version, always listed
+// after the direct ones (never auto-played): real HLS through proxy/proxy.js,
+// with neither problem above (any seek, no boundary freezes), and — since
+// Mangayomi's own downloader only understands a single self-contained stream,
+// never HLS's detached-audio #EXT-X-MEDIA track this CDN always uses — the
+// only entries downloads can actually use (see buildEdl / the mux notes in
+// proxy/senshi-core.mjs). No separate "Playback method" setting: Direct always
+// leads since it needs nothing, so there was nothing left for a toggle to do.
+// No other server-free route exists in this libmpv: hls+..., concat: and
+// ffmpeg://data: do not open, and mpv's own playlist reader splits a data
+// playlist into files.
 //
 // EDL details that matter: !delay_open (else mpv opens every part up front, ~30 s
 // for an episode) requires start= on every part, otherwise it assumes PTS 0 and
@@ -505,9 +512,13 @@ class DefaultExtension extends MProvider {
       if (!t || !t.vtt_url || t.label === "chapter") return false;
       return self._isDubTrack(t) === wantDub;
     });
+    // English always leads, even when the site's own default:true flag marks a
+    // different language default (that happens — Senshi's "default" reflects
+    // the uploader's pick, not the user's) — the app auto-enables subtitles[0].
     var rank = function (t) {
-      if (t.default === true) return 0;
-      return /^english/i.test(String(t.label || "")) ? 1 : 2;
+      if (/^english/i.test(String(t.label || ""))) return 0;
+      if (t.default === true) return 1;
+      return 2;
     };
     wanted = wanted
       .map(function (t, i) { return { t: t, i: i }; })
@@ -547,27 +558,6 @@ class DefaultExtension extends MProvider {
       };
     } catch (e) {
       return null;
-    }
-  }
-
-  // libmpv never errors on an unreachable HTTP stream, it just spins, so a proxy
-  // that is not running would show up as endless buffering. Ask it first and fail
-  // with something the user can act on.
-  async checkProxy(proxy) {
-    var res;
-    try {
-      res = await this.client.get(proxy + "/senshi/ping", { "User-Agent": UA });
-    } catch (e) {
-      throw new Error(
-        "Senshi needs its playlist proxy, and nothing answered at " + proxy +
-        ". Start it with: node proxy/proxy.js  (or change the proxy address in the source settings)."
-      );
-    }
-    if (!res || res.statusCode !== 200 || String(res.body || "").indexOf("senshi-proxy") < 0) {
-      throw new Error(
-        "The proxy at " + proxy + " is running but does not know Senshi (an older proxy.js). " +
-        "Stop it and start the updated one: node proxy/proxy.js"
-      );
     }
   }
 
@@ -895,16 +885,11 @@ class DefaultExtension extends MProvider {
     if (!idM) return [];
     var animeId = idM[1], epNum = idM[2];
 
-    var viaProxy = this.getPreference("senshi_pref_playback") === "proxy";
-    // Needed below regardless of playback mode: downloads always route through
-    // the proxy (only it can decrypt + mux), even when playback is Direct.
+    // Needed below regardless: downloads, and the secondary "(Proxy)" playback
+    // entries, always route through the proxy (only it can decrypt + mux) —
+    // but Direct always leads, so nothing here needs to wait on a proxy check.
     var proxy = this.proxyBase();
-    // A proxy is checked alongside the lookup so a healthy one costs no extra time.
-    var pair = await Promise.all([
-      viaProxy ? this.checkProxy(proxy) : Promise.resolve(),
-      this.getJson(this.source.baseUrl + "/episode-embeds/" + animeId + "/" + epNum),
-    ]);
-    var embeds = pair[1];
+    var embeds = await this.getJson(this.source.baseUrl + "/episode-embeds/" + animeId + "/" + epNum);
     if (!Array.isArray(embeds) || embeds.length === 0) return [];
 
     // One lookup per distinct backend id (a HardSub and a Dub row usually share it).
@@ -930,64 +915,57 @@ class DefaultExtension extends MProvider {
       jobs.push({ dub: dub, rid: e.remote_source_id });
     });
 
-    var videos = [];
-    if (viaProxy) {
-      var groups = await Promise.all(jobs.map(async function (j) {
-        var info = infoOf[j.rid];
-        var subs = info ? await self.inlineSubtitles(info.tracks, j.dub) : [];
-        var top = info && info.height ? info.height : 1080;
-        var kind = j.dub ? "Dub" : "Sub";
-        var link = function (extra) {
-          return proxy + "/senshi/master.m3u8?id=" + j.rid + "&audio=" + (j.dub ? "en" : "ja") + extra;
-        };
-        var out = [];
-        var best = link("");
-        out.push({ url: best, originalUrl: best, quality: kind + " " + (info && info.height ? top + "p" : "Auto"), headers: headers, subtitles: subs, _dub: j.dub });
-        // A 480p option for slow connections, when the release has more than that.
-        if (top > 480) {
-          var low = link("&maxh=480");
-          out.push({ url: low, originalUrl: low, quality: kind + " 480p", headers: headers, subtitles: subs, _dub: j.dub });
-        }
-        return out;
-      }));
-      groups.forEach(function (g) { g.forEach(function (v) { videos.push(v); }); });
-    } else {
-      videos = await this.directVideos(jobs, infoOf, animeId, epNum);
-    }
+    // Both families are always built and returned as ordinary quality entries
+    // in the SAME list (like every other source in this repo — AniKoto's/
+    // ReAnime's "Servers", HiAnime's per-quality ZokoAnime entries) rather than
+    // a separate, mechanism-labelled "(Download)" set. Mangayomi's download
+    // button doesn't read the quality picker at all: it independently re-runs
+    // getVideoList and takes the first entry whose originalUrl passes its own
+    // check (see below), so any ordinary-looking entry can serve double duty —
+    // exactly how HiAnime's entries do, with no special-casing needed there
+    // because its stream is plain HLS to begin with. Senshi's CDN keeps audio
+    // in a detached HLS group, which mpv's own player-side demuxer follows
+    // fine but Mangayomi's *downloader* does not (only #EXT-X-STREAM-INF,
+    // never #EXT-X-MEDIA) — so the entries below use the muxed, proxy-served
+    // route (video+audio combined into one real stream) instead of a plain
+    // detached-audio HLS master; that fixes playback AND downloads with one
+    // route, matching how HiAnime never needed two.
+    var directEntries = await this.directVideos(jobs, infoOf, animeId, epNum);
+    directEntries.forEach(function (v) { v._direct = true; });
 
-    // Mangayomi's own HLS downloader has no support for HLS's detached-audio
-    // #EXT-X-MEDIA track (how every playback entry above delivers audio here),
-    // so handed any of them it would silently save picture with no sound. This
-    // is a separate, dedicated route that muxes video+audio into ordinary
-    // single-stream segments the downloader can actually handle. Always added,
-    // regardless of Playback method: playback stays on the entries above
-    // (direct by default, needing no proxy), downloads need the proxy running
-    // only at the moment a download is started, same as Via proxy playback.
-    jobs.forEach(function (j) {
+    var proxyGroups = await Promise.all(jobs.map(async function (j) {
+      var info = infoOf[j.rid];
+      var subs = info ? await self.inlineSubtitles(info.tracks, j.dub) : [];
       var kind = j.dub ? "Dub" : "Sub";
-      var dl = proxy + "/senshi/dl/" + j.rid + "/" + (j.dub ? "en" : "ja") + ".m3u8";
-      videos.push({
-        url: dl,
-        originalUrl: dl,
-        quality: kind + " 1080p (Download)",
+      var link = proxy + "/senshi/dl/" + j.rid + "/" + (j.dub ? "en" : "ja") + ".m3u8";
+      return [{
+        url: link,
+        originalUrl: link,
+        quality: kind + " 1080p (Proxy)",
         headers: headers,
-        subtitles: [],
+        subtitles: subs,
         _dub: j.dub,
-        _download: true,
-      });
-    });
+        _direct: false,
+      }];
+    }));
+    var videos = directEntries.slice();
+    proxyGroups.forEach(function (g) { g.forEach(function (v) { videos.push(v); }); });
 
-    // Mangayomi plays the first entry and takes auto-play subtitles from it, so
-    // the preferred audio has to lead. Order inside each group is already best
-    // quality first, and this sort is stable. Download entries never lead,
-    // regardless of audio preference: they need the proxy, the others don't.
+    // Mangayomi plays the first entry and takes auto-play subtitles from it.
+    // Direct always leads — it needs no proxy — and inside it the preferred
+    // audio leads. The "(Proxy)" entries are always last: they're secondary
+    // (full seeking, and what the download button finds), never the default.
+    // The very first entry after this sort ends up as videos[0] — its
+    // originalUrl gets opened on the episode's very first-ever play in the
+    // app (a real, confirmed quirk, not every quality switch after), which is
+    // why every entry above sets originalUrl equal to its own url.
     var wantDub = this.getPreference("senshi_pref_type") === "dub";
     videos.sort(function (a, b) {
-      if (a._download !== b._download) return a._download ? 1 : -1;
+      if (a._direct !== b._direct) return a._direct ? -1 : 1;
       if (a._dub !== b._dub) return (a._dub === wantDub) ? -1 : 1;
       return 0;
     });
-    videos.forEach(function (v) { delete v._dub; delete v._download; });
+    videos.forEach(function (v) { delete v._dub; delete v._direct; });
     return videos;
   }
 
@@ -1054,20 +1032,10 @@ class DefaultExtension extends MProvider {
         },
       },
       {
-        key: "senshi_pref_playback",
-        listPreference: {
-          title: "Playback method",
-          summary: "Direct needs nothing else. Via proxy gives full seeking but needs the playlist proxy running (proxy/proxy.js)",
-          valueIndex: 0,
-          entries: ["Direct (recommended)", "Via proxy"],
-          entryValues: ["direct", "proxy"],
-        },
-      },
-      {
         key: "senshi_pref_proxy_url",
         editTextPreference: {
           title: "Playlist proxy address",
-          summary: "Used when Playback method is Via proxy, and always for downloads (run proxy/proxy.js first)",
+          summary: "Only needed for the (Proxy) quality entries (full seeking) and for downloads — run proxy/proxy.js first. Regular playback needs nothing.",
           value: DEFAULT_PROXY,
           dialogTitle: "Proxy address",
           dialogMessage: "Use http://127.0.0.1:8765 when running proxy.js on this PC, or your worker's https URL.",
