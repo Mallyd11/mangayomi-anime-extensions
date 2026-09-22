@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -762,11 +762,22 @@ class DefaultExtension extends MProvider {
       // Mangayomi's downloader only offers a download when a video's originalUrl path ends
       // in a known video extension (.mkv is on its list), and fetches `url` - never
       // originalUrl - so this only ever affects which entries can be downloaded.
+      //
+      // Sub and Dub share this exact url/originalUrl - it is the same file - but the app's
+      // own JS bridge (eval/javascript/service.dart getVideoList()) deduplicates the RAW
+      // list from a video's (url, originalUrl) pair alone, before it ever looks at quality.
+      // Two entries with identical url AND identical originalUrl collapse into one, silently,
+      // no matter how their labels differ - confirmed live: v0.1.5 always lost the second
+      // entry per server this way. A URL fragment ("#sub"/"#dub") makes each pair unique
+      // without changing what gets requested: fragments are stripped by every HTTP client
+      // before the request line is built, so the network call, the CDN's signature check,
+      // and Uri.path (what the downloader's extension check reads) are all untouched.
       var videos = [];
       for (var i = 0; i < kinds.length; i++) {
+        var tag = "#" + kinds[i].toLowerCase();
         videos.push({
-          url: dl,
-          originalUrl: direct || dl,
+          url: dl + tag,
+          originalUrl: (direct || dl) + tag,
           quality: server + " · " + kinds[i],
           headers: headers,
           subtitles: [],
