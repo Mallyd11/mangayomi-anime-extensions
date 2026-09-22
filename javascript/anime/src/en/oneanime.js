@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -668,10 +668,26 @@ class DefaultExtension extends MProvider {
     return v === undefined || v === null || v === "" ? fallback : v;
   }
 
-  // "both" | "sub" | "dub". An unset or unknown value reads as "both".
+  // "sub_dub" | "dub_sub" | "sub" | "dub", matching AniKoto's own preference. An unset or
+  // unknown value reads as "sub_dub".
   audioPref() {
-    var a = this.readPref("oneanime_pref_audio", "both");
-    return a === "sub" || a === "dub" ? a : "both";
+    var a = this.readPref("oneanime_pref_audio", "sub_dub");
+    var valid = ["sub_dub", "dub_sub", "sub", "dub"];
+    return valid.indexOf(a) >= 0 ? a : "sub_dub";
+  }
+
+  // Sub and Dub sit in the exact same file here - every stream carries both audio tracks
+  // and every subtitle - so unlike AniKoto's genuinely separate sub/dub sources, this never
+  // changes which bytes get fetched, only which labelled entries appear in the picker and
+  // in what order. Mangayomi auto-plays the FIRST entry, so order is what "Sub then Dub" /
+  // "Dub then Sub" actually control; picking either entry opens the identical stream, so
+  // switching tracks for real is the player's own audio menu, same as if there were only one.
+  entryKinds(hasSub, hasDub, audio) {
+    if (audio === "sub") return hasSub ? ["Sub"] : (hasDub ? ["Dub"] : []);
+    if (audio === "dub") return hasDub ? ["Dub"] : (hasSub ? ["Sub"] : []);
+    if (!hasSub) return hasDub ? ["Dub"] : [];
+    if (!hasDub) return ["Sub"];
+    return audio === "dub_sub" ? ["Dub", "Sub"] : ["Sub", "Dub"];
   }
 
   // The servers the viewer ticked (both by default), in KNOWN_SERVERS order, with the
@@ -686,17 +702,6 @@ class DefaultExtension extends MProvider {
       picked = [first].concat(picked.filter(function (s) { return s !== first; }));
     }
     return picked;
-  }
-
-  // What the audio actually is. Every file carries both tracks, so the label describes the
-  // episode, not a choice the extension could make: which track starts playing is the
-  // player's call (its audio menu, or the app's preferred-audio-language setting).
-  audioLabel(flags, audio) {
-    if (audio === "sub") return "JPN audio (Sub)";
-    if (audio === "dub") return "ENG audio (Dub)";
-    var sub = flags.charAt(0) !== "0", dub = flags.charAt(1) !== "0";
-    if (sub && dub) return "JPN + ENG audio";
-    return dub ? "ENG audio" : "JPN audio";
   }
 
   headerValue(headers, name) {
@@ -730,40 +735,44 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  async videoFrom(data, server, flags, audio) {
-    var dl = data.download && data.download[0] && data.download[0].url;
-    if (!dl) return null;
-
-    // The API says exactly what the CDN wants (just a Referer), so the player gets exactly
-    // that. No User-Agent: the CDN does not check it, and mpv splits its header list on
-    // commas, which a browser UA ("KHTML, like Gecko") would break.
-    var headers = {};
-    var given = data.headers || {};
-    for (var k in given) headers[k] = given[k];
-
-    // The tokenised link is good for 6 hours and the CDN re-signs it on every request, so it
-    // is what plays and what a queued or retried download uses. It is dead 15 minutes after
-    // this direct file link is issued (404, mid-file ranges included) - reopen the episode if
-    // a very long session outlives that.
-    var direct = await this.resolveDirectUrl(dl, headers);
-
-    // Mangayomi's downloader only offers a download when a video's originalUrl path ends in
-    // a known video extension (.mkv is on its list), and fetches `url` - never originalUrl -
-    // so this only ever affects which entries can be downloaded, not what plays.
-    return {
-      url: dl,
-      originalUrl: direct || dl,
-      quality: server + " · MKV · " + this.audioLabel(flags, audio),
-      headers: headers,
-      subtitles: [],
-    };
-  }
-
-  async tryServer(anilistId, episode, server, lang, flags, audio) {
+  // One fetch produces every kind (["Sub"], ["Dub"], or both, already ordered) offered for
+  // this server, since they are the same file - fetching the API a second time for the
+  // other audio label would return byte-identical bytes. The requested subOrDub value only
+  // has to be one the episode actually has; which one is irrelevant to the result.
+  async videosFromServer(anilistId, episode, server, kinds) {
     try {
+      var lang = kinds[0] === "Dub" ? "d" : "s";
       var data = await this.fetchStream(anilistId, episode, server, lang);
-      var video = await this.videoFrom(data, server, flags, audio);
-      return video ? { video: video } : { error: server + ": no download link" };
+      var dl = data.download && data.download[0] && data.download[0].url;
+      if (!dl) return { error: server + ": no download link" };
+
+      // The API says exactly what the CDN wants (just a Referer), so the player gets exactly
+      // that. No User-Agent: the CDN does not check it, and mpv splits its header list on
+      // commas, which a browser UA ("KHTML, like Gecko") would break.
+      var headers = {};
+      var given = data.headers || {};
+      for (var k in given) headers[k] = given[k];
+
+      // The tokenised link is good for 6 hours and the CDN re-signs it on every request, so
+      // it is what plays and what a queued or retried download uses. It is dead 15 minutes
+      // after this direct file link is issued (404, mid-file ranges included) - reopen the
+      // episode if a very long session outlives that.
+      var direct = await this.resolveDirectUrl(dl, headers);
+
+      // Mangayomi's downloader only offers a download when a video's originalUrl path ends
+      // in a known video extension (.mkv is on its list), and fetches `url` - never
+      // originalUrl - so this only ever affects which entries can be downloaded.
+      var videos = [];
+      for (var i = 0; i < kinds.length; i++) {
+        videos.push({
+          url: dl,
+          originalUrl: direct || dl,
+          quality: server + " · " + kinds[i],
+          headers: headers,
+          subtitles: [],
+        });
+      }
+      return { videos: videos };
     } catch (e) {
       return { error: server + ": " + (e && e.message ? e.message : String(e)) };
     }
@@ -776,12 +785,9 @@ class DefaultExtension extends MProvider {
     var flags = parts[2] || "11";
     if (!/^\d+$/.test(anilistId) || !episode) return [];
 
-    var audio = this.audioPref();
-
-    // The MKV carries both audio tracks and every subtitle, so sub vs dub only changes the
-    // flag the API wants. Ask for the natural one first, the other only if nothing came back.
     var hasSub = flags.charAt(0) !== "0", hasDub = flags.charAt(1) !== "0";
-    var langs = hasSub && hasDub ? (audio === "dub" ? ["d", "s"] : ["s", "d"]) : (hasDub ? ["d"] : ["s"]);
+    var kinds = this.entryKinds(hasSub, hasDub, this.audioPref());
+    if (!kinds.length) return [];
 
     // Ticked servers first; the others only as a rescue lane. An episode that refuses to
     // play is worse than one that plays on a server the viewer did not tick.
@@ -794,20 +800,19 @@ class DefaultExtension extends MProvider {
 
     for (var t = 0; t < tiers.length; t++) {
       var servers = tiers[t];
-      for (var l = 0; l < langs.length; l++) {
-        var lang = langs[l];
-        // Every server in the tier is asked at once (the site's own player makes two calls
-        // per episode as well), so listing several mirrors costs no extra time.
-        var results = await Promise.all(servers.map(function (server) {
-          return self.tryServer(anilistId, episode, server, lang, flags, audio);
-        }));
-        var videos = [];
-        for (var r = 0; r < results.length; r++) {
-          if (results[r].video) videos.push(results[r].video);
-          else if (errors.indexOf(results[r].error) < 0) errors.push(results[r].error);
-        }
-        if (videos.length) return videos;
+      // Every server in the tier is asked at once (the site's own player makes two calls per
+      // episode as well), so each one contributing a Sub and/or Dub entry costs no extra
+      // requests - the picker ends up showing every combination the tier can offer, not just
+      // whichever server happened to answer first.
+      var results = await Promise.all(servers.map(function (server) {
+        return self.videosFromServer(anilistId, episode, server, kinds);
+      }));
+      var videos = [];
+      for (var r = 0; r < results.length; r++) {
+        if (results[r].videos) videos = videos.concat(results[r].videos);
+        else if (errors.indexOf(results[r].error) < 0) errors.push(results[r].error);
       }
+      if (videos.length) return videos;
     }
     // Throw rather than return []: the player then shows the reason with a Retry button
     // instead of a bare "video list is empty".
@@ -907,10 +912,15 @@ class DefaultExtension extends MProvider {
         key: "oneanime_pref_audio",
         listPreference: {
           title: "Preferred audio",
-          summary: "Every file carries both the Japanese and the English audio plus all subtitles, so switch tracks from the player's audio menu (or set the app's preferred audio language). Sub only / Dub only hide the episodes that lack that version. Refresh the anime after changing this.",
+          summary: "Sub and Dub both show up in the player's quality list; this only orders them (Mangayomi plays whichever is first) and, for the -only options, hides episodes missing that version. Every episode's stream carries both audio tracks and every subtitle regardless of which entry you open, so switch tracks for real from the player's own audio menu.",
           valueIndex: 0,
-          entries: ["Sub and Dub (all episodes)", "Sub only", "Dub only"],
-          entryValues: ["both", "sub", "dub"],
+          entries: [
+            "Sub then Dub (Sub plays, Dub as backup)",
+            "Dub then Sub (Dub plays, Sub as backup)",
+            "Sub only",
+            "Dub only",
+          ],
+          entryValues: ["sub_dub", "dub_sub", "sub", "dub"],
         },
       },
       {
