@@ -28,18 +28,9 @@ function tsStart(view) {
   return 0;
 }
 
-import { handleSenshi } from "./senshi-core.mjs";
-
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-
-    // Senshi (senshi.to) playlists are AES-encrypted; the decrypt/rewrite lives
-    // in senshi-core.mjs so this worker and proxy.js run identical code.
-    if (url.pathname.startsWith("/senshi/")) {
-      const out = await handleSenshi(url.pathname, url.searchParams, url.origin);
-      if (out) return new Response(out.body, { status: out.status, headers: out.headers });
-    }
 
     const targetUrl = url.searchParams.get("url");
     const referer   = url.searchParams.get("referer") || "";

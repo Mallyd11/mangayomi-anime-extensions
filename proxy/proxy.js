@@ -49,52 +49,10 @@ function upstreamGet(targetUrl, headers, cb) {
   req.end();
 }
 
-// Senshi (senshi.to) playlists are AES-encrypted; the decrypt/rewrite lives in
-// senshi-core.mjs so this proxy and worker.js run identical code. The core uses
-// the Web Crypto global, which Node only exposes unflagged from v19.
-if (!globalThis.crypto) globalThis.crypto = require("crypto").webcrypto;
-const senshiCore = import("./senshi-core.mjs");
-// A failed import must not take the whole proxy down: the other routes still work.
-senshiCore.catch((e) => console.error("Senshi routes unavailable: " + e.message));
-
-// One log line per Senshi request, so it is obvious whether the app reached the
-// proxy and what it got back. Only the path and the ids are printed — playlist
-// URLs carry CDN tokens and stay out of the log.
-function senshiLogLine(url, status, bytes, ms) {
-  const p = url.searchParams;
-  const what = url.pathname === "/senshi/master.m3u8"
-    ? "master id=" + p.get("id") + " audio=" + p.get("audio") + (p.get("maxh") ? " maxh=" + p.get("maxh") : "")
-    : url.pathname === "/senshi/media.m3u8" ? "media " + String(p.get("u") || "").replace(/^https:\/\/([^/]+)\/i\/[^/]+\/(.*?)(\?.*)?$/, "$1 /$2")
-    : "ping";
-  console.log(new Date().toLocaleTimeString() + "  " + status + "  " + what + "  (" + bytes + " B, " + ms + " ms)");
-}
-
-async function handleSenshiRequest(req, res, url) {
-  const started = Date.now();
-  try {
-    const { handleSenshi } = await senshiCore;
-    const host = req.headers.host || `localhost:${PORT}`;
-    const out = await handleSenshi(url.pathname, url.searchParams, "http://" + host);
-    if (!out) return false;
-    const len = Buffer.byteLength(out.body);
-    res.writeHead(out.status, Object.assign({ "Content-Length": len }, out.headers));
-    res.end(out.body);
-    senshiLogLine(url, out.status, len, Date.now() - started);
-    if (out.status !== 200) console.log("    " + out.body);
-  } catch (e) {
-    console.error("Senshi request failed: " + (e && e.message ? e.message : e));
-    if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain" });
-    res.end("senshi proxy error");
-  }
-  return true;
-}
-
-http.createServer(async (req, res) => {
+http.createServer((req, res) => {
   let url;
   try { url = new URL(req.url, `http://localhost:${PORT}`); }
   catch (e) { res.writeHead(400); res.end("Bad request"); return; }
-
-  if (url.pathname.startsWith("/senshi/") && await handleSenshiRequest(req, res, url)) return;
 
   const targetUrl = url.searchParams.get("url");
   const referer   = url.searchParams.get("referer") || "";
@@ -201,5 +159,5 @@ http.createServer(async (req, res) => {
     });
   });
 }).listen(PORT, "127.0.0.1", () => {
-  console.log(`HLS proxy ready on http://localhost:${PORT}  (Senshi routes: /senshi/ping, /senshi/master.m3u8)`);
+  console.log(`HLS proxy ready on http://localhost:${PORT}`);
 });
