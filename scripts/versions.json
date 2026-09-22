@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "ReAnime": {
+            "name": "ReAnime",
+            "version": "0.5.0",
+            "langs": "en",
+            "lastUpd": 1790039504.409557
+        },
         "1Anime": {
             "name": "1Anime",
             "version": "0.1.4",
@@ -37,12 +43,6 @@
             "version": "0.2.0",
             "langs": "en",
             "lastUpd": 1790038514.958918
-        },
-        "ReAnime": {
-            "name": "ReAnime",
-            "version": "0.4.0",
-            "langs": "en",
-            "lastUpd": 1790023335.403761
         },
         "MyroniX": {
             "name": "MyroniX",

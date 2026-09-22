@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -423,33 +423,25 @@ function wasmModule(bytes) {
 const PAGE_SIZE = 30;
 const EMBED_HOST = "https://flixcloud.cc";
 
-// The site's playlists hand out segment URLs on a random mix of mirror CDNs
-// (currently *.rundowncdn.top and *.atomic4cdn.top; earlier *.stronghole.site
-// and *.slopnet.site), which serve byte-identical files at the same path.  They
-// do NOT behave the same for every player:
-//   - stronghole/slopnet answered only over HTTP/2, so an HTTP/1.1-only player
-//     got a 403;
-//   - atomic4cdn fails its TLS handshake under mbedtls ("mbedtls_ssl_handshake
-//     returned -0x3e80"), which is the TLS library in the iOS player.  Every
-//     segment then fails to open, the stream "ends" at once, and the app jumps
-//     to the next episode — so on iOS nothing ever played;
-//   - rundowncdn works over HTTP/1.1 and under mbedtls (checked with the mpv
-//     0.36 / FFmpeg 6 / mbedtls stack iOS ships) as well as on desktop.
-// So the "servers" offered are the rundowncdn vaults — vault-90 to vault-95 all
-// resolve, play on both player generations and serve any video (atomic4cdn is
-// left out on purpose: it is fast, but only works off iOS).  Every segment is
-// pinned to the first server the viewer ticked; each further one is the same
-// stream on another host, so it costs no extra requests.  Download speed is not
-// what separates them (all measured 3-10 MB/s against ~0.6 MB/s needed), so the
-// default is simply the one already proven on iOS.
-const SERVERS = [
-  { id: "vault-93", host: "vault-93.rundowncdn.top", label: "Vault 93" },
-  { id: "vault-90", host: "vault-90.rundowncdn.top", label: "Vault 90" },
-  { id: "vault-91", host: "vault-91.rundowncdn.top", label: "Vault 91" },
-  { id: "vault-92", host: "vault-92.rundowncdn.top", label: "Vault 92" },
-  { id: "vault-94", host: "vault-94.rundowncdn.top", label: "Vault 94" },
-  { id: "vault-95", host: "vault-95.rundowncdn.top", label: "Vault 95" },
-];
+// The site itself offers two servers per episode, HD-1 and HD-2 (see
+// getVideoList) — but both point at the exact same video_id, just fetched
+// through a different flixcloud gateway (fetch8 vs fetch9), so they are
+// mirrors of one another rather than different encodes.  HD-1 is the default;
+// HD-2 is only resolved if the viewer ticks it on too, as a backup.
+//
+// Independently of that, the segment *files* themselves are handed out on a
+// mix of CDN mirrors (currently *.rundowncdn.top and *.atomic4cdn.top), which
+// serve byte-identical files at the same path but do NOT behave the same for
+// every player: atomic4cdn fails its TLS handshake under mbedtls
+// ("mbedtls_ssl_handshake returned -0x3e80"), which is the TLS library in the
+// iOS player — every segment then fails to open and the app jumps to the next
+// episode.  rundowncdn works everywhere tested (desktop and the iOS-equivalent
+// mpv/mbedtls stack), so every segment is pinned to one fixed rundowncdn vault
+// regardless of which mirror the playlist itself names.  This is an
+// implementation detail, not something worth exposing as a "server" — it was
+// briefly a picker of its own (v0.4.0) and just confused viewers who don't
+// recognise CDN vault names as playback quality.
+const SEGMENT_HOST = "vault-93.rundowncdn.top";
 
 // The CDN wraps a segment requested with a fake image extension: a fake header
 // (8 bytes for .png) and the MPEG-TS XORed with this fixed 16-byte key.
@@ -787,8 +779,8 @@ class DefaultExtension extends MProvider {
     const epNum = parts[1];
     if (!anilistId || !epNum) return [];
 
-    const audioPref = this.getPreference("reanime_audio_pref") || "sub";
-    const serverKey = this.enabledServers().map((sv) => sv.id).join(",");
+    const audioPref = this.getPreference("reanime_audio_pref") || "sub_dub";
+    const serverKey = this.enabledServerIds().join(",");
     const cacheKey = url + "|" + audioPref + "|" + serverKey;
     const now = Date.now();
     if (_vlCache[cacheKey] && now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
@@ -807,17 +799,29 @@ class DefaultExtension extends MProvider {
       return [];
     }
 
-    // Each server is an alternate CDN (HD-1/HD-2) for the same dual-audio video;
-    // dedupe by full embed link.
+    // The site lists each server (HD-1, HD-2) twice — once tagged dataType
+    // "sub", once "dub" — but both rows carry the identical embed link, since
+    // one embed always carries both audio tracks; dedupe by link.  Keep only
+    // the servers the viewer ticked (see enabledServerIds), unless none of
+    // them are present on this episode, in which case fall back to whatever
+    // the site did offer rather than showing nothing.
     const servers = (flix && flix.servers) || [];
-    const seen = {};
-    const embeds = [];
-    servers.forEach((s) => {
-      const link = s.dataLink || "";
-      if (!link || seen[link] || !/\/e\//.test(link)) return;
-      seen[link] = true;
-      embeds.push({ link: link, label: s.serverName || "HD" });
-    });
+    const wanted = this.enabledServerIds();
+    const dedupe = (filterToWanted) => {
+      const seen = {};
+      const out = [];
+      servers.forEach((s) => {
+        const link = s.dataLink || "";
+        const id = (s.serverName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!link || seen[link] || !/\/e\//.test(link)) return;
+        if (filterToWanted && wanted.indexOf(id) < 0) return;
+        seen[link] = true;
+        out.push({ link: link, label: s.serverName || "HD" });
+      });
+      return out;
+    };
+    let embeds = dedupe(true);
+    if (embeds.length === 0) embeds = dedupe(false);
     if (embeds.length === 0) return [];
 
     const streams = await this.getVideoListDirect(embeds, audioPref);
@@ -828,28 +832,27 @@ class DefaultExtension extends MProvider {
     return streams;
   }
 
-  // Decrypt and build the stream client-side.
+  // Decrypt and build the stream client-side.  Ticked servers are resolved
+  // side by side (only HD-1 by default, so this is normally just one chain);
+  // each becomes its own quality entry labelled the way the site itself
+  // labels it ("HD-1", "HD-2").
   async getVideoListDirect(embeds, audioPref) {
-    const streams = [];
     this._segKey = null;
-    this._primary = this.enabledServers()[0].host;
-    // HD-1 and HD-2 are alternate CDNs for the same video, and with every
-    // segment pinned to one host they give the identical stream — resolving the
-    // second costs nine more requests to produce a copy.  So HD-2 is only tried
-    // if HD-1 comes back empty.
-    for (const emb of embeds) {
-      let r = null;
+    const settled = await Promise.all(embeds.map(async (emb) => {
       try {
-        r = await this.resolveEmbed(emb.link, audioPref);
+        return { emb: emb, r: await this.resolveEmbed(emb.link, audioPref) };
       } catch (e) {
-        r = null;
+        return { emb: emb, r: null };
       }
-      if (!r || !r.variants || r.variants.length === 0) continue;
+    }));
+    const streams = [];
+    settled.forEach(({ emb, r }) => {
+      if (!r || !r.variants || r.variants.length === 0) return;
       r.variants.forEach((vrt) => {
         streams.push({
           url: vrt.url,
           originalUrl: vrt.url,
-          quality: vrt.label,
+          quality: emb.label,
           // The player fetches the segments itself, so it needs the same
           // browser-shaped header set the CDN demands (see cdnHeaders).
           headers: this.cdnHeaders,
@@ -857,8 +860,7 @@ class DefaultExtension extends MProvider {
           audios: vrt.audios || [],
         });
       });
-      break;
-    }
+    });
     return streams;
   }
 
@@ -1084,19 +1086,12 @@ class DefaultExtension extends MProvider {
     return this.decryptPlaylist(res.body, pk);
   }
 
-  // The servers the viewer has ticked, in SERVERS order (the first is what the
-  // player opens with).  Vault 93 alone by default, and if nothing valid is
-  // ticked.
-  enabledServers() {
+  // The server ids ("hd1"/"hd2") the viewer has ticked.  HD-1 alone by
+  // default, and if nothing valid is ticked.
+  enabledServerIds() {
     let picked = null;
     try { picked = this.getPreference("reanime_servers"); } catch (e) { picked = null; }
-    const on = SERVERS.filter((sv) => picked && picked.indexOf && picked.indexOf(sv.id) >= 0);
-    return on.length ? on : [SERVERS[0]];
-  }
-
-  // The same segments on another server's host.
-  swapHost(segs, host) {
-    return segs.map((sg) => ({ url: sg.url.replace(/^(https?:\/\/)[^/]+/i, "$1" + host), dur: sg.dur }));
+    return picked && picked.length ? picked : ["hd1"];
   }
 
   // Rewrite every segment/URI line to an absolute URL, and ask the CDN for the
@@ -1128,8 +1123,7 @@ class DefaultExtension extends MProvider {
     path = path.slice(0, slash + 1) + (dot > 0 ? file.slice(0, dot) : file) + ".ts";
 
     let out = path + query;
-    const host = this._primary || SERVERS[0].host;
-    return out.replace(/^(https?:\/\/)[^/]+/i, "$1" + host);
+    return out.replace(/^(https?:\/\/)[^/]+/i, "$1" + SEGMENT_HOST);
   }
 
   // The segments of a media playlist as {url, dur}, in order.
@@ -1157,22 +1151,20 @@ class DefaultExtension extends MProvider {
   }
 
   // Fetches the master playlist and, if it references separate audio/video
-  // renditions, the video playlist and each audio playlist — exactly once each.
-  // The video becomes one edl:// URL and every audio rendition another, handed
-  // to the player as external audio tracks with the preferred one first.  One
-  // stream comes back per ticked server (same segments, different host).
+  // renditions, the video playlist and each audio playlist — exactly once
+  // each (skipping the audio rendition the "sub only"/"dub only" preference
+  // rules out).  The video becomes one edl:// URL and every fetched audio
+  // rendition another, handed to the player as external audio tracks with the
+  // preferred one first.
   async buildVariants(masterUrl, pk, audioPref) {
     const masterBase = this.baseOf(masterUrl);
     const master = await this.fetchPlaylist(masterUrl, pk);
-    const servers = this.enabledServers();
-    // Segments were built on the first server's host; the others swap it.
-    const onServer = (segs, i) => (i === 0 ? segs : this.swapHost(segs, servers[i].host));
 
     // No variants → already a flat, muxed media playlist.
     if (master.indexOf("#EXT-X-STREAM-INF") < 0) {
       const flat = this.parseSegments(master, masterBase);
       if (flat.length === 0) return [];
-      return servers.map((sv, i) => ({ label: sv.label, url: this.toEdl(onServer(flat, i), "video", "") }));
+      return [{ url: this.toEdl(flat, "video", "") }];
     }
 
     // Parse audio renditions and the (single) video variant.
@@ -1199,12 +1191,23 @@ class DefaultExtension extends MProvider {
     const vCodec = this.edlCodec(codecs, "video");
     const aCodec = this.edlCodec(codecs, "audio");
 
+    // "Sub only"/"dub only" drop the other rendition before it is ever
+    // fetched — three fewer requests (playlist, key, PTS probe) and a faster
+    // start.  If that leaves nothing (the episode has no dub, say, and the
+    // viewer asked for dub only), fetch every rendition instead of handing
+    // back a silent video — the video itself carries no audio, HLS splits it
+    // into these separate renditions.
+    let wanted = audios;
+    if (audioPref === "sub") wanted = audios.filter((a) => !this.isDubTrack(a));
+    else if (audioPref === "dub") wanted = audios.filter((a) => this.isDubTrack(a));
+    if (wanted.length === 0) wanted = audios;
+
     // Each track is its own little chain — playlist, then its key, then the
     // first timestamp — and the chains do not depend on one another, so they run
     // side by side: the episode starts after the slowest chain, not after all of
     // them one by one (about 2.6 s of waiting for three tracks, measured).  A
     // failed audio track is just left out; a failed video track fails the lot.
-    const jobs = [{ uri: videoUri, video: true }].concat(audios.map((a) => ({ uri: a.uri, video: false, meta: a })));
+    const jobs = [{ uri: videoUri, video: true }].concat(wanted.map((a) => ({ uri: a.uri, video: false, meta: a })));
     const done = await Promise.all(jobs.map(async (j) => {
       try {
         const u = this.absUrl(j.uri, masterBase);
@@ -1227,22 +1230,26 @@ class DefaultExtension extends MProvider {
     const video = done[0];
     if (!video) return [];
 
-    // Put the preferred audio first: "dub" = the English rendition, "sub" =
-    // the original (everything else).  The player can still switch.
-    const wantDub = audioPref === "dub";
+    // Put the preferred audio first; the player can still switch to the rest.
+    const wantDub = audioPref === "dub" || audioPref === "dub_sub";
     const tracks = done.slice(1).filter((t) => t).map((t) => ({
       segs: t.segs,
       pts: t.pts,
       label: t.job.meta.name || t.job.meta.lang || "Audio",
-      dub: /eng/i.test(t.job.meta.lang) || /english|dub/i.test(t.job.meta.name),
+      dub: this.isDubTrack(t.job.meta),
     }));
     const ordered = tracks.filter((t) => t.dub === wantDub).concat(tracks.filter((t) => t.dub !== wantDub));
 
-    return servers.map((sv, i) => ({
-      label: sv.label,
-      url: this.toEdl(onServer(video.segs, i), "video", vCodec, video.pts),
-      audios: ordered.map((t) => ({ file: this.toEdl(onServer(t.segs, i), "audio", aCodec, t.pts), label: t.label })),
-    }));
+    return [{
+      url: this.toEdl(video.segs, "video", vCodec, video.pts),
+      audios: ordered.map((t) => ({ file: this.toEdl(t.segs, "audio", aCodec, t.pts), label: t.label })),
+    }];
+  }
+
+  // English = "dub" here: reanime's only alternate audio rendition is the
+  // English dub, everything else (invariably the Japanese original) is "sub".
+  isDubTrack(a) {
+    return /eng/i.test(a.lang) || /english|dub/i.test(a.name);
   }
 
   matchOne(str, rx) {
@@ -1256,16 +1263,30 @@ class DefaultExtension extends MProvider {
     return new RegExp('"?' + esc + '"?\\s*:\\s*"([^"]+)"');
   }
 
+  // Mangayomi auto-selects a subtitle only on the first stream, matching
+  // `subtitles.firstWhere(sub => sub.label == <app's default subtitle
+  // language>, orElse: subtitles.first)` — so whatever is index 0 plays
+  // automatically unless a label happens to equal the app's own language
+  // setting exactly.  reanime's labels are descriptive ("English (Full
+  // Subtitles [9volt])"), so that match essentially never hits and index 0
+  // always wins.  The site flags its own recommended track with
+  // `default:true`, but that entry is NOT reliably first in the array — some
+  // shows list "Signs & Songs" before the full-dialogue track — which is why
+  // the wrong (signs-only) subtitle would auto-play and the real one had to
+  // be picked by hand.  So: read the flag, and put that entry first.
   parseSubtitles(html) {
     const block = this.matchOne(html, /subtitles:\[(.*?)\](?:,[a-zA-Z0-9_"])/);
     if (!block) return [];
+    const objs = block.match(/\{[^}]*\}/g) || [];
     const subs = [];
-    const rx = /\{url:"([^"]+)",language:"([^"]+)"/g;
-    let m;
-    while ((m = rx.exec(block)) !== null) {
-      subs.push({ file: m[1], label: m[2] });
-    }
-    return subs;
+    objs.forEach((o) => {
+      const url = this.matchOne(o, /url:"([^"]+)"/);
+      const lang = this.matchOne(o, /language:"([^"]+)"/);
+      if (!url || !lang) return;
+      subs.push({ file: url, label: lang, def: /default:true/.test(o) });
+    });
+    return subs.filter((s) => s.def).concat(subs.filter((s) => !s.def))
+      .map((s) => ({ file: s.file, label: s.label }));
   }
 
   // ── Filters & preferences ──────────────────────────────────────────────────
@@ -1348,22 +1369,29 @@ class DefaultExtension extends MProvider {
         key: "reanime_servers",
         multiSelectListPreference: {
           title: "Servers",
-          summary: "Vault 93 by default. Every vault plays the same episode from a different mirror, " +
-            "so ticking more just adds backups to the quality picker (no slower to start). Tick a " +
-            "different one, or add it, if the default is slow or fails.",
-          values: ["vault-93"],
-          entries: ["Vault 93 (default)", "Vault 90", "Vault 91", "Vault 92", "Vault 94", "Vault 95"],
-          entryValues: ["vault-93", "vault-90", "vault-91", "vault-92", "vault-94", "vault-95"],
+          summary: "HD-1 by default. HD-1 and HD-2 are reanime's own two servers for an episode — mirrors " +
+            "of the same video through a different gateway, not different quality — so this only matters " +
+            "if HD-1 ever stalls or fails. Tick HD-2 too to add it as a backup in the quality picker.",
+          values: ["hd1"],
+          entries: ["HD-1 (default)", "HD-2"],
+          entryValues: ["hd1", "hd2"],
         },
       },
       {
         key: "reanime_audio_pref",
         listPreference: {
           title: "Preferred audio",
-          summary: "Default audio track when both are available. You can still switch in the player.",
+          summary: "Choose playback order. When both tracks are selected the first plays automatically; " +
+            "the second is available as a fallback in the player. \"X only\" also skips fetching the " +
+            "other track, for a faster start.",
           valueIndex: 0,
-          entries: ["Sub (original audio)", "Dub (English audio)"],
-          entryValues: ["sub", "dub"],
+          entries: [
+            "Sub then Dub (Sub plays, Dub as backup)",
+            "Dub then Sub (Dub plays, Sub as backup)",
+            "Sub only",
+            "Dub only",
+          ],
+          entryValues: ["sub_dub", "dub_sub", "sub", "dub"],
         },
       },
     ];
