@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -749,6 +749,37 @@ class DefaultExtension extends MProvider {
     }
   }
 
+  // The MKV embeds several English tracks, and the file's own "default" flag on them is not
+  // reliable - Death Note E1 flags "Signs & Songs" (translates only on-screen text, meant to
+  // accompany dub audio) as default instead of the real dialogue track sitting right next to
+  // it. Mangayomi lets an extension force a different default via Video.subtitles: if that
+  // list is non-empty, the app selects from IT at video-open time instead of trusting the
+  // file - so ranking one candidate from the API's own subtitle list (already in `data`, no
+  // extra request) and handing over just that one is enough to fix the default, while every
+  // embedded track (all languages) stays reachable from the player's own subtitle menu as
+  // always. Signs/songs-only and title-card-only tracks never win, even as a last resort -
+  // the AI-generated dub captions are a lower-priority fallback but at least are dialogue.
+  rankSubtitle(label) {
+    label = String(label || "").toLowerCase();
+    // Fansub groups abbreviate "Signs & Songs" many ways ("S&S", "SS", "Signs/Songs"...).
+    if (/\bs\s*(&|\+|and)\s*s\b|sign|song|episode name|title.?card/.test(label)) return 0;
+    if (/dubtitle|\bcc\b|closed.?caption/.test(label)) return 1;
+    if (/\bfull\b|\bdialog(ue)?\b/.test(label)) return 3;
+    return 2;
+  }
+
+  fullEnglishSubtitle(subs) {
+    var best = null, bestRank = 0;
+    for (var i = 0; i < (subs || []).length; i++) {
+      var s = subs[i];
+      var lang = String(s.lang || "").toLowerCase();
+      if (!s.url || (lang !== "eng" && lang !== "en" && lang.indexOf("english") < 0)) continue;
+      var rank = this.rankSubtitle(s.label);
+      if (rank > bestRank) { bestRank = rank; best = s; }
+    }
+    return best;
+  }
+
   // One fetch produces every kind (["Sub"], ["Dub"], or both, already ordered) offered for
   // this server, since they are the same file - fetching the API a second time for the
   // other audio label would return byte-identical bytes. The requested subOrDub value only
@@ -778,6 +809,9 @@ class DefaultExtension extends MProvider {
       var direct = results[0];
       var res = results[1] || "";
 
+      var pick = this.fullEnglishSubtitle(data.subtitles);
+      var subs = pick ? [{ file: pick.url, label: pick.label || "English" }] : [];
+
       // Mangayomi's downloader only offers a download when a video's originalUrl path ends
       // in a known video extension (.mkv is on its list), and fetches `url` - never
       // originalUrl - so this only ever affects which entries can be downloaded.
@@ -799,7 +833,7 @@ class DefaultExtension extends MProvider {
           originalUrl: (direct || dl) + tag,
           quality: server + (res ? " " + res : "") + " · " + kinds[i],
           headers: headers,
-          subtitles: [],
+          subtitles: subs,
         });
       }
       return { videos: videos };
