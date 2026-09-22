@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.3.0",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -896,7 +896,9 @@ class DefaultExtension extends MProvider {
     var animeId = idM[1], epNum = idM[2];
 
     var viaProxy = this.getPreference("senshi_pref_playback") === "proxy";
-    var proxy = viaProxy ? this.proxyBase() : "";
+    // Needed below regardless of playback mode: downloads always route through
+    // the proxy (only it can decrypt + mux), even when playback is Direct.
+    var proxy = this.proxyBase();
     // A proxy is checked alongside the lookup so a healthy one costs no extra time.
     var pair = await Promise.all([
       viaProxy ? this.checkProxy(proxy) : Promise.resolve(),
@@ -953,15 +955,39 @@ class DefaultExtension extends MProvider {
       videos = await this.directVideos(jobs, infoOf, animeId, epNum);
     }
 
+    // Mangayomi's own HLS downloader has no support for HLS's detached-audio
+    // #EXT-X-MEDIA track (how every playback entry above delivers audio here),
+    // so handed any of them it would silently save picture with no sound. This
+    // is a separate, dedicated route that muxes video+audio into ordinary
+    // single-stream segments the downloader can actually handle. Always added,
+    // regardless of Playback method: playback stays on the entries above
+    // (direct by default, needing no proxy), downloads need the proxy running
+    // only at the moment a download is started, same as Via proxy playback.
+    jobs.forEach(function (j) {
+      var kind = j.dub ? "Dub" : "Sub";
+      var dl = proxy + "/senshi/dl/" + j.rid + "/" + (j.dub ? "en" : "ja") + ".m3u8";
+      videos.push({
+        url: dl,
+        originalUrl: dl,
+        quality: kind + " 1080p (Download)",
+        headers: headers,
+        subtitles: [],
+        _dub: j.dub,
+        _download: true,
+      });
+    });
+
     // Mangayomi plays the first entry and takes auto-play subtitles from it, so
     // the preferred audio has to lead. Order inside each group is already best
-    // quality first, and this sort is stable.
+    // quality first, and this sort is stable. Download entries never lead,
+    // regardless of audio preference: they need the proxy, the others don't.
     var wantDub = this.getPreference("senshi_pref_type") === "dub";
     videos.sort(function (a, b) {
+      if (a._download !== b._download) return a._download ? 1 : -1;
       if (a._dub !== b._dub) return (a._dub === wantDub) ? -1 : 1;
       return 0;
     });
-    videos.forEach(function (v) { delete v._dub; });
+    videos.forEach(function (v) { delete v._dub; delete v._download; });
     return videos;
   }
 
@@ -1041,7 +1067,7 @@ class DefaultExtension extends MProvider {
         key: "senshi_pref_proxy_url",
         editTextPreference: {
           title: "Playlist proxy address",
-          summary: "Only used when Playback method is Via proxy",
+          summary: "Used when Playback method is Via proxy, and always for downloads (run proxy/proxy.js first)",
           value: DEFAULT_PROXY,
           dialogTitle: "Proxy address",
           dialogMessage: "Use http://127.0.0.1:8765 when running proxy.js on this PC, or your worker's https URL.",

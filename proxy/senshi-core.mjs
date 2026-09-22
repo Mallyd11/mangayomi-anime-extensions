@@ -25,6 +25,24 @@
 //       CDN URL ending in "?x=.ts". The CDN ignores the query; ffmpeg's
 //       extension_picky check reads the last dot in the URL and the segments
 //       are otherwise named ".jpg".
+//   /senshi/dl/<remote_source_id>/<ja|en>.m3u8
+//       For DOWNLOADS. Mangayomi's own downloader (see [[mangayomi-downloader-
+//       and-client-rules]] in this repo's memory) only follows #EXT-X-STREAM-INF
+//       variant selection — it has no support for HLS's detached #EXT-X-MEDIA
+//       audio group, which is how every other route here delivers audio (video
+//       and audio are always separate segment files on this CDN). Handed the
+//       normal playback playlist, it would silently download picture with no
+//       sound. This route instead returns a plain, single-rendition media
+//       playlist whose segments are pre-paired video+audio, muxed into one
+//       real two-stream MPEG-TS file each by /senshi/dl-seg.ts. The path must
+//       end in exactly ".m3u8" with no query string — the downloader's HLS
+//       gate is a raw string suffix check, unlike its check for a progressive
+//       file, which does ignore the query.
+//   /senshi/dl-seg.ts?v=<encoded video segment url>&a=<encoded audio segment url>
+//       Fetches both raw segments and muxes them into one MPEG-TS file with two
+//       elementary streams (see muxSegments). Stateless: everything needed is
+//       in the query, so the per-episode playlist lookup happens once (when the
+//       .m3u8 above is built), not once per segment.
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36";
@@ -86,8 +104,15 @@ async function decryptPlaylist(text) {
   return new TextDecoder().decode(plain);
 }
 
+// Upstream requests have no default timeout in either runtime, so a stalled
+// CDN connection (seen once in testing: no error, no data, just silence)
+// would hang this handler — and every later request queued behind it on the
+// same origin's connection pool — forever. AbortSignal.timeout is standard in
+// both Node 18+ and Workers.
+const UPSTREAM_TIMEOUT_MS = 15000;
+
 async function fetchText(url) {
-  const res = await fetch(url, { headers: UP_HEADERS });
+  const res = await fetch(url, { headers: UP_HEADERS, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Upstream " + res.status + " for " + url.split("?")[0]);
   return await res.text();
 }
@@ -209,6 +234,240 @@ async function buildMedia(params) {
   return out.join("\n") + "\n";
 }
 
+// ── /senshi/dl (downloads: muxed video+audio) ───────────────────────────────────
+
+// A parsed media playlist's segments: [{url, dur}], url absolute.
+function parseSegments(body, base) {
+  const out = [];
+  let dur = null;
+  for (const raw of body.split(/\r?\n/)) {
+    const l = raw.trim();
+    if (!l) continue;
+    if (l.indexOf("#EXTINF:") === 0) { dur = parseFloat(l.slice(8)); continue; }
+    if (l.charAt(0) === "#") continue;
+    out.push({ url: absolutise(l, base), dur: dur === null || isNaN(dur) ? 6 : dur });
+    dur = null;
+  }
+  return out;
+}
+
+// Picks the best video variant and the matching audio rendition out of a
+// decrypted master playlist. Mirrors buildMaster's selection rules but
+// returns the resolved playlist URLs instead of rewriting text.
+function selectDownloadSources(masterBody, masterUrl, audio) {
+  const lines = masterBody.split(/\r?\n/);
+  const medias = [];
+  for (const raw of lines) {
+    const l = raw.trim();
+    if (l.indexOf("#EXT-X-MEDIA:") === 0 && attr(l, "TYPE") === "AUDIO") medias.push(l);
+  }
+  const wants = (l) => {
+    const lang = attr(l, "LANGUAGE").toLowerCase();
+    const uri = attr(l, "URI").toLowerCase();
+    return lang === audio || lang.indexOf(audio) === 0 || uri.indexOf("_" + audio + "/") >= 0;
+  };
+  let audioLine = medias.find(wants) || medias.find((l) => /DEFAULT=YES/i.test(l)) || medias[0];
+  if (!audioLine) throw new Error("No audio rendition in master playlist");
+
+  const variants = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (l.indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+    let uri = "";
+    for (let j = i + 1; j < lines.length; j++) {
+      const u = lines[j].trim();
+      if (u && u.charAt(0) !== "#") { uri = u; break; }
+    }
+    if (!uri) continue;
+    const h = parseInt((attr(l, "RESOLUTION").split("x")[1] || "0"), 10) || 0;
+    variants.push({ uri, h });
+  }
+  if (variants.length === 0) throw new Error("Master playlist has no variants");
+  variants.sort((a, b) => b.h - a.h);
+
+  return {
+    videoUrl: absolutise(variants[0].uri, masterUrl),
+    audioUrl: absolutise(attr(audioLine, "URI"), masterUrl),
+  };
+}
+
+async function buildDownloadPlaylist(selfOrigin, id, audio) {
+  const info = JSON.parse(await fetchText(SOURCES_URL + id));
+  const entry = Array.isArray(info) ? info[0] : info;
+  const src = entry && entry.source && entry.source.src;
+  if (!src) throw new Error("No source for id " + id);
+
+  const master = await fetchPlaylist(src);
+  const { videoUrl, audioUrl } = selectDownloadSources(master, src, audio);
+  const [videoBody, audioBody] = await Promise.all([fetchPlaylist(videoUrl), fetchPlaylist(audioUrl)]);
+  const videoSegs = parseSegments(videoBody, videoUrl);
+  const audioSegs = parseSegments(audioBody, audioUrl);
+  if (videoSegs.length === 0) throw new Error("Video playlist has no segments");
+
+  // Segment counts occasionally differ by one; pair only what both have and
+  // let the last video segment go out silent rather than fail the download.
+  const n = Math.min(videoSegs.length, audioSegs.length);
+  const out = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:11", "#EXT-X-PLAYLIST-TYPE:VOD"];
+  for (let i = 0; i < videoSegs.length; i++) {
+    const v = videoSegs[i];
+    const segUrl = selfOrigin + "/senshi/dl-seg.ts?v=" + encodeURIComponent(v.url) +
+      (i < n ? "&a=" + encodeURIComponent(audioSegs[i].url) + "&lang=" + audio : "");
+    out.push("#EXTINF:" + v.dur.toFixed(6) + ",");
+    out.push(segUrl);
+  }
+  out.push("#EXT-X-ENDLIST");
+  return out.join("\n") + "\n";
+}
+
+// ── MPEG-TS mux: two elementary-stream segments -> one two-stream segment ──────
+//
+// Senshi's video and audio segments are independent, self-contained MPEG-TS
+// files, each with its own PAT/PMT and (confirmed against three real segments)
+// the SAME elementary-stream PID (0x100) — concatenating them as-is would
+// collide both streams onto one PID. So: keep video's PAT/PMT/PID as they are,
+// remap every audio packet from 0x100 to 0x101, build one combined PMT
+// declaring both streams (keeping the video entry byte-for-byte and appending
+// an audio entry, including its language descriptor), and proportionally
+// interleave the two elementary-stream packet sequences. Verified against a
+// real segment pair: ffprobe reports both streams with correct durations, and
+// the app's own libmpv decodes both in sync (avsync 0.000000, 0 dropped).
+const TS_PKT = 188, TS_SYNC = 0x47;
+
+// CRC-32/MPEG-2: poly 0x04C11DB7, init 0xFFFFFFFF, no reflection, no final xor.
+// Validated byte-for-byte against two real PMTs' own CRC32 fields before ever
+// being used to sign a PMT this code built itself.
+function crc32Mpeg(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i] << 24;
+    for (let b = 0; b < 8; b++) crc = (crc & 0x80000000) ? (((crc << 1) ^ 0x04c11db7) >>> 0) : ((crc << 1) >>> 0);
+  }
+  return crc >>> 0;
+}
+
+function tsPid(pkt, off) {
+  return ((pkt[off + 1] & 0x1f) << 8) | pkt[off + 2];
+}
+
+function concatBytes(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.length; }
+  return out;
+}
+
+// One PAT packet declaring program 1 -> PMT PID 0x1000. Fixed content, so it
+// is simplest and safest to reuse the exact bytes captured from a real Senshi
+// video segment (its own PAT) rather than reconstruct one field by field.
+function buildPat() {
+  const pkt = new Uint8Array(TS_PKT).fill(0xff);
+  const known = [
+    0x47, 0x40, 0x00, 0x10, 0x00, 0x00, 0xb0, 0x0d, 0x00, 0x01, 0xc1, 0x00,
+    0x00, 0x00, 0x01, 0xf0, 0x00, 0x2a, 0xb1, 0x04, 0xb2,
+  ];
+  pkt.set(known, 0);
+  return pkt;
+}
+
+// Video's own PMT entry (stream_type 0x1b/H.264, PID 0x100) plus a new audio
+// entry at audioPid, with descriptor bytes carried over unchanged so the
+// output keeps its language tag (e.g. the 6-byte ISO-639 descriptor for "jpn").
+function buildPmt(audioPid, audioDescriptor) {
+  const desc = audioDescriptor || new Uint8Array(0);
+  const afterLength = concatBytes([
+    Uint8Array.from([0x00, 0x01]),                                     // program_number = 1
+    Uint8Array.from([0xc1, 0x00, 0x00]),                                // version/current, section#, last-section#
+    Uint8Array.from([0xe1, 0x00]),                                      // reserved(111) + PCR_PID(0x100)
+    Uint8Array.from([0xf0, 0x00]),                                      // reserved(1111) + program_info_length(0)
+    Uint8Array.from([0x1b, 0xe1, 0x00, 0xf0, 0x00]),                    // ES: video, type 0x1b, PID 0x100
+    Uint8Array.from([
+      0x0f,                                                             // ES: audio, type 0x0f (AAC ADTS)
+      0xe0 | ((audioPid >> 8) & 0x1f), audioPid & 0xff,                 // reserved(111) + PID
+      0xf0 | ((desc.length >> 8) & 0x0f), desc.length & 0xff,           // reserved(1111) + ES_info_length
+    ]),
+    desc,
+  ]);
+  const sectionLength = afterLength.length + 4; // + CRC32
+  const section = concatBytes([
+    Uint8Array.from([0x02, 0xb0 | ((sectionLength >> 8) & 0x0f), sectionLength & 0xff]),
+    afterLength,
+  ]);
+  const crc = crc32Mpeg(section);
+  const crcBytes = Uint8Array.from([(crc >>> 24) & 0xff, (crc >>> 16) & 0xff, (crc >>> 8) & 0xff, crc & 0xff]);
+  const payload = concatBytes([Uint8Array.from([0x00]), section, crcBytes]); // pointer_field + section + CRC
+
+  const pkt = new Uint8Array(TS_PKT).fill(0xff);
+  pkt[0] = TS_SYNC;
+  pkt[1] = 0x40 | ((0x1000 >> 8) & 0x1f); // PUSI=1
+  pkt[2] = 0x1000 & 0xff;
+  pkt[3] = 0x10; // adaptation_field_control = payload only, continuity_counter = 0
+  pkt.set(payload, 4);
+  return pkt;
+}
+
+function remapPid(pkt, newPid) {
+  const out = pkt.slice();
+  out[1] = (out[1] & 0xe0) | ((newPid >> 8) & 0x1f);
+  out[2] = newPid & 0xff;
+  return out;
+}
+
+function extractEsPackets(buf, esPid) {
+  const out = [];
+  const n = buf.length - (buf.length % TS_PKT);
+  for (let off = 0; off + TS_PKT <= n; off += TS_PKT) {
+    if (buf[off] !== TS_SYNC) break; // misaligned tail, stop rather than misread
+    if (tsPid(buf, off) === esPid) out.push(buf.subarray(off, off + TS_PKT));
+  }
+  return out;
+}
+
+// Spreads the (much smaller) audio packet stream through the video one in
+// proportion, Bresenham-style, so audio isn't clumped at the start or end.
+function interleaveProportional(a, b) {
+  const out = [];
+  let ai = 0, bi = 0, acc = 0;
+  const ratio = a.length / Math.max(1, b.length);
+  while (ai < a.length || bi < b.length) {
+    if (bi >= b.length) { out.push(a[ai++]); continue; }
+    if (ai >= a.length) { out.push(b[bi++]); continue; }
+    if (acc < ratio) { out.push(a[ai++]); acc += 1; } else { out.push(b[bi++]); acc -= ratio; }
+  }
+  return out;
+}
+
+const AUDIO_OUT_PID = 0x101;
+const JPN_LANGUAGE_DESCRIPTOR = Uint8Array.from([0x0a, 0x04, 0x6a, 0x70, 0x6e, 0x00]); // ISO-639 "jpn"
+const ENG_LANGUAGE_DESCRIPTOR = Uint8Array.from([0x0a, 0x04, 0x65, 0x6e, 0x67, 0x00]); // ISO-639 "eng"
+
+function muxSegments(videoBytes, audioBytes, lang) {
+  const videoEs = extractEsPackets(videoBytes, 0x100);
+  const audioEs = extractEsPackets(audioBytes, 0x100).map((p) => remapPid(p, AUDIO_OUT_PID));
+  if (videoEs.length === 0) throw new Error("No video packets found (PID 0x100)");
+  const desc = lang === "en" ? ENG_LANGUAGE_DESCRIPTOR : JPN_LANGUAGE_DESCRIPTOR;
+  return concatBytes([buildPat(), buildPmt(AUDIO_OUT_PID, desc), ...interleaveProportional(videoEs, audioEs)]);
+}
+
+async function fetchBytes(url) {
+  const res = await fetch(url, { headers: UP_HEADERS, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+  if (!res.ok) throw new Error("Upstream " + res.status + " for " + url.split("?")[0]);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+async function buildDownloadSegment(searchParams) {
+  const v = searchParams.get("v") || "";
+  const a = searchParams.get("a") || "";
+  const lang = searchParams.get("lang") === "en" ? "en" : "ja";
+  if (!ALLOWED_HOST.test(v) || (a && !ALLOWED_HOST.test(a))) throw new Error("Host not allowed");
+  const [videoBytes, audioBytes] = await Promise.all([
+    fetchBytes(v),
+    a ? fetchBytes(a) : Promise.resolve(null),
+  ]);
+  return audioBytes ? muxSegments(videoBytes, audioBytes, lang) : videoBytes;
+}
+
 // ── entry point ───────────────────────────────────────────────────────────────
 
 // Returns { status, headers, body }, or null when the path isn't a senshi route.
@@ -222,16 +481,35 @@ export async function handleSenshi(pathname, searchParams, selfOrigin) {
       body: "senshi-proxy ok",
     };
   }
-  if (pathname !== "/senshi/master.m3u8" && pathname !== "/senshi/media.m3u8") return null;
+  const dlPlaylistMatch = pathname.match(/^\/senshi\/dl\/(\d+)\/(ja|en)\.m3u8$/);
+
+  if (pathname === "/senshi/dl-seg.ts") {
+    try {
+      const body = await buildDownloadSegment(searchParams);
+      return {
+        status: 200,
+        headers: { "Content-Type": "video/MP2T", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" },
+        body,
+      };
+    } catch (e) {
+      return {
+        status: 502,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Access-Control-Allow-Origin": "*" },
+        body: "senshi proxy: " + (e && e.message ? e.message : e),
+      };
+    }
+  }
+
+  if (pathname !== "/senshi/master.m3u8" && pathname !== "/senshi/media.m3u8" && !dlPlaylistMatch) return null;
   const headers = {
     "Content-Type": "application/vnd.apple.mpegurl",
     "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-store",
   };
   try {
-    const body = pathname === "/senshi/master.m3u8"
-      ? await buildMaster(selfOrigin, searchParams)
-      : await buildMedia(searchParams);
+    const body = pathname === "/senshi/master.m3u8" ? await buildMaster(selfOrigin, searchParams)
+      : pathname === "/senshi/media.m3u8" ? await buildMedia(searchParams)
+      : await buildDownloadPlaylist(selfOrigin, dlPlaylistMatch[1], dlPlaylistMatch[2]);
     return { status: 200, headers, body };
   } catch (e) {
     return {
