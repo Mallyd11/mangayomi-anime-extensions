@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.2.1",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -861,11 +861,17 @@ class DefaultExtension extends MProvider {
           ]);
           var subs = await subsP;
           var label = (j.dub ? "Dub" : "Sub") + " " + best.h + "p";
+          var edl = self.buildEdl(fetched[1], fetched[0], best);
           return [{
-            url: self.buildEdl(fetched[1], fetched[0], best),
-            // Not downloadable (an edl:// cannot be fetched), so this only has to be
-            // a unique, valid URL: the app de-duplicates on it.
-            originalUrl: self.source.baseUrl + "/watch/" + animeId + "/" + epNum + "#" + encodeURIComponent(label),
+            url: edl,
+            // MUST be the same playable edl:// as url, not a placeholder: the
+            // app opens originalUrl (not url) for the very first video on a
+            // freshly created player screen, so a non-playable placeholder here
+            // hangs the first-ever open of every episode (confirmed the exact
+            // way 1Anime's "first open buffers" bug worked, its real cause).
+            // A plain edl:// has no recognized file extension, so the
+            // downloader still correctly reports it as not downloadable.
+            originalUrl: edl,
             quality: label,
             headers: headers,
             subtitles: subs,
