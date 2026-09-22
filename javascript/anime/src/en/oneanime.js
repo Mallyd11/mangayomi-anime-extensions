@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -735,6 +735,20 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
+  // The master m3u8 carries the real resolution. Not safe to assume - almost everything on
+  // this backend is 1080p, but an obscure 2004 title (id 634) serves 712x478, so this is
+  // read live rather than hardcoded. The URL is already in hand from fetchStream, so this
+  // only costs a fetch of the playlist text itself, not another call to the site's API.
+  async resolution(masterUrl, headers) {
+    try {
+      var res = await this.client.get(masterUrl, headers);
+      var m = (res.body || "").match(/RESOLUTION=\d+x(\d+)/);
+      return m ? m[1] + "p" : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
   // One fetch produces every kind (["Sub"], ["Dub"], or both, already ordered) offered for
   // this server, since they are the same file - fetching the API a second time for the
   // other audio label would return byte-identical bytes. The requested subOrDub value only
@@ -757,7 +771,12 @@ class DefaultExtension extends MProvider {
       // it is what plays and what a queued or retried download uses. It is dead 15 minutes
       // after this direct file link is issued (404, mid-file ranges included) - reopen the
       // episode if a very long session outlives that.
-      var direct = await this.resolveDirectUrl(dl, headers);
+      var master = data.sources && data.sources[0] && data.sources[0].url;
+      var jobs = [this.resolveDirectUrl(dl, headers)];
+      if (master) jobs.push(this.resolution(master, headers));
+      var results = await Promise.all(jobs);
+      var direct = results[0];
+      var res = results[1] || "";
 
       // Mangayomi's downloader only offers a download when a video's originalUrl path ends
       // in a known video extension (.mkv is on its list), and fetches `url` - never
@@ -778,7 +797,7 @@ class DefaultExtension extends MProvider {
         videos.push({
           url: dl + tag,
           originalUrl: (direct || dl) + tag,
-          quality: server + " · " + kinds[i],
+          quality: server + (res ? " " + res : "") + " · " + kinds[i],
           headers: headers,
           subtitles: [],
         });
