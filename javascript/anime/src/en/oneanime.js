@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -699,13 +699,38 @@ class DefaultExtension extends MProvider {
     return dub ? "ENG audio" : "JPN audio";
   }
 
-  // https://host/download/<id>?token=... -> https://host/download/<id>.mkv?token=...
-  mkvAlias(url) {
-    var q = url.indexOf("?");
-    return q < 0 ? url + ".mkv" : url.slice(0, q) + ".mkv" + url.slice(q);
+  headerValue(headers, name) {
+    if (!headers) return "";
+    var want = name.toLowerCase();
+    for (var k in headers) {
+      if (String(k).toLowerCase() === want) return String(headers[k] || "");
+    }
+    return "";
   }
 
-  videoFrom(data, server, flags, audio) {
+  // The tokenised link's path carries no extension, and the token is bound to that exact
+  // path - appending anything to it, even before the query string, answers 400 Bad Request.
+  // Confirmed the hard way: the app opens a video's originalUrl (not url) the very first
+  // time a fresh player screen appears, before any server switch is possible - on Windows a
+  // 400 there left the player stuck on its buffering spinner forever (mpv had already given
+  // up, with nothing queued to retry). v0.1.3 papered over the downloader's extension check
+  // with a ".mkv" alias of that same broken path; this resolves the *real* file the link
+  // redirects to instead, which already ends in a genuine ".mkv" on its own and is always
+  // safe to open directly, whichever field it ends up in.
+  async resolveDirectUrl(downloadUrl, headers) {
+    try {
+      var c = new Client({ "useDartHttpClient": true, "followRedirects": false });
+      var h = {};
+      for (var k in headers) h[k] = headers[k];
+      h["Range"] = "bytes=0-0";
+      var res = await c.get(downloadUrl, h);
+      var loc = this.headerValue(res.headers, "location");
+      if (res.statusCode >= 300 && res.statusCode < 400 && /^https?:\/\//.test(loc)) return loc;
+    } catch (e) {}
+    return null;
+  }
+
+  async videoFrom(data, server, flags, audio) {
     var dl = data.download && data.download[0] && data.download[0].url;
     if (!dl) return null;
 
@@ -716,17 +741,18 @@ class DefaultExtension extends MProvider {
     var given = data.headers || {};
     for (var k in given) headers[k] = given[k];
 
-    // The link answers 302 -> a signed dl.spacedl.top/.../<hash>.mkv URL that is dead 15
-    // minutes after it is issued (404, mid-file ranges included). Handing over the redirecting
-    // link keeps it valid: the CDN re-signs it on every request, so queued and retried
-    // downloads still work.
-    // Mangayomi's downloader only offers a download when a video's originalUrl path ends in a
-    // known video extension (.mkv is on its list) and takes the FIRST entry that does. It then
-    // fetches `url`; originalUrl is never requested, so the extension-less link carries an
-    // ".mkv" alias there purely to pass the check.
+    // The tokenised link is good for 6 hours and the CDN re-signs it on every request, so it
+    // is what plays and what a queued or retried download uses. It is dead 15 minutes after
+    // this direct file link is issued (404, mid-file ranges included) - reopen the episode if
+    // a very long session outlives that.
+    var direct = await this.resolveDirectUrl(dl, headers);
+
+    // Mangayomi's downloader only offers a download when a video's originalUrl path ends in
+    // a known video extension (.mkv is on its list), and fetches `url` - never originalUrl -
+    // so this only ever affects which entries can be downloaded, not what plays.
     return {
       url: dl,
-      originalUrl: this.mkvAlias(dl),
+      originalUrl: direct || dl,
       quality: server + " · MKV · " + this.audioLabel(flags, audio),
       headers: headers,
       subtitles: [],
@@ -736,7 +762,7 @@ class DefaultExtension extends MProvider {
   async tryServer(anilistId, episode, server, lang, flags, audio) {
     try {
       var data = await this.fetchStream(anilistId, episode, server, lang);
-      var video = this.videoFrom(data, server, flags, audio);
+      var video = await this.videoFrom(data, server, flags, audio);
       return video ? { video: video } : { error: server + ": no download link" };
     } catch (e) {
       return { error: server + ": " + (e && e.message ? e.message : String(e)) };
