@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -1269,11 +1269,18 @@ class DefaultExtension extends MProvider {
   // automatically unless a label happens to equal the app's own language
   // setting exactly.  reanime's labels are descriptive ("English (Full
   // Subtitles [9volt])"), so that match essentially never hits and index 0
-  // always wins.  The site flags its own recommended track with
-  // `default:true`, but that entry is NOT reliably first in the array — some
-  // shows list "Signs & Songs" before the full-dialogue track — which is why
-  // the wrong (signs-only) subtitle would auto-play and the real one had to
-  // be picked by hand.  So: read the flag, and put that entry first.
+  // always wins.  Put the best full-English-dialogue track first.
+  //
+  // The site flags its own recommended track with `default:true`, and that
+  // is usually the right call — but not always: anilist 21 ep15 flags
+  // "Episode Name (Restyled By Simmsy)" as default, which is only the
+  // title-card text, while a real "Full Subtitles (Restyled By Simmsy)" sits
+  // right next to it unflagged. So `default:true` is trusted UNLESS it points
+  // at something identifiably not full dialogue (signs-only, a title card),
+  // in which case a label containing "full" wins instead, then any other
+  // plain English track, then the AI-generated "Dubtitle" (timed to the dub,
+  // lower quality but still full dialogue), then signs-only/title-card/other
+  // languages last.  Verified against 14 episodes across 6 shows + a movie.
   parseSubtitles(html) {
     const block = this.matchOne(html, /subtitles:\[(.*?)\](?:,[a-zA-Z0-9_"])/);
     if (!block) return [];
@@ -1285,8 +1292,25 @@ class DefaultExtension extends MProvider {
       if (!url || !lang) return;
       subs.push({ file: url, label: lang, def: /default:true/.test(o) });
     });
-    return subs.filter((s) => s.def).concat(subs.filter((s) => !s.def))
-      .map((s) => ({ file: s.file, label: s.label }));
+    subs.sort((a, b) => {
+      const ra = this.subtitleRank(a.label, a.def), rb = this.subtitleRank(b.label, b.def);
+      if (ra !== rb) return ra - rb;
+      return (b.def ? 1 : 0) - (a.def ? 1 : 0);
+    });
+    return subs.map((s) => ({ file: s.file, label: s.label }));
+  }
+
+  // Lower is more preferred — see parseSubtitles.
+  subtitleRank(label, isDefault) {
+    const l = (label || "").toLowerCase();
+    const english = /^english\b/.test(l);
+    const titleCardOrSignsOnly = /\bsigns?\b/.test(l) || /episode\s*name/.test(l);
+    const aiDubtitle = /dubtitle/.test(l) || /\(ai\)/.test(l);
+    if (english && /\bfull\b/.test(l)) return 0;
+    if (english && isDefault && !titleCardOrSignsOnly) return 1;
+    if (english && !titleCardOrSignsOnly && !aiDubtitle) return 2;
+    if (english && aiDubtitle) return 3;
+    return 4;
   }
 
   // ── Filters & preferences ──────────────────────────────────────────────────
