@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "Senshi": {
+            "name": "Senshi",
+            "version": "0.2.0",
+            "langs": "en",
+            "lastUpd": 1790038514.958918
+        },
         "ReAnime": {
             "name": "ReAnime",
             "version": "0.4.0",
@@ -37,12 +43,6 @@
             "version": "0.1.3",
             "langs": "en",
             "lastUpd": 1790022644.604735
-        },
-        "Senshi": {
-            "name": "Senshi",
-            "version": "0.1.3",
-            "langs": "en",
-            "lastUpd": 1790006776.924572
         },
         "MyroniX": {
             "name": "MyroniX",
