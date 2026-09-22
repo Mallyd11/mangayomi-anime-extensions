@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.20",
+    "version": "0.4.21",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -352,23 +352,6 @@ class DefaultExtension extends MProvider {
     return out;
   }
 
-  _b64enc(str) {
-    var t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var out = "", i = 0, n = str.length;
-    while (i < n) {
-      var a = str.charCodeAt(i++);
-      out += t[a >> 2];
-      if (i === n) { out += t[(a & 3) << 4] + "=="; break; }
-      var b = str.charCodeAt(i++);
-      out += t[((a & 3) << 4) | (b >> 4)];
-      if (i === n) { out += t[(b & 15) << 2] + "="; break; }
-      var c = str.charCodeAt(i++);
-      out += t[((b & 15) << 2) | (c >> 6)];
-      out += t[c & 63];
-    }
-    return out;
-  }
-
   // ---------------------------------------------------------------- crypto
   //
   // Mangayomi's QuickJS runtime has no WebCrypto and no Node crypto, so the two
@@ -638,28 +621,6 @@ class DefaultExtension extends MProvider {
     return url + (url.indexOf("?") >= 0 ? "&" : "?") + "token=" + token;
   }
 
-  // Rewrite a media playlist so every segment carries #EXT-X-BYTERANGE:N@70,
-  // telling ExoPlayer to send Range: bytes=70- and skip the 70-byte PNG wrapper
-  // that nekostream CDN prepends to every MPEG-TS segment. Returns a data URI.
-  _rewriteWithByterange(body) {
-    var lines = String(body).split("\n");
-    var out = [];
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      var trimmed = line.trim();
-      // #EXT-X-BYTERANGE requires HLS version 4+; bump if the playlist declares 3 or lower.
-      if (trimmed.match(/^#EXT-X-VERSION:[1-3]$/)) {
-        out.push("#EXT-X-VERSION:4");
-        continue;
-      }
-      if (trimmed && trimmed.charAt(0) !== "#") {
-        out.push("#EXT-X-BYTERANGE:99999999@70");
-      }
-      out.push(line);
-    }
-    return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
-  }
-
   // Base URL of the unwrapping proxy, or "" when it is switched off.
   //
   // The URL is pre-filled so turning this on is a single toggle — nobody has to
@@ -680,11 +641,13 @@ class DefaultExtension extends MProvider {
 
   // Emit one server's playlists into `streams`.
   //
-  // When the playlists come from a PNG-wrapping CDN and the viewer has the proxy
-  // switched on, an "⟨unwrapped⟩" entry is emitted ahead of each direct one: on
-  // Windows/Android that is the only thing that plays. The direct entries stay
-  // as fallback so iOS — where the raw stream is fine — still has them, and so
-  // the source degrades to plain behaviour when the proxy is not running.
+  // When a playlist needs a body-level fix (PNG-wrapped segments or ad
+  // injection — see _playlistNeedsFix/_markWrapped) and the viewer has the
+  // proxy switched on, a "⟨fixed⟩" entry is emitted ahead of each direct one:
+  // on Windows/Android that is the only thing that plays, since libmpv cannot
+  // open a corrected body any other way. The direct entries stay as fallback
+  // for platforms where the raw stream might already be fine, and so the
+  // source degrades to plain behaviour when the proxy is not running.
   _emitStreams(streams, playlists, m3u8, audioLabel, hdrs, subtitles, proxyReferer) {
     var proxy = playlists.wrapped ? this.proxyBase() : "";
     for (var p = 0; proxy && p < playlists.length; p++) {
@@ -693,7 +656,7 @@ class DefaultExtension extends MProvider {
         url: proxy + "/m3u8?url=" + encodeURIComponent(pl.url) +
              "&referer=" + encodeURIComponent(proxyReferer),
         originalUrl: pl.url,
-        quality: (pl.label ? pl.label + " - " : "") + audioLabel + " ⟨unwrapped⟩",
+        quality: (pl.label ? pl.label + " - " : "") + audioLabel + " ⟨fixed⟩",
         // The proxy attaches the upstream Referer itself; forwarding ours would
         // make Mangayomi send it to the proxy instead.
         headers: { "User-Agent": this.ua },
@@ -1034,125 +997,64 @@ class DefaultExtension extends MProvider {
     return (foreignSec / total) > 0.5;
   }
 
-  // Extensions ffmpeg's HLS demuxer will open a segment under. Anything else is
-  // refused before a byte is read ("is not in allowed_extensions"), and the
-  // stricter extension_picky pass then wants the extension to match the detected
-  // format. Neither option is reachable from a Mangayomi extension, but both
-  // read the extension with strrchr('.') across the whole URL — query included.
-  get PLAYER_SAFE_SEGMENT_EXTS() {
-    return ["ts", "m2ts", "mts", "m4s", "mp4", "m4v", "m4a", "aac", "ac3", "eac3",
-            "mp3", "mpg", "mpeg", "mov", "vob", "wav", "flac", "ogg", "oga", "ogv",
-            "mkv", "avi", "3gp", "m3u8"];
-  }
-
-  _segmentExt(uri) {
-    var path = String(uri).split("#")[0].split("?")[0];
-    var last = path.split("/").pop();
-    var dot = last.lastIndexOf(".");
-    return dot > 0 ? last.substring(dot + 1).toLowerCase() : "";
-  }
-
-  // True when any segment in this media playlist carries an extension the player
-  // will refuse. MegaPlay rotates them per segment (.jpg, .html, .webp, .ico), so
-  // the whole list is checked rather than just the first entry.
-  _playlistNeedsExtFix(body) {
-    var safe = this.PLAYER_SAFE_SEGMENT_EXTS;
-    var lines = String(body).split("\n");
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (!line || line.charAt(0) === "#") continue;
-      var ext = this._segmentExt(line);
-      var ok = false;
-      for (var j = 0; j < safe.length; j++) if (ext === safe[j]) { ok = true; break; }
-      if (!ok) return true;
-    }
-    return false;
-  }
-
-  // Minimal absolutiser. Inlining a playlist throws away its base URL, so any
-  // relative URI in it has to be resolved first. No "../" handling — none of
-  // these CDNs emit it, and a wrong guess there is worse than leaving it alone.
-  _absUrl(ref, base) {
-    if (/^[a-z][a-z0-9+.-]*:/i.test(ref)) return ref;
-    var m = String(base).match(/^(https?:\/\/[^/]+)(\/[^?#]*)?/i);
-    if (!m) return ref;
-    if (ref.charAt(0) === "/") return m[1] + ref;
-    var dir = m[2] || "/";
-    return m[1] + dir.substring(0, dir.lastIndexOf("/") + 1) + ref;
-  }
-
-  // Hand the player the playlist body itself, with a dummy query that makes every
-  // segment URL end in ".ts".
+  // Whether a fetched playlist body needs help the extension itself cannot
+  // provide — currently just ad-injection (real bytes, wrong segments mixed
+  // in). This is a body problem, not a URL problem: libmpv's real HLS demuxer
+  // cannot be handed a corrected body directly (data:/memory: URIs fail
+  // outright — confirmed against the app's own libmpv-2.dll, see
+  // [[libmpv-playlist-delivery]]), so the only working fix is having the
+  // local/worker proxy re-serve the corrected body over real HTTP. This just
+  // detects the need; _markWrapped is what tells _emitStreams to offer that
+  // proxied entry.
   //
-  // MegaPlay's CDN gives each segment a decorative extension over plain MPEG-TS
-  // and 404s when the same path is asked for as .ts, so the path cannot be
-  // corrected — only the URL. "?x=.ts" satisfies both of ffmpeg's extension
-  // checks (they scan the whole URL for the last dot) and the CDN ignores the
-  // extra parameter. Verified with ffprobe: the same episode goes from
-  // "is not in allowed_extensions" to 1080p h264 + aac, 1437s.
-  _rewritePlaylistExtensions(body, playlistUrl) {
-    var self = this;
-    var lines = String(body).split("\n");
-    var out = [];
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      var trimmed = line.trim();
-      if (!trimmed) { out.push(line); continue; }
-      if (trimmed.charAt(0) === "#") {
-        // EXT-X-KEY / EXT-X-MAP carry their own URI and lose the same base.
-        out.push(line.replace(/URI="([^"]+)"/, function (whole, u) {
-          return 'URI="' + self._absUrl(u, playlistUrl) + '"';
-        }));
-        continue;
-      }
-      var abs = this._absUrl(trimmed, playlistUrl);
-      out.push(abs + (abs.indexOf("?") >= 0 ? "&" : "?") + "x=.ts");
-    }
-    return "data:application/x-mpegURL;base64," + this._b64enc(out.join("\n"));
-  }
-
-  // Turn one resolved playlist into something the player will actually open.
-  // Returns the entry unchanged when nothing is wrong with it.
-  _preparePlaylist(entry, body, checkPoison) {
-    // Ad-injected playlists take the older byterange path: their segments are
-    // wrapped, not merely mislabelled.
-    if (checkPoison && this._playlistIsPoisoned(body, entry.url)) {
-      return { url: this._rewriteWithByterange(body), label: entry.label, originalUrl: entry.url };
-    }
-    if (this._playlistNeedsExtFix(body)) {
-      return { url: this._rewritePlaylistExtensions(body, entry.url), label: entry.label, originalUrl: entry.url };
-    }
-    return entry;
+  // MegaPlay's segments carry decorative extensions (.jpg/.html/.js/.css/…)
+  // over plain MPEG-TS — v0.4.20 assumed ffmpeg's HLS demuxer would refuse
+  // these ("is not in allowed_extensions", reproduced with a standalone
+  // ffprobe) and rewrote every playlist to hide it. Replaying the same URL
+  // against the app's actual libmpv-2.dll instead played it cleanly for 100+
+  // segments with no allowed_extensions error at all: that restriction is a
+  // generic ffmpeg/ffprobe CLI default, not something the HLS demuxer's own
+  // segment fetcher enforces here. So fake extensions are not treated as
+  // needing a fix — doing so only added a proxy dependency (and, before this
+  // rewrite, a broken data: URI) for something that already plays.
+  _playlistNeedsFix(body, url, checkPoison) {
+    return !!(checkPoison && this._playlistIsPoisoned(body, url));
   }
 
   // Every variant we hand back is fetched once, where before only the leading
   // one was probed for ad poisoning. A mislabelled segment makes an entry
   // unplayable rather than merely worth skipping, so it is not something that
   // can be left for the viewer to notice — and the CDN serves these in well
-  // under a second. The poison probe rides along on the same fetch.
+  // under a second. The poison probe rides along on the same fetch. Entries
+  // are returned with their real CDN URL unchanged; a fix, when one is
+  // needed, only ever comes from the proxy (see _playlistNeedsFix), so the
+  // whole list is flagged wrapped rather than rewriting any URL here.
   async _preparePlaylists(variants, headers, isExtra) {
     var out = [];
+    var anyFix = false;
     for (var i = 0; i < variants.length; i++) {
       var body = "";
       try { body = (await this.client.get(variants[i].url, headers)).body || ""; } catch (e) {}
       // Unreadable playlist: hand back the URL and let the player try.
       if (body.indexOf("#EXTM3U") < 0) { out.push(variants[i]); continue; }
-      out.push(this._preparePlaylist(variants[i], body, i === 0 && !isExtra));
+      if (this._playlistNeedsFix(body, variants[i].url, i === 0 && !isExtra)) anyFix = true;
+      out.push(variants[i]);
     }
+    if (anyFix) this._markWrapped(out);
     return out;
   }
 
   // Fetch a master HLS playlist and return one entry per quality variant.
   // Returns [] if the URL is a flat media playlist (no #EXT-X-STREAM-INF, use as-is).
   // Returns null if the response is not a valid m3u8 (Cloudflare block, error, or fetch failure).
-  // nekostream.site streams are routed through the shirayuki proxy, which strips the
-  // 70-byte PNG wrapper from every segment and serves clean MPEG-TS to libmpv.
+  // nekostream.site streams and any playlist needing a body-level fix are routed
+  // through the local/worker proxy, which re-serves a corrected body over real HTTP.
   async _resolveHlsVariants(masterUrl, headers, isExtra) {
-    // Only a CDN that wraps MPEG-TS in a PNG header still needs the proxy —
-    // nothing an extension returns can strip bytes out of a segment body. A
-    // decorative segment *extension* is a different problem and is fixable here
-    // (see _rewritePlaylistExtensions), so a megaplay.buzz Referer no longer
-    // implies a proxy: its CDN serves clean TS behind .jpg/.html/.webp names.
+    // Only the proxy can hand the player a corrected body — see
+    // _playlistNeedsFix. A megaplay.buzz Referer does not by itself imply a
+    // proxy: its CDN's decorative segment extensions play fine as-is (see
+    // _playlistNeedsFix), so ad-injection, detected per-playlist below, is
+    // the only remaining reason a non-neko host would need one.
     var isNeko = this._isWrappedCdnUrl(masterUrl);
     try {
       var res = await this.client.get(masterUrl, headers);
@@ -1163,8 +1065,7 @@ class DefaultExtension extends MProvider {
         if (isNeko) {
           return this._markWrapped([{ url: masterUrl, label: "Auto" }]);
         }
-        var flat = this._preparePlaylist({ url: masterUrl, label: "" }, body, !isExtra);
-        return flat.url === masterUrl ? [] : [flat]; // [] means "use master URL as-is"
+        return this._playlistNeedsFix(body, masterUrl, !isExtra) ? this._markWrapped([]) : [];
       }
       var lastSlash = masterUrl.lastIndexOf("/");
       var baseDir = lastSlash > 0 ? masterUrl.substring(0, lastSlash + 1) : masterUrl;
@@ -1617,7 +1518,7 @@ class DefaultExtension extends MProvider {
         key: "anikoto_pref_proxy_enabled",
         checkBoxPreference: {
           title: "Fix playback on Windows/Android",
-          summary: "Turn on if episodes buffer forever or skip instantly. Not needed on iOS. Requires the proxy to be reachable at the address below.",
+          summary: "Turn on if episodes buffer forever or fail to start. Not needed for normal playback — only for servers that hide segments inside PNG images, or a playlist padded with ad segments. Not needed on iOS. Requires the proxy to be reachable at the address below.",
           value: false,
         },
       },
@@ -1628,7 +1529,7 @@ class DefaultExtension extends MProvider {
           summary: "Already filled in — only change this if you run the proxy somewhere other than this PC.",
           value: DEFAULT_PROXY,
           dialogTitle: "Proxy address",
-          dialogMessage: "AniKoto's CDN hides video segments inside PNG images, which Windows/Android cannot decode (iOS plays them fine). The default points at proxy/proxy.js running on this PC. Replace it with a deployed worker's https URL to cover several devices from one place.",
+          dialogMessage: "Some of AniKoto's servers hide video segments inside PNG images, which Windows/Android cannot decode directly (iOS plays them fine). The default points at proxy/proxy.js running on this PC. Replace it with a deployed worker's https URL to cover several devices from one place.",
         },
       },
       {
