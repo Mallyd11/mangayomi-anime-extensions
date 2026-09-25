@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AniPM": {
+            "name": "AniPM",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1790343908.670818
+        },
         "AllWish": {
             "name": "AllWish",
             "version": "0.1.0",
