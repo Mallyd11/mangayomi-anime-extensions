@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AllWish": {
+            "name": "AllWish",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1790343415.068573
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.21",
