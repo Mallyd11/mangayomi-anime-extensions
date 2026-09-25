@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://ani.pm/apple-touch-icon.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/anipm.js",
     "isManga": false,
     "isNsfw": false,
@@ -338,6 +338,13 @@ class DefaultExtension extends MProvider {
 
     var list = await this.variants(data.source, { "User-Agent": this.ua });
     this.pushVariants(streams, list, data.source, "anipm", langLabel, {}, subtitles);
+    // Only a split master can be downloaded: the app's HLS downloader follows one
+    // variant and ignores EXT-X-MEDIA audio, so an audio-group encode would save silent.
+    if (list && list.length && !this._dl) {
+      var pick = list[0];
+      for (var i = 0; i < list.length; i++) if (list[i].height === this._qualityPref) pick = list[i];
+      this._dl = { url: pick.url, height: pick.height, langLabel: langLabel, subtitles: subtitles };
+    }
     return streams;
   }
 
@@ -452,6 +459,8 @@ class DefaultExtension extends MProvider {
     var enabled = this.enabledServers();
     var withBackup = enabled.indexOf("megaplay") >= 0;
     var qualityPref = parseInt(this.pref("anipm_pref_quality", "1080"), 10) || 1080;
+    this._qualityPref = qualityPref;
+    this._dl = null;
 
     var streams = [];
     var boots = {};
@@ -500,7 +509,34 @@ class DefaultExtension extends MProvider {
       throw new Error("ani.pm: nothing playable for episode " + ep + " (" + why + ")");
     }
     for (var k = 0; k < streams.length; k++) delete streams[k]._height;
+    this.addDownloadEntry(streams);
     return streams;
+  }
+
+  // The app downloads the first entry whose originalUrl ends in .m3u8 and fetches
+  // that entry's `url`. ani.pm's playlist links have no extension (appending one
+  // 404s), so a copy of one rendition is listed with a ".m3u8" alias as its
+  // originalUrl. The alias is never requested: the player opens entry 0's url,
+  // and this copy is always placed after at least one real ani.pm entry — and
+  // before any MegaPlay entry, whose CDN answers the downloader's 4-way segment
+  // fetches with 429 part-way through an episode.
+  addDownloadEntry(streams) {
+    var d = this._dl;
+    if (!d) return;
+    var at = -1;
+    var tag = "(" + d.langLabel + ")";
+    for (var i = 0; i < streams.length; i++) {
+      var q = streams[i].quality;
+      if (q.indexOf(SERVER_LABELS.anipm + " ") === 0 && q.indexOf(tag) >= 0) at = i;
+    }
+    if (at < 0) return;
+    streams.splice(at + 1, 0, {
+      url: d.url,
+      originalUrl: d.url + ".m3u8",
+      quality: SERVER_LABELS.anipm + " " + d.height + "p " + tag + " · download",
+      headers: {},
+      subtitles: d.subtitles,
+    });
   }
 
   // Preferred height first, then the rest from best to worst.
