@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://ani.pm/apple-touch-icon.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "anime/src/en/anipm.js",
     "isManga": false,
     "isNsfw": false,
@@ -24,7 +24,7 @@ const mangayomiSources = [
 ];
 
 // ani.pm is a React app over an open JSON API (/api/anime/*). Playback goes:
-//   /api/anime/playback-bootstrap/settlar/{id}?ep=N&lang=sub|dub
+//   /api/anime/playback-bootstrap/{settlar|anilist}/{id}?ep=N&lang=sub|dub
 //     → settlarSelection (+ backupEmbed when asked with &backup=1)
 //   /api/anime/settlar/session?selection=…      → embed.settlar.io/embed/v1?t=…
 //   embed.settlar.io/api/embed/session?t=…      → HLS master on media.settlar.io + VTT list
@@ -195,7 +195,7 @@ class DefaultExtension extends MProvider {
 
   routeOf(url) {
     var s = String(url || "");
-    var m = s.match(/\/anime\/([^/?#]+)/);
+    var m = s.match(/\/(?:anime|ani)\/([^/?#]+)/);
     return m ? m[1] : s.replace(/^\/+|\/+$/g, "");
   }
 
@@ -203,6 +203,9 @@ class DefaultExtension extends MProvider {
     var route = this.routeOf(url);
     var s = await this.api("/anime/series/" + encodeURIComponent(route) + "?routes=e4");
     var id = s.id || s.sid || route;
+    // AniList-sourced titles (site URLs under /ani/) play through
+    // playback-bootstrap/anilist/{id}; the rest through .../settlar/{id}.
+    var source = s.source === "anilist" ? "anilist" : "settlar";
 
     var chapters = [];
     var eps = s.episodes || [];
@@ -214,7 +217,7 @@ class DefaultExtension extends MProvider {
       var name = "Episode " + num;
       if (title && title !== name) name += ": " + title;
       var badge = ep.sub && ep.dub ? "Sub · Dub" : ep.dub ? "Dub" : ep.sub ? "Sub" : "";
-      var ch = { name: name, url: id + "|" + num, scanlator: badge };
+      var ch = { name: name, url: id + "|" + num + "|" + source, scanlator: badge };
       if (ep.aired) {
         var t = Date.parse(ep.aired);
         if (!isNaN(t)) ch.dateUpload = String(t);
@@ -303,9 +306,19 @@ class DefaultExtension extends MProvider {
     }
   }
 
-  async bootstrap(id, ep, lang, withBackup) {
-    return await this.api("/anime/playback-bootstrap/settlar/" + encodeURIComponent(id) +
-      "?ep=" + encodeURIComponent(ep) + "&lang=" + lang + (withBackup ? "&backup=1" : ""));
+  // `source` is "settlar" or "anilist". Episode links saved before v0.1.2 carry
+  // none; for those a settlar 404 is retried as anilist.
+  async bootstrap(id, ep, lang, withBackup, source) {
+    var q = "?ep=" + encodeURIComponent(ep) + "&lang=" + lang + (withBackup ? "&backup=1" : "");
+    var src = source || this._source || "settlar";
+    try {
+      return await this.api("/anime/playback-bootstrap/" + src + "/" + encodeURIComponent(id) + q);
+    } catch (e) {
+      if (source || this._source || String(e.message).indexOf("HTTP 404") < 0) throw e;
+      var boot = await this.api("/anime/playback-bootstrap/anilist/" + encodeURIComponent(id) + q);
+      this._source = "anilist";
+      return boot;
+    }
   }
 
   async settlarStreams(boot, ep, lang, langLabel) {
@@ -452,6 +465,8 @@ class DefaultExtension extends MProvider {
     var parts = String(url).split("|");
     var id = parts[0];
     var ep = parts[1];
+    var source = parts[2] === "anilist" || parts[2] === "settlar" ? parts[2] : "";
+    this._source = "";
     if (!id || !ep) throw new Error("Unrecognised episode link: " + url + " — refresh the show.");
 
     var prefLang = this.pref("anipm_pref_lang", "sub");
@@ -470,7 +485,7 @@ class DefaultExtension extends MProvider {
       if (available && available[lang] === false) continue;
       var boot;
       try {
-        boot = await this.bootstrap(id, ep, lang, withBackup);
+        boot = await this.bootstrap(id, ep, lang, withBackup, source);
       } catch (e) {
         this._lastError = e;
         continue;
@@ -496,7 +511,7 @@ class DefaultExtension extends MProvider {
           var fb = boots[langs[fl]];
           if (!fb) continue;
           if (server === "megaplay" && !fb.backupEmbed) {
-            try { fb = await this.bootstrap(id, ep, langs[fl], true); } catch (e) { continue; }
+            try { fb = await this.bootstrap(id, ep, langs[fl], true, source); } catch (e) { continue; }
           }
           streams = streams.concat(this.sortByQuality(
             await this.serverStreams(server, fb, ep, langs[fl], langs[fl] === "dub" ? "Dub" : "Sub"), qualityPref));
