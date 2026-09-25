@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://all-wish.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "anime/src/en/allwish.js",
     "isManga": false,
     "isNsfw": false,
@@ -594,70 +594,20 @@ class DefaultExtension extends MProvider {
 
   // ------------------------------------------------------------ subtitles
 
-  // Convert a WebVTT timestamp to SRT format.
-  // lostproject.club VTTs use MM:SS.mmm (no hours); libmpv rejects this two-part form.
-  _vttTsToSrt(ts) {
-    var dotIdx = ts.lastIndexOf(".");
-    var ms = ts.substring(dotIdx + 1);
-    var parts = ts.substring(0, dotIdx).split(":");
-    while (parts.length < 3) parts.unshift("00");
-    return parts.join(":") + "," + ms;
-  }
-
-  _vttToSrt(vtt) {
-    var lines = vtt.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-    var srt = "", cueNum = 1, i = 0;
-    while (i < lines.length && lines[i].trim() !== "") i++;
-    while (i < lines.length) {
-      while (i < lines.length && lines[i].trim() === "") i++;
-      if (i >= lines.length) break;
-      var line = lines[i];
-      if (/^(NOTE|STYLE|REGION)\b/.test(line)) {
-        while (i < lines.length && lines[i].trim() !== "") i++;
-        continue;
-      }
-      if (line.indexOf("-->") < 0) { i++; if (i >= lines.length) break; line = lines[i]; }
-      if (line.indexOf("-->") < 0) { i++; continue; }
-      var m = line.match(/([\d:]+\.\d{3})\s*-->\s*([\d:]+\.\d{3})/);
-      if (!m) { i++; continue; }
-      var start = this._vttTsToSrt(m[1]), end = this._vttTsToSrt(m[2]);
-      i++;
-      var textLines = [];
-      while (i < lines.length && lines[i].trim() !== "") {
-        textLines.push(lines[i].replace(/<[\d:]+\.\d{3}>/g, ""));
-        i++;
-      }
-      if (textLines.length > 0) {
-        srt += cueNum + "\n" + start + " --> " + end + "\n" + textLines.join("\n") + "\n\n";
-        cueNum++;
-      }
-    }
-    return srt || vtt;
-  }
-
-  // Download subtitle tracks with the correct Referer (lostproject.club 403s without it),
-  // convert VTT→SRT so libmpv handles the timestamps correctly, return inline text.
-  // Dubs ship ~10 languages; each is a separate download, so by default only
-  // English is fetched. The track MegaPlay flags default:true goes first.
-  async _inlineSubtitles(tracks, referer) {
+  // Subtitle tracks go to the app as plain URLs. The player (and the
+  // downloader) request them with the stream's headers, so the host still sees
+  // MegaPlay's Referer, which it requires (403 without). English first, and
+  // MegaPlay's own default:true track ahead of the CC variant.
+  _subtitleTracks(tracks) {
     if (!Array.isArray(tracks)) return [];
-    var allLangs = this._pref("allwish_pref_sub_langs", "english") === "all";
-    tracks = tracks.filter(function (tr) {
-      return tr && tr.file && tr.kind !== "thumbnails" &&
-        (allLangs || /^english/i.test(tr.label || ""));
+    var list = tracks.filter(function (tr) {
+      return tr && tr.file && tr.kind !== "thumbnails";
     });
-    tracks.sort(function (a, b) { return (b.default ? 1 : 0) - (a.default ? 1 : 0); });
-    var subtitles = [];
-    for (var t = 0; t < tracks.length; t++) {
-      var track = tracks[t];
-      try {
-        var res = await this.client.get(track.file, { "User-Agent": this.ua, "Referer": referer });
-        var body = (res.body || "").replace(/^\s+/, "");
-        if (body.indexOf("WEBVTT") !== 0) continue;
-        subtitles.push({ file: this._vttToSrt(body), label: track.label || "Unknown" });
-      } catch (e) {}
-    }
-    return subtitles;
+    var rank = function (tr) {
+      return (/^english/i.test(tr.label || "") ? 0 : 2) - (tr.default ? 1 : 0);
+    };
+    list.sort(function (a, b) { return rank(a) - rank(b); });
+    return list.map(function (tr) { return { file: tr.file, label: tr.label || "Unknown" }; });
   }
 
   // ---------------------------------------------------------------- video
@@ -747,10 +697,7 @@ class DefaultExtension extends MProvider {
     var hdrs = { "User-Agent": this.ua, "Referer": host + "/", "Origin": host };
     var variants = await this._hlsVariants(m3u8, hdrs);
     if (!variants) return [];
-    // Softsub tracks (sub only — dub audio carries none). Inlined as SRT, since
-    // the subtitle host 403s without MegaPlay's Referer and libmpv rejects the
-    // hour-less VTT timestamps these files use.
-    var subtitles = await this._inlineSubtitles(src.tracks, host + "/");
+    var subtitles = this._subtitleTracks(src.tracks);
 
     var streams = [];
     for (var v = 0; v < variants.length; v++) {
@@ -859,16 +806,6 @@ class DefaultExtension extends MProvider {
           valueIndex: 0,
           entries: ["Auto (highest available)", "1080p", "720p", "480p", "360p"],
           entryValues: ["auto", "1080", "720", "480", "360"],
-        },
-      },
-      {
-        key: "allwish_pref_sub_langs",
-        listPreference: {
-          title: "Subtitle languages",
-          summary: "Dubbed episodes come with up to ten subtitle languages, each one an extra download before playback starts. Subbed episodes are usually hardsubbed and carry none.",
-          valueIndex: 0,
-          entries: ["English only", "All languages"],
-          entryValues: ["english", "all"],
         },
       },
     ];
