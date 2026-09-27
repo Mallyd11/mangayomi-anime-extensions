@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.6.0",
+    "version": "1.6.1",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -596,14 +596,28 @@ class DefaultExtension extends MProvider {
     // Last-resort provider when none of the enabled servers carry this episode:
     // the API default, else the first non-mochi entry. Mochi is MP4-only and is
     // skipped for HLS playback.
+    // "kiwi" (this extension's hardcoded default enabled server) is no longer
+    // offered by the site at all — confirmed on multiple titles 2026-09-27, the
+    // API's /servers answer never includes it — so almost every viewer on
+    // default settings lands here. The API's own default:true flag is not a
+    // speed signal: measured live, its "yuki" provider took 22-26s to resolve
+    // sub sources (dub was under 1s, so this is specific to sub resolution),
+    // against under 1s for "zuna" — a provider the site's own tip text already
+    // marks "Fast" for the exact same episode. Preferring a Fast-tipped
+    // provider fixes the "episode buffers for 20+ seconds before anything
+    // plays" symptom without hardcoding a provider id that could just as well
+    // go stale the same way kiwi did. Falls back to the old default:true /
+    // first-entry behavior when nothing is tipped Fast, so this only ever
+    // changes the outcome when a faster option is actually on offer.
     function fallbackProvider(list) {
-      var fallback = null;
+      var fast = null, deflt = null, first = null;
       for (var i = 0; i < list.length; i++) {
         if (list[i].id === "mochi") continue;
-        if (list[i].default) return list[i];
-        if (!fallback) fallback = list[i];
+        if (!first) first = list[i];
+        if (!deflt && list[i].default) deflt = list[i];
+        if (!fast && /\bfast\b/i.test(list[i].tip || "")) fast = list[i];
       }
-      return fallback;
+      return fast || deflt || first;
     }
 
     // Build provider ordering for one audio type.

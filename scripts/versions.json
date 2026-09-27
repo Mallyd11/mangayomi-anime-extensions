@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.6.1",
+            "langs": "en",
+            "lastUpd": 1790522640.353951
+        },
         "AllWish": {
             "name": "AllWish",
             "version": "0.1.1",
@@ -85,12 +91,6 @@
             "version": "6.1.13",
             "langs": "en",
             "lastUpd": 1788281513.054501
-        },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.6.0",
-            "langs": "en",
-            "lastUpd": 1787253650.672228
         },
         "JustAnime": {
             "name": "JustAnime",
