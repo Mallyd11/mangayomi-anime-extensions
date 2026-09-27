@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://ani.pm/apple-touch-icon.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "anime/src/en/anipm.js",
     "isManga": false,
     "isNsfw": false,
@@ -877,7 +877,34 @@ class DefaultExtension extends MProvider {
     return parts.join(":") + "," + ms;
   }
 
+  // The app's HTTP client reads a body as Latin-1 when the server sends no
+  // charset, so UTF-8 text arrives garbled: "Don't" becomes "Donâ\x80\x99t"
+  // (MegaPlay's subtitle host does this). If every char fits in one byte and
+  // those bytes are valid UTF-8 with a multi-byte sequence in them, decode them
+  // as UTF-8; anything else, including real Latin-1 text, is returned untouched.
+  _fixUtf8(text) {
+    if (!/[Â-ô][\u0080-¿]/.test(text)) return text;
+    var out = "", i = 0, n = text.length;
+    while (i < n) {
+      var c = text.charCodeAt(i);
+      if (c > 0xff) return text;
+      if (c < 0x80) { out += text[i++]; continue; }
+      var len = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc2 ? 2 : 0;
+      if (!len || c > 0xf4 || i + len > n) return text;
+      var cp = c & (len === 2 ? 0x1f : len === 3 ? 0x0f : 0x07);
+      for (var k = 1; k < len; k++) {
+        var cc = text.charCodeAt(i + k);
+        if (cc < 0x80 || cc > 0xbf) return text;
+        cp = (cp << 6) | (cc & 0x3f);
+      }
+      out += String.fromCodePoint(cp);
+      i += len;
+    }
+    return out;
+  }
+
   _vttToSrt(vtt) {
+    vtt = this._fixUtf8(vtt);
     var lines = vtt.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
     var srt = "", cueNum = 1, i = 0;
     while (i < lines.length && lines[i].trim() !== "") i++;

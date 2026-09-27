@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AniPM": {
+            "name": "AniPM",
+            "version": "0.1.3",
+            "langs": "en",
+            "lastUpd": 1790523031.938077
+        },
         "Anidap": {
             "name": "Anidap",
             "version": "1.6.1",
@@ -37,12 +43,6 @@
             "version": "0.1.1",
             "langs": "en",
             "lastUpd": 1790357285.862423
-        },
-        "AniPM": {
-            "name": "AniPM",
-            "version": "0.1.2",
-            "langs": "en",
-            "lastUpd": 1790356133.848503
         },
         "AniKoto": {
             "name": "AniKoto",
