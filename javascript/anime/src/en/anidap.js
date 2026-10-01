@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.9.1",
+    "version": "1.10.0",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -79,6 +79,20 @@ var SERVER_ORDER = ["yuki", "zuna", "sora"];
 // Ticked out of the box. Kept next to SERVER_ORDER so the code fallback and the
 // preference UI cannot drift apart.
 var DEFAULT_SERVERS = ["yuki"];
+
+// The old "Download mode" preference was removed in v1.10.0 and should not come
+// back. It did two things and both are dead:
+//   1. It called chad.anidap.lol/rest/api/download, which now answers
+//      503 {"error":"failed to fetch links: invalid identifier: ..."} for every
+//      identifier tried (AniList id AND slug). The site's own Download button
+//      fails the same way: "Error fetching download links." It is broken
+//      server-side, not mis-called.
+//   2. It put "mochi" first as a confirmed-MP4 source. mochi is no longer
+//      offered by /servers for any title.
+// Downloads now go through Mangayomi's own m3u8 downloader against the normal
+// playback streams, whose originalUrl path ends in .m3u8 so the downloader
+// accepts them. Verified 2026-10-01: 10 of yuki's segments fetched
+// concurrently all returned 200 (no 429), 0.04-0.25s each.
 
 // ─── URL transform helpers ────────────────────────────────────────────────────
 //
@@ -474,18 +488,6 @@ class DefaultExtension extends MProvider {
   // Fetch direct download links from the site's own download button endpoint.
   // Uses AniList ID directly — no slug, no Cloudflare.
   // Response shape: { sub: { download: { "Kiwi-Stream-1080p": "https://…", … } }, dub: … | null }
-  async chadDownload(anilistId, epNum) {
-    try {
-      var res = await this.client.get(
-        CHAD + "/download?id=" + anilistId + "&epNum=" + epNum,
-        this.chadHeaders
-      );
-      if (res.statusCode !== 200 || !res.body) return null;
-      var data = JSON.parse(res.body);
-      return (data && !data.error) ? data : null;
-    } catch (e) { return null; }
-  }
-
   // ── URL transformation ─────────────────────────────────────────────────────
   //
   // Mirrors the HOST_HANDLERS map from anidap.lol/assets/api-9brnPJZ5.js.
@@ -620,7 +622,6 @@ class DefaultExtension extends MProvider {
     var epNum     = parts[1] || "";
 
     var audioPref  = this.getPreference("anidap_audio_pref");
-    var dlMode     = this.getPreference("anidap_download_mode") || "off";
 
     // Enabled servers (multi-select), ordered by SERVER_ORDER so the fast one
     // leads. Ids the site no longer serves are dropped rather than queried —
@@ -635,7 +636,7 @@ class DefaultExtension extends MProvider {
     if (!serverList.length) serverList = DEFAULT_SERVERS.slice();
 
     // Cache key includes mode + server list so changing either gives fresh results.
-    var cacheKey = url + "|" + dlMode + "|" + serverList.join(",");
+    var cacheKey = url + "|" + serverList.join(",");
     var _now = Date.now();
     if (_vlCache[cacheKey] && _now - (_vlCacheTs[cacheKey] || 0) < VL_CACHE_TTL_MS) {
       return _vlCache[cacheKey];
@@ -684,15 +685,14 @@ class DefaultExtension extends MProvider {
 
     // Build provider ordering for one audio type.
     //
-    //   Playback mode  → ONLY the servers enabled in settings, in serverList
-    //                    order (Kiwi first). Nothing else reaches the quality
-    //                    picker. If none of them serve this episode, one
-    //                    fallback provider is used so playback still works.
+    // ONLY the servers enabled in settings, in serverList order (fastest
+    // first). Nothing else reaches the quality picker. If none of them serve
+    // this episode, one fallback provider is used so playback still works.
     //
-    //   Download mode  → mochi first (confirmed MP4), then all others. The
-    //                    allow-list is not applied here — downloads need mochi.
+    // There is no separate download path any more: the app downloads these
+    // same HLS streams. See the note on the removed download mode below.
     function buildCategories(type, providers) {
-      if (dlMode !== "on") {
+      {
         var ordered = [];
         // Dub leads with yuki whenever the API offers it, ticked or not. The
         // other servers hand back an audio-group master whose sub and dub URLs
@@ -701,7 +701,7 @@ class DefaultExtension extends MProvider {
         // genuinely separate dub stream.
         function find(id) {
           for (var fi = 0; fi < providers.length; fi++) {
-            if (providers[fi].id === "mochi") continue; // MP4-only, download mode handles it
+            if (providers[fi].id === "mochi") continue; // MP4-only, not an HLS source
             if (providers[fi].id === id) return providers[fi];
           }
           return null;
@@ -724,15 +724,6 @@ class DefaultExtension extends MProvider {
         }
         return ordered;
       }
-      // Download mode: mochi first (confirmed MP4), then all other providers.
-      var mochi = [];
-      var rest  = [];
-      for (var i = 0; i < providers.length; i++) {
-        if (providers[i].id === "mochi") mochi.push(providers[i]);
-        else                             rest.push(providers[i]);
-      }
-      var ordered = mochi.concat(rest);
-      return ordered.map(function(p) { return { type: type, provider: p }; });
     }
 
     var subCats = buildCategories("sub", subProviders);
@@ -745,44 +736,6 @@ class DefaultExtension extends MProvider {
 
     var streams = [];
     var seen    = {};
-
-    // ── Download mode: prepend site download-endpoint links ────────────────
-    //
-    // chad.anidap.lol/rest/api/download uses the AniList ID directly (no slug,
-    // no Cloudflare) and returns the same links the site's download button uses.
-    // These are put first so Mangayomi's downloader auto-selects one.
-    // The /sources streams that follow act as a fallback.
-    if (dlMode === "on") {
-      var dlData = await this.chadDownload(anilistId, epNum);
-      if (dlData) {
-        var dlTypes = (audioPref === "dub") ? ["dub", "sub"] : ["sub", "dub"];
-        for (var dti = 0; dti < dlTypes.length; dti++) {
-          var dlAudio     = dlTypes[dti];
-          var dlAudioData = dlData[dlAudio];
-          // Support both { download: { label: url } } and { label: url } shapes.
-          var dlLinks = (dlAudioData && dlAudioData.download)
-            ? dlAudioData.download
-            : (dlAudioData && typeof dlAudioData === "object" ? dlAudioData : null);
-          if (!dlLinks) continue;
-          var dlKeys = Object.keys(dlLinks);
-          for (var dki = 0; dki < dlKeys.length; dki++) {
-            var dlLabel = dlKeys[dki];
-            var dlUrl   = dlLinks[dlLabel];
-            if (!dlUrl || typeof dlUrl !== "string") continue;
-            var dlKey = dlUrl + "|" + dlAudio;
-            if (seen[dlKey]) continue;
-            seen[dlKey] = true;
-            streams.push({
-              url: dlUrl,
-              originalUrl: dlUrl,
-              quality: dlLabel + " [" + dlAudio.toUpperCase() + "] DOWNLOAD",
-              headers: { "User-Agent": this.ua, "Referer": this.getBaseUrl() + "/" },
-              subtitles: [],
-            });
-          }
-        }
-      }
-    }
 
     // ── Provider streams ───────────────────────────────────────────────────
 
@@ -957,16 +910,6 @@ class DefaultExtension extends MProvider {
           values: ["yuki"],
           entries: ["Yuki (default - fastest, sub and dub)", "Zuna (slower fallback)", "Sora (not on every title)"],
           entryValues: ["yuki", "zuna", "sora"],
-        },
-      },
-      {
-        key: "anidap_download_mode",
-        listPreference: {
-          title: "Download mode",
-          summary: "OFF: normal playback (HLS). ON: direct download links appear first — Mangayomi auto-selects one when you tap the download button. Switch back to OFF to resume normal playback.",
-          valueIndex: 0,
-          entries: ["OFF — Playback", "ON — Download"],
-          entryValues: ["off", "on"],
         },
       },
     ];
