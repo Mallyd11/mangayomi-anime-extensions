@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.6.2",
+    "version": "1.7.0",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -27,14 +27,20 @@ const mangayomiSources = [
 // chad.anidap.lol is the dedicated REST API subdomain (site moved from anidap.se to anidap.lol)
 var CHAD = "https://chad.anidap.lol/rest/api";
 
-// Canonical server ordering for the quality picker. Kiwi leads — it is the
-// default and the only server enabled out of the box; the rest only appear
-// once the user ticks them in "Servers shown in quality picker".
+// Servers the site actually serves, fastest first. Surveyed live 2026-10-01
+// across two unrelated titles (case-closed-5j4se, goblin-slayer-xrhm5):
+//
+//   zuna  2/2 usable, 0.26-0.29s, tipped "Fast"  → the default
+//   yuki  3/4 usable, 0.26s / 2.9s / 12.7s, one 504 — the API's own
+//         default:true pick, erratic, but the ONLY dub provider
+//   sora  0/1 — advertised by /servers but /sources returns HTTP 500
+//
+// Everything previously listed here (kiwi, beep, mimi, uwu, miku, loli, zone,
+// shiro, kami, vee) is no longer offered by /servers for any title tested.
+// "kiwi" in particular was this extension's default while not existing at all,
+// so every install fell through to fallbackProvider().
 // Mochi is deliberately absent: it is MP4-only and reserved for download mode.
-var SERVER_ORDER = [
-  "kiwi", "beep", "mimi", "yuki", "uwu", "miku",
-  "sora", "loli", "zone", "shiro", "kami", "vee",
-];
+var SERVER_ORDER = ["zuna", "yuki"];
 
 // ─── URL transform helpers ────────────────────────────────────────────────────
 //
@@ -560,17 +566,17 @@ class DefaultExtension extends MProvider {
     var audioPref  = this.getPreference("anidap_audio_pref");
     var dlMode     = this.getPreference("anidap_download_mode") || "off";
 
-    // Enabled servers (multi-select). Empty/unset means Kiwi only.
-    // Ordered by SERVER_ORDER so Kiwi is tried first whenever it is enabled.
-    var serverSel = this.getPreference("anidap_servers");
-    if (!serverSel || !serverSel.length) serverSel = ["kiwi"];
+    // Enabled servers (multi-select), ordered by SERVER_ORDER so the fast one
+    // leads. Ids the site no longer serves are dropped rather than queried —
+    // a pre-1.7.0 install has "kiwi" stored, which would otherwise make every
+    // playback fall through to fallbackProvider(). An empty result (nothing
+    // ticked, or everything ticked is dead) uses the fastest known server.
+    var serverSel  = this.getPreference("anidap_servers") || [];
     var serverList = [];
     for (var soi = 0; soi < SERVER_ORDER.length; soi++) {
       if (serverSel.indexOf(SERVER_ORDER[soi]) >= 0) serverList.push(SERVER_ORDER[soi]);
     }
-    for (var ssi = 0; ssi < serverSel.length; ssi++) {
-      if (serverList.indexOf(serverSel[ssi]) < 0) serverList.push(serverSel[ssi]);
-    }
+    if (!serverList.length) serverList = [SERVER_ORDER[0]];
 
     // Cache key includes mode + server list so changing either gives fresh results.
     var cacheKey = url + "|" + dlMode + "|" + serverList.join(",");
@@ -811,10 +817,10 @@ class DefaultExtension extends MProvider {
         key: "anidap_servers",
         multiSelectListPreference: {
           title: "Servers shown in quality picker",
-          summary: "Only the ticked servers appear during playback. Kiwi is the default and is always tried first. Tick more only if Kiwi buffers or lacks an episode.",
-          values: ["kiwi"],
-          entries: ["Kiwi (default)", "Beep", "MIMI", "Yuki", "UWU", "Miku", "Sora", "Loli", "Zone", "Shiro", "Kami", "Vee"],
-          entryValues: ["kiwi", "beep", "mimi", "yuki", "uwu", "miku", "sora", "loli", "zone", "shiro", "kami", "vee"],
+          summary: "Only the ticked servers appear during playback. Zuna is the default — it is the fastest and most reliable. Yuki is slower and sometimes times out, but it is the only server that carries dub, so dub falls back to it automatically whether or not it is ticked.",
+          values: ["zuna"],
+          entries: ["Zuna (default — fast)", "Yuki (slow; only dub source)"],
+          entryValues: ["zuna", "yuki"],
         },
       },
       {
