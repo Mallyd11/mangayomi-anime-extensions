@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.10.0",
+    "version": "1.10.1",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -161,6 +161,21 @@ function _encodeUwu(url, origin) {
   for (var i = 0; i < combined.length; i++)
     combined[i] ^= _UWU_KEY.charCodeAt(i % _UWU_KEY.length);
   return _b64url(combined);
+}
+
+// Mangayomi's downloader matches a known extension at the END OF THE WHOLE URL
+// STRING, not at the end of the path. yuki's master playlists are signed
+// (".../master.m3u8?token=..."), so the .m3u8 is not last and the app refuses
+// them with "No downloadable URL among N video(s) (none matched .m3u8/.m3u or a
+// known extension)" - playback works, downloads do not.
+//
+// Appending a dummy parameter puts the extension back at the end. Verified
+// 2026-10-01: the CDN ignores the extra param (byte-identical playlist, token
+// still valid) and the suffixed URL still loads in Mangayomi's own libmpv-2.dll.
+// URLs that already end in a usable extension (zuna, sora) are left alone.
+function _downloadableUrl(url) {
+  if (!url || /\.(m3u8|m3u|mp4|mkv|webm)$/i.test(url)) return url;
+  return url + (url.indexOf("?") >= 0 ? "&" : "?") + "x=.m3u8";
 }
 
 function _uwuTransform(url, origin) {
@@ -840,7 +855,7 @@ class DefaultExtension extends MProvider {
           var srcUrl = src && src.url;
           if (!srcUrl) continue;
 
-          srcUrl = this.transformUrl(srcUrl, cat.queryId);
+          srcUrl = _downloadableUrl(this.transformUrl(srcUrl, cat.queryId));
 
           var quality = (src.quality || "Auto") +
             " [" + cat.type.toUpperCase() + "] " +
