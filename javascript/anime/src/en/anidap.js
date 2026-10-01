@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.10.1",
+    "version": "1.10.2",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -20,7 +20,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "",
+    "notes": "Downloads usually fail partway with a 429. The source's CDNs cap requests at roughly 100 per IP per time window, and one episode is 300+ segments, so the downloader runs out of quota mid-file. Playback is unaffected. Lowering concurrent downloads in Settings helps a little but does not clear the cap. Anidap's own download endpoint is broken server-side too (its website Download button fails the same way), so there is nothing the extension can route around.",
   },
 ];
 
