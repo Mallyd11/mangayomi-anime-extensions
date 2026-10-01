@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.9.0",
+    "version": "1.9.1",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -53,7 +53,6 @@ var CHAD = "https://chad.anidap.lol/rest/api";
 // segment pulled from each, 2026-10-01:
 //
 //   yuki  11.2 MB/s   (uq03g.phantomharbor.space)   <- fastest, the default
-//   adp    7.6 MB/s   (cdnx.aniwatchtv.site)
 //   zuna   1.2 MB/s   (hls.dramahot.top)            ~9x slower than yuki
 //   sora   not reliably measurable (audio-group master, per-title)
 //
@@ -61,19 +60,25 @@ var CHAD = "https://chad.anidap.lol/rest/api";
 // both audio types. Its /sources call is the erratic part (0.26s typical, but
 // 12.7s and a 504 observed) - that is start-up latency, not stream speed.
 //
-// "adp" is NOT a distinct source. It is the server anidap.lol's own embed
-// player uses: the SAME yuki stream run through the site's
-// cdnx.aniwatchtv.site/uwu proxy. It costs no extra request (it reuses yuki's
-// /sources response) and is a genuinely useful alternate route when the direct
-// host is slow or blocked.
-var SERVER_ORDER = ["yuki", "adp", "zuna", "sora"];
-
-// Synthetic providers: id -> the real provider whose /sources answer they reuse.
-var PROXY_OF = { adp: "yuki" };
+// DO NOT re-add "adp" — tried in v1.9.0 and removed in v1.9.1.
+// It is the server anidap.lol's own embed player uses, and it is NOT a distinct
+// source: it is the SAME yuki stream run through the site's
+// cdnx.aniwatchtv.site/uwu proxy (confirmed by watching aniembed.se's network
+// traffic — it calls the same API, mirrored at pp.animex.one, for yuki, then
+// proxies the URL). It cannot play in this app. Tested against Mangayomi's own
+// libmpv-2.dll: the proxied URL goes START_FILE -> END_FILE in 0.2s and never
+// loads, because every /uwu/ URL — master, variant AND segments — is
+// extension-less, which ffmpeg's HLS demuxer rejects. Appending "?x=.m3u8" or
+// "#.m3u8" does not help: those only fix the outer URL, and the inner
+// references come from the proxy's own playlist body, which we cannot rewrite.
+// The same libmpv test loads yuki's direct URL fine (24:56, hls demuxer).
+// There is nothing to gain either way — adp is slower than yuki (7.6 vs
+// 11.2 MB/s) and carries identical content.
+var SERVER_ORDER = ["yuki", "zuna", "sora"];
 
 // Ticked out of the box. Kept next to SERVER_ORDER so the code fallback and the
 // preference UI cannot drift apart.
-var DEFAULT_SERVERS = ["yuki", "adp"];
+var DEFAULT_SERVERS = ["yuki"];
 
 // ─── URL transform helpers ────────────────────────────────────────────────────
 //
@@ -702,25 +707,20 @@ class DefaultExtension extends MProvider {
           return null;
         }
         function add(wantId) {
-          var realId = PROXY_OF[wantId] || wantId;
-          var prov   = find(realId);
+          var prov = find(wantId);
           if (!prov) return;
           for (var oi = 0; oi < ordered.length; oi++) {
             if (ordered[oi].labelId === wantId) return; // already placed
           }
-          ordered.push({
-            type: type, provider: prov,
-            queryId: realId,             // what we ask the API for
-            labelId: wantId,             // what the user sees
-            proxy:   !!PROXY_OF[wantId]  // route through the site's uwu proxy
-          });
+          ordered.push({ type: type, provider: prov,
+                         queryId: wantId, labelId: wantId });
         }
         if (type === "dub") add("yuki");
         for (var si = 0; si < serverList.length; si++) add(serverList[si]);
         if (ordered.length === 0) {
           var fb = fallbackProvider(providers);
           if (fb) ordered = [{ type: type, provider: fb, queryId: fb.id,
-                               labelId: fb.id, proxy: false }];
+                               labelId: fb.id }];
         }
         return ordered;
       }
@@ -791,7 +791,7 @@ class DefaultExtension extends MProvider {
     // measured at 12.7s and can 504) stalled playback even when the preferred
     // server had already answered in under a second. Now it costs the slowest
     // one. Failures resolve to null so one bad provider cannot reject the rest.
-    // adp reuses yuki's answer, so fetch each (type, queryId) pair once only.
+    // Fetch each (type, queryId) pair once only.
     var self = this;
     var inflight = {};
     function resolveAll(cats) {
@@ -829,7 +829,7 @@ class DefaultExtension extends MProvider {
         if (categories[ri].type === type && categories[ri].queryId === fb.id) return;
       }
       rescue.push({ type: type, provider: fb, queryId: fb.id,
-                    labelId: fb.id, proxy: false });
+                    labelId: fb.id });
     }
     addRescue("sub", subProviders);
     addRescue("dub", dubProviders);
@@ -887,10 +887,7 @@ class DefaultExtension extends MProvider {
           var srcUrl = src && src.url;
           if (!srcUrl) continue;
 
-          // adp = the same stream through the site's own cdnx uwu proxy.
-          srcUrl = cat.proxy
-            ? _uwuTransform(srcUrl, "https://megaplay.buzz")
-            : this.transformUrl(srcUrl, cat.queryId);
+          srcUrl = this.transformUrl(srcUrl, cat.queryId);
 
           var quality = (src.quality || "Auto") +
             " [" + cat.type.toUpperCase() + "] " +
@@ -956,10 +953,10 @@ class DefaultExtension extends MProvider {
         key: "anidap_servers",
         multiSelectListPreference: {
           title: "Servers shown in quality picker",
-          summary: "Only the ticked servers appear during playback. Yuki is the default: measured around 11 MB/s, roughly 9x faster than Zuna, and it is the dependable dub source - so dub uses it automatically whether or not it is ticked. ADP is the same stream through the site own proxy (around 7.6 MB/s), a good alternate if Yuki stalls. Zuna and Sora are slower fallbacks.",
-          values: ["yuki", "adp"],
-          entries: ["Yuki (default - fastest)", "ADP (site proxy; fast alternate)", "Zuna (slower fallback)", "Sora (not on every title)"],
-          entryValues: ["yuki", "adp", "zuna", "sora"],
+          summary: "Only the ticked servers appear during playback. Yuki is the default: measured around 11 MB/s, roughly 9x faster than Zuna, and it handles both sub and dub - dub uses it automatically whether or not it is ticked. Zuna and Sora are slower fallbacks for the occasional title Yuki does not carry.",
+          values: ["yuki"],
+          entries: ["Yuki (default - fastest, sub and dub)", "Zuna (slower fallback)", "Sora (not on every title)"],
+          entryValues: ["yuki", "zuna", "sora"],
         },
       },
       {
