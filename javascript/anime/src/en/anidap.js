@@ -4,10 +4,10 @@ const mangayomiSources = [
     "id": 543219876,
     "lang": "en",
     "baseUrl": "https://anidap.lol",
-    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.se",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.6.1",
+    "version": "1.6.2",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -115,7 +115,7 @@ function _uwuTransform(url, origin) {
 // ─── Slug cache ───────────────────────────────────────────────────────────────
 //
 // The slug (e.g. "attack-on-titan-xyz12") is fetched from the Cloudflare-
-// protected anidap.se/info/{id}.data endpoint.  Caching it in memory means the
+// protected anidap.lol/info/{id}.data endpoint.  Caching it in memory means the
 // Cloudflare hit only happens once per show per app session — subsequent
 // getVideoList() calls find the slug here immediately.
 //
@@ -148,7 +148,7 @@ var PAGE_MEDIA_QUERY = [
   "}}}"
 ].join("");
 
-// Returns episodes that recently aired (TIME_DESC) — matches anidap.se "Recent Episodes".
+// Returns episodes that recently aired (TIME_DESC) — matches anidap.lol "Recent Episodes".
 // perPage is set higher than needed to absorb adult/duplicate filtering.
 var RECENT_EPISODES_QUERY = [
   "query RecentEp($page:Int,$perPage:Int,$before:Int){",
@@ -193,7 +193,7 @@ class DefaultExtension extends MProvider {
     return url;
   }
 
-  // Headers for requests to anidap.se (Remix .data routes).
+  // Headers for requests to anidap.lol (Remix .data routes).
   // hasCloudflare is false — we bypass CF the same way HiAnime does: by
   // sending a realistic browser UA + Referer so the request scores low enough
   // on CF's bot detection to pass without any challenge.  Mangayomi's WebView
@@ -207,7 +207,7 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  // Headers for requests to chad.anidap.se (no Cloudflare)
+  // Headers for requests to chad.anidap.lol (no Cloudflare)
   get chadHeaders() {
     return {
       "User-Agent": this.ua,
@@ -275,7 +275,7 @@ class DefaultExtension extends MProvider {
 
   async getLatestUpdates(page) {
     // Use AniList's airing schedule (sorted newest-first) to mirror the
-    // "Recent Episodes" feed on anidap.se.  UPDATED_AT_DESC was sorting by
+    // "Recent Episodes" feed on anidap.lol.  UPDATED_AT_DESC was sorting by
     // when AniList metadata changed — not when episodes actually aired.
     var self = this;
     var now  = Math.floor(Date.now() / 1000);
@@ -327,10 +327,10 @@ class DefaultExtension extends MProvider {
   // ── Slug resolution ────────────────────────────────────────────────────────
   //
   // The site uses a unique slug per anime (e.g. "one-punch-man-season-3-i5r8m")
-  // required for all chad.anidap.se API calls.  It is embedded in the Remix
+  // required for all chad.anidap.lol API calls.  It is embedded in the Remix
   // turbo-stream response at /info/{anilistId}.data as a flat serialised array.
   //
-  // anidap.se is Cloudflare-protected.  If this request fails, Mangayomi shows
+  // anidap.lol is Cloudflare-protected.  If this request fails, Mangayomi shows
   // a "bypass Cloudflare" dialog.  Complete the challenge in the webview —
   // Mangayomi then retries with the cf_clearance cookie it extracted.
   //
@@ -358,7 +358,7 @@ class DefaultExtension extends MProvider {
     if (cached) return cached;
 
     // The ONLY public endpoint that maps AniList ID → slug is the CF-protected
-    // anidap.se/info/{id}.data route.  chad.anidap.se has no search, no anime,
+    // anidap.lol/info/{id}.data route.  chad.anidap.lol has no search, no anime,
     // and no lookup endpoint that accepts numeric AniList IDs (confirmed: all
     // such routes return 404).
     //
@@ -382,7 +382,7 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // ── chad.anidap.se REST API ────────────────────────────────────────────────
+  // ── chad.anidap.lol REST API ────────────────────────────────────────────────
 
   async chadEpisodes(slug) {
     var res = await this.client.get(CHAD + "/episodes?id=" + slug, this.chadHeaders);
@@ -668,7 +668,7 @@ class DefaultExtension extends MProvider {
 
     // ── Download mode: prepend site download-endpoint links ────────────────
     //
-    // chad.anidap.se/rest/api/download uses the AniList ID directly (no slug,
+    // chad.anidap.lol/rest/api/download uses the AniList ID directly (no slug,
     // no Cloudflare) and returns the same links the site's download button uses.
     // These are put first so Mangayomi's downloader auto-selects one.
     // The /sources streams that follow act as a fallback.
