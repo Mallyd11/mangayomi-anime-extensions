@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.8.0",
+    "version": "1.9.0",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -48,7 +48,32 @@ var CHAD = "https://chad.anidap.lol/rest/api";
 // "kiwi" in particular was this extension's default while not existing at all,
 // so every install fell through to fallbackProvider().
 // Mochi is deliberately absent: it is MP4-only and reserved for download mode.
-var SERVER_ORDER = ["zuna", "sora", "yuki"];
+// Ordered by MEASURED STREAMING THROUGHPUT, not by the API's own "tip" text
+// (which calls zuna "Fast" and says nothing about yuki). Same 1,074,232-byte
+// segment pulled from each, 2026-10-01:
+//
+//   yuki  11.2 MB/s   (uq03g.phantomharbor.space)   <- fastest, the default
+//   adp    7.6 MB/s   (cdnx.aniwatchtv.site)
+//   zuna   1.2 MB/s   (hls.dramahot.top)            ~9x slower than yuki
+//   sora   not reliably measurable (audio-group master, per-title)
+//
+// yuki is also offered for sub on every title tested, so it is the default for
+// both audio types. Its /sources call is the erratic part (0.26s typical, but
+// 12.7s and a 504 observed) - that is start-up latency, not stream speed.
+//
+// "adp" is NOT a distinct source. It is the server anidap.lol's own embed
+// player uses: the SAME yuki stream run through the site's
+// cdnx.aniwatchtv.site/uwu proxy. It costs no extra request (it reuses yuki's
+// /sources response) and is a genuinely useful alternate route when the direct
+// host is slow or blocked.
+var SERVER_ORDER = ["yuki", "adp", "zuna", "sora"];
+
+// Synthetic providers: id -> the real provider whose /sources answer they reuse.
+var PROXY_OF = { adp: "yuki" };
+
+// Ticked out of the box. Kept next to SERVER_ORDER so the code fallback and the
+// preference UI cannot drift apart.
+var DEFAULT_SERVERS = ["yuki", "adp"];
 
 // ─── URL transform helpers ────────────────────────────────────────────────────
 //
@@ -370,10 +395,23 @@ class DefaultExtension extends MProvider {
     var cached = _slugCache[String(anilistId)];
     if (cached) return cached;
 
-    // The ONLY public endpoint that maps AniList ID → slug is the CF-protected
-    // anidap.lol/info/{id}.data route.  chad.anidap.lol has no search, no anime,
-    // and no lookup endpoint that accepts numeric AniList IDs (confirmed: all
-    // such routes return 404).
+    // Preferred route: the site's own embed player, aniembed.se/e/{anilistId}/{ep}.
+    // Keyed by AniList id, NO Cloudflare, ~4KB, ~0.4s (verified 2026-10-01 on 5
+    // unrelated titles). Its SvelteKit SSR payload carries both the slug
+    // (id:"...",anilistId:) and the full sub/dub provider lists, so this turns a
+    // Cloudflare challenge into a plain GET. The CF route stays as a fallback.
+    try {
+      var em = await this.client.get(
+        "https://aniembed.se/e/" + anilistId + "/1",
+        { "User-Agent": this.ua }
+      );
+      if (em.statusCode === 200 && em.body) {
+        var mm = em.body.match(/id:"([^"]+)",anilistId:/);
+        if (mm && mm[1]) { _slugCache[String(anilistId)] = mm[1]; return mm[1]; }
+      }
+    } catch (e) { /* fall through to the Cloudflare route */ }
+
+    // Fallback: the CF-protected anidap.lol/info/{id}.data route.
     //
     // siteHeaders intentionally omits User-Agent.  The cf_clearance cookie is
     // cryptographically bound to the UA used in the WebView challenge.  If the
@@ -589,7 +627,7 @@ class DefaultExtension extends MProvider {
     for (var soi = 0; soi < SERVER_ORDER.length; soi++) {
       if (serverSel.indexOf(SERVER_ORDER[soi]) >= 0) serverList.push(SERVER_ORDER[soi]);
     }
-    if (!serverList.length) serverList = [SERVER_ORDER[0]];
+    if (!serverList.length) serverList = DEFAULT_SERVERS.slice();
 
     // Cache key includes mode + server list so changing either gives fresh results.
     var cacheKey = url + "|" + dlMode + "|" + serverList.join(",");
@@ -656,23 +694,35 @@ class DefaultExtension extends MProvider {
         // are byte-identical and whose default audio track is Japanese, so
         // their "dub" entry can quietly play subbed audio. Yuki returns a
         // genuinely separate dub stream.
-        if (type === "dub") {
-          for (var yi = 0; yi < providers.length; yi++) {
-            if (providers[yi].id === "yuki") ordered.push(providers[yi]);
+        function find(id) {
+          for (var fi = 0; fi < providers.length; fi++) {
+            if (providers[fi].id === "mochi") continue; // MP4-only, download mode handles it
+            if (providers[fi].id === id) return providers[fi];
           }
+          return null;
         }
-        for (var si = 0; si < serverList.length; si++) {
-          for (var pi = 0; pi < providers.length; pi++) {
-            if (providers[pi].id === "mochi") continue; // MP4-only, download mode handles it
-            if (ordered.indexOf(providers[pi]) >= 0) continue; // already placed
-            if (providers[pi].id === serverList[si]) ordered.push(providers[pi]);
+        function add(wantId) {
+          var realId = PROXY_OF[wantId] || wantId;
+          var prov   = find(realId);
+          if (!prov) return;
+          for (var oi = 0; oi < ordered.length; oi++) {
+            if (ordered[oi].labelId === wantId) return; // already placed
           }
+          ordered.push({
+            type: type, provider: prov,
+            queryId: realId,             // what we ask the API for
+            labelId: wantId,             // what the user sees
+            proxy:   !!PROXY_OF[wantId]  // route through the site's uwu proxy
+          });
         }
+        if (type === "dub") add("yuki");
+        for (var si = 0; si < serverList.length; si++) add(serverList[si]);
         if (ordered.length === 0) {
           var fb = fallbackProvider(providers);
-          if (fb) ordered = [fb];
+          if (fb) ordered = [{ type: type, provider: fb, queryId: fb.id,
+                               labelId: fb.id, proxy: false }];
         }
-        return ordered.map(function(p) { return { type: type, provider: p }; });
+        return ordered;
       }
       // Download mode: mochi first (confirmed MP4), then all other providers.
       var mochi = [];
@@ -741,13 +791,59 @@ class DefaultExtension extends MProvider {
     // measured at 12.7s and can 504) stalled playback even when the preferred
     // server had already answered in under a second. Now it costs the slowest
     // one. Failures resolve to null so one bad provider cannot reject the rest.
+    // adp reuses yuki's answer, so fetch each (type, queryId) pair once only.
     var self = this;
-    var resolved = await Promise.all(categories.map(function (cat) {
-      if (!cat.provider) return Promise.resolve({ cat: cat, data: null });
-      return self.chadSources(slug, epNum, cat.type, cat.provider.id)
-        .then(function (d) { return { cat: cat, data: d }; })
-        .catch(function () { return { cat: cat, data: null }; });
-    }));
+    var inflight = {};
+    function resolveAll(cats) {
+      return Promise.all(cats.map(function (cat) {
+        if (!cat.provider) return Promise.resolve({ cat: cat, data: null });
+        var memo = cat.type + "|" + cat.queryId;
+        if (!inflight[memo]) {
+          inflight[memo] = self.chadSources(slug, epNum, cat.type, cat.queryId)
+            .catch(function () { return null; });
+        }
+        return inflight[memo].then(function (d) { return { cat: cat, data: d }; });
+      }));
+    }
+
+    var resolved = await resolveAll(categories);
+
+    // Safety net: a server can be advertised by /servers and still fail at
+    // /sources - sora returns HTTP 500 on some titles. Without this, ticking
+    // only such a server hands the player an empty list for that audio type.
+    // Costs nothing in the normal case; only runs when a type produced nothing.
+    function yielded(type) {
+      for (var yi = 0; yi < resolved.length; yi++) {
+        if (resolved[yi].cat.type !== type) continue;
+        var d = resolved[yi].data;
+        if (d && d.sources && d.sources.length) return true;
+      }
+      return false;
+    }
+    var rescue = [];
+    function addRescue(type, provs) {
+      if (!provs.length || yielded(type)) return;
+      var fb = fallbackProvider(provs);
+      if (!fb) return;
+      for (var ri = 0; ri < categories.length; ri++) {
+        if (categories[ri].type === type && categories[ri].queryId === fb.id) return;
+      }
+      rescue.push({ type: type, provider: fb, queryId: fb.id,
+                    labelId: fb.id, proxy: false });
+    }
+    addRescue("sub", subProviders);
+    addRescue("dub", dubProviders);
+    if (rescue.length) {
+      // A rescued stream for the preferred audio type leads, otherwise the
+      // player would autoplay the other language.
+      var rr   = await resolveAll(rescue);
+      var want = (audioPref === "dub") ? "dub" : "sub";
+      var lead = [], tail = [];
+      for (var qi = 0; qi < rr.length; qi++) {
+        (rr[qi].cat.type === want ? lead : tail).push(rr[qi]);
+      }
+      resolved = lead.concat(resolved, tail);
+    }
 
     for (var ci = 0; ci < resolved.length; ci++) {
       var cat = resolved[ci].cat;
@@ -791,11 +887,14 @@ class DefaultExtension extends MProvider {
           var srcUrl = src && src.url;
           if (!srcUrl) continue;
 
-          srcUrl = this.transformUrl(srcUrl, cat.provider.id);
+          // adp = the same stream through the site's own cdnx uwu proxy.
+          srcUrl = cat.proxy
+            ? _uwuTransform(srcUrl, "https://megaplay.buzz")
+            : this.transformUrl(srcUrl, cat.queryId);
 
           var quality = (src.quality || "Auto") +
             " [" + cat.type.toUpperCase() + "] " +
-            cat.provider.id.toUpperCase();
+            cat.labelId.toUpperCase();
           var key = srcUrl + "|" + cat.type;
           if (seen[key]) continue;
           seen[key] = true;
@@ -857,10 +956,10 @@ class DefaultExtension extends MProvider {
         key: "anidap_servers",
         multiSelectListPreference: {
           title: "Servers shown in quality picker",
-          summary: "Only the ticked servers appear during playback. Zuna is the default and the fastest. Sora is fast too but not offered on every title. Yuki is slower, yet it is the most dependable DUB source — dub falls back to it automatically whether or not it is ticked.",
-          values: ["zuna", "sora"],
-          entries: ["Zuna (default — fast)", "Sora (fast; not on every title)", "Yuki (slower; best for dub)"],
-          entryValues: ["zuna", "sora", "yuki"],
+          summary: "Only the ticked servers appear during playback. Yuki is the default: measured around 11 MB/s, roughly 9x faster than Zuna, and it is the dependable dub source - so dub uses it automatically whether or not it is ticked. ADP is the same stream through the site own proxy (around 7.6 MB/s), a good alternate if Yuki stalls. Zuna and Sora are slower fallbacks.",
+          values: ["yuki", "adp"],
+          entries: ["Yuki (default - fastest)", "ADP (site proxy; fast alternate)", "Zuna (slower fallback)", "Sora (not on every title)"],
+          entryValues: ["yuki", "adp", "zuna", "sora"],
         },
       },
       {
