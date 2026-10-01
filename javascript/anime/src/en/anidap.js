@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.7.0",
+    "version": "1.8.0",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -30,17 +30,25 @@ var CHAD = "https://chad.anidap.lol/rest/api";
 // Servers the site actually serves, fastest first. Surveyed live 2026-10-01
 // across two unrelated titles (case-closed-5j4se, goblin-slayer-xrhm5):
 //
-//   zuna  2/2 usable, 0.26-0.29s, tipped "Fast"  → the default
-//   yuki  3/4 usable, 0.26s / 2.9s / 12.7s, one 504 — the API's own
-//         default:true pick, erratic, but the ONLY dub provider
-//   sora  0/1 — advertised by /servers but /sources returns HTTP 500
+//   zuna  usable, 0.26-0.29s, tipped "Fast"  → the default
+//   yuki  usable, 0.26-12.7s, occasionally 504 — the API's own default:true
+//         pick; erratic, but serves a real separate dub track
+//   sora  per-title: HTTP 500 on case-closed, but 0.28s and fine on
+//         clevatess-season-2 for both sub and dub. Kept — a 500 on one title
+//         is not a dead server, and the per-episode /servers call already
+//         filters it out where it is not offered.
+//
+// NOTE on sora: its sub and dub URLs are the SAME krussdomi master, an
+// audio-group playlist carrying Japanese (DEFAULT=YES) and English tracks.
+// Picking its "dub" entry can therefore still come up Japanese — yuki is the
+// dependable dub source.
 //
 // Everything previously listed here (kiwi, beep, mimi, uwu, miku, loli, zone,
 // shiro, kami, vee) is no longer offered by /servers for any title tested.
 // "kiwi" in particular was this extension's default while not existing at all,
 // so every install fell through to fallbackProvider().
 // Mochi is deliberately absent: it is MP4-only and reserved for download mode.
-var SERVER_ORDER = ["zuna", "yuki"];
+var SERVER_ORDER = ["zuna", "sora", "yuki"];
 
 // ─── URL transform helpers ────────────────────────────────────────────────────
 //
@@ -90,12 +98,11 @@ function _b64url(bytes) {
 
 // N() from site JS: XOR-encodes (url + \0 + origin) with fixed key → base64url
 var _UWU_KEY = "10b06cdc1ca48c9fb0b94af97cc040cf";
+// Verified by DNS 2026-10-01: cx, nsx, pro, rl2 and rrl ALL fail to resolve.
+// cdnx is what anidap.lol's own embed (aniembed.se) streams from today, and is
+// the only prefix besides hawk that still exists.
 var _UWU_CDN = [
-  "https://cx.aniwatchtv.site",
-  "https://nsx.aniwatchtv.site",
-  "https://pro.aniwatchtv.site",
-  "https://rl2.aniwatchtv.site",
-  "https://rrl.aniwatchtv.site"
+  "https://cdnx.aniwatchtv.site"
 ];
 var _uwuCounter = 0;
 
@@ -466,8 +473,14 @@ class DefaultExtension extends MProvider {
           "https://mp4.24stream.xyz/storage"
         );
 
-      // uwu CDN proxy (rotating CDN, compound base64url encoding)
-      case "yuki": return _uwuTransform(url, "https://megaplay.buzz");
+      // yuki is deliberately NOT proxied. It used to go through _uwuTransform,
+      // but every host that produced was dead, so dub (yuki is the main dub
+      // provider) pointed at an unresolvable host and buffered forever.
+      // The raw /sources URL serves clean MPEG-TS directly — verified
+      // 2026-10-01: 445KB segment starting 0x47 off fetch.nexabloom.top.
+      // Note its segment host 404s on Range requests but serves fine without.
+
+      // uwu CDN proxy (compound base64url encoding)
       case "uwu":  return _uwuTransform(url, "https://kwik.cx/");
       case "miku": return _uwuTransform(url, "https://allanime.uns.bio");
 
@@ -638,9 +651,20 @@ class DefaultExtension extends MProvider {
     function buildCategories(type, providers) {
       if (dlMode !== "on") {
         var ordered = [];
+        // Dub leads with yuki whenever the API offers it, ticked or not. The
+        // other servers hand back an audio-group master whose sub and dub URLs
+        // are byte-identical and whose default audio track is Japanese, so
+        // their "dub" entry can quietly play subbed audio. Yuki returns a
+        // genuinely separate dub stream.
+        if (type === "dub") {
+          for (var yi = 0; yi < providers.length; yi++) {
+            if (providers[yi].id === "yuki") ordered.push(providers[yi]);
+          }
+        }
         for (var si = 0; si < serverList.length; si++) {
           for (var pi = 0; pi < providers.length; pi++) {
             if (providers[pi].id === "mochi") continue; // MP4-only, download mode handles it
+            if (ordered.indexOf(providers[pi]) >= 0) continue; // already placed
             if (providers[pi].id === serverList[si]) ordered.push(providers[pi]);
           }
         }
@@ -712,12 +736,25 @@ class DefaultExtension extends MProvider {
 
     // ── Provider streams ───────────────────────────────────────────────────
 
-    for (var ci = 0; ci < categories.length; ci++) {
-      var cat = categories[ci];
+    // Resolve every provider at once rather than one after another. Serially
+    // this cost the SUM of each call, so a single slow provider (yuki has been
+    // measured at 12.7s and can 504) stalled playback even when the preferred
+    // server had already answered in under a second. Now it costs the slowest
+    // one. Failures resolve to null so one bad provider cannot reject the rest.
+    var self = this;
+    var resolved = await Promise.all(categories.map(function (cat) {
+      if (!cat.provider) return Promise.resolve({ cat: cat, data: null });
+      return self.chadSources(slug, epNum, cat.type, cat.provider.id)
+        .then(function (d) { return { cat: cat, data: d }; })
+        .catch(function () { return { cat: cat, data: null }; });
+    }));
+
+    for (var ci = 0; ci < resolved.length; ci++) {
+      var cat = resolved[ci].cat;
       if (!cat.provider) continue;
 
       try {
-        var srcData = await this.chadSources(slug, epNum, cat.type, cat.provider.id);
+        var srcData = resolved[ci].data;
         if (!srcData) continue;
 
         var sources = srcData.sources || [];
@@ -725,8 +762,11 @@ class DefaultExtension extends MProvider {
 
         // Forward Referer and Origin from the API response — CDNs check
         // these for hotlink protection; without them the CDN returns 403.
+        // Also honour a User-Agent when the API supplies one: sora returns an
+        // Android UA with its krussdomi URLs, so overriding it with our desktop
+        // UA would be sending the CDN something the site never sends.
         var apiHdrs = srcData.headers || {};
-        var streamHdrs = { "User-Agent": this.ua };
+        var streamHdrs = { "User-Agent": apiHdrs["User-Agent"] || this.ua };
         if (apiHdrs.Referer) streamHdrs.Referer = apiHdrs.Referer;
         if (apiHdrs.Origin)  streamHdrs.Origin  = apiHdrs.Origin;
 
@@ -817,10 +857,10 @@ class DefaultExtension extends MProvider {
         key: "anidap_servers",
         multiSelectListPreference: {
           title: "Servers shown in quality picker",
-          summary: "Only the ticked servers appear during playback. Zuna is the default — it is the fastest and most reliable. Yuki is slower and sometimes times out, but it is the only server that carries dub, so dub falls back to it automatically whether or not it is ticked.",
-          values: ["zuna"],
-          entries: ["Zuna (default — fast)", "Yuki (slow; only dub source)"],
-          entryValues: ["zuna", "yuki"],
+          summary: "Only the ticked servers appear during playback. Zuna is the default and the fastest. Sora is fast too but not offered on every title. Yuki is slower, yet it is the most dependable DUB source — dub falls back to it automatically whether or not it is ticked.",
+          values: ["zuna", "sora"],
+          entries: ["Zuna (default — fast)", "Sora (fast; not on every title)", "Yuki (slower; best for dub)"],
+          entryValues: ["zuna", "sora", "yuki"],
         },
       },
       {
