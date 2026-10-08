@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.0",
+    "version": "0.5.1",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -37,12 +37,15 @@ const mangayomiSources = [
 //                                 despite the name it ignores page and limit
 //                                 and returns one fixed block of ~285 rows
 //
-// Streams live on a separate backend. remote_source_id goes to
-//   https://s.vidcloud.se/_v1/sources?id=<id>
-// which returns the master playlist URL, the max quality and the subtitle
-// tracks. That API and every CDN request behind it 403 unless they carry
-// Referer AND Origin of https://senshi.to (Referer alone is not enough) and a
-// browser User-Agent.
+// Streams live on a separate backend. remote_source_id goes to the site's player
+// runtime (PLAYER_URL, window.__oct.open(id)), which runs an encrypted handshake
+// with s.vidcloud.se (a server blob, an ECDH P-256 exchange, AES-GCM) and resolves
+// to the master playlist URL and the subtitle tracks. The runtime is executed here,
+// in the app's own JS engine, by senshiRunPlayer; the polyfills above it exist
+// only because that engine has no WebAssembly or WebCrypto. The old open endpoint
+// (/_v1/sources) is gone. The handshake and every CDN request behind it 403
+// unless they carry Referer AND Origin of https://senshi.to (Referer alone is not
+// enough) and a browser User-Agent.
 //
 // PLAYBACK. Every playlist on that CDN is AES-256-GCM encrypted ("EM3U8v1:" +
 // base64(iv | ciphertext | tag)), decrypted by the site's own JS player. libmpv
@@ -92,7 +95,10 @@ const mangayomiSources = [
 // No comma anywhere in here: mpv splits http-header-fields on commas.
 var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36";
 
-var SOURCES_URL = "https://s.vidcloud.se/_v1/sources?id=";
+// The site's own player runtime. It performs the encrypted handshake that
+// replaced the old open sources API, so it is fetched fresh (the site rotates it
+// roughly daily) and run here rather than copied.
+var PLAYER_URL = "https://cdn.vidcloud.se/vjs/vendor.js";
 
 var PAGE_SIZE = 30;
 
@@ -142,6 +148,579 @@ var SORTS = [
   ["Best Score", "score_desc"], ["Worst Score", "score_asc"],
   ["A-Z", "name_asc"], ["Z-A", "name_desc"], ["Latest Release", "recent"],
 ];
+
+// ── The site's player runtime, run in-process ───────────────────────────────
+//
+// The app's JS engine is bare QuickJS: no WebAssembly, WebCrypto, URL or
+// TextEncoder. The site's runtime needs all of them, so the next four
+// functions install minimal stand-ins on a sandbox object (never on the real
+// global), and senshiRunPlayer evaluates the runtime with that object's
+// properties shadowing the globals it expects.
+//
+//   senshiEnv     window / document / navigator / location stubs, URL,
+//                 TextEncoder / TextDecoder, atob / btoa, timers
+//   senshiCrypto  crypto.subtle: SHA-256, HMAC, HKDF, AES-GCM, ECDH P-256 (BigInt)
+//   senshiWasm    WebAssembly.instantiate for the runtime's tiny i32-only module,
+//                 translated to plain JS (the module has no imports)
+
+function senshiEnv(g) {
+  // ---- basic browser-ish globals the player runtime touches ---------------------------------
+  g.window = g; g.self = g; g.top = g; g.parent = g; g.globalThis = g;
+  var UAs = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36";
+  g.navigator = { userAgent: UAs, language: "en-US", languages: ["en-US"], platform: "Win32", webdriver: false, hardwareConcurrency: 8 };
+  g.location = { href: "https://senshi.to/", origin: "https://senshi.to", hostname: "senshi.to", host: "senshi.to", protocol: "https:", pathname: "/", search: "", hash: "" };
+  var noop = function(){};
+  g.document = {
+    currentScript: { src: "https://cdn.vidcloud.se/vjs/vendor.js", getAttribute: function(){ return null; }, dataset: {} },
+    createElement: function(){ return { style: {}, getContext: function(){ return null; }, setAttribute: noop, appendChild: noop }; },
+    querySelector: function(){ return null; }, querySelectorAll: function(){ return []; },
+    head: { appendChild: noop }, body: { appendChild: noop }, documentElement: { style: {} },
+    cookie: "", referrer: "https://senshi.to/", location: g.location, addEventListener: noop, readyState: "complete"
+  };
+  if (!g.performance) g.performance = { now: function(){ return Date.now(); } };
+
+  // ---- URL / URLSearchParams (just enough) ------------------------------------------------
+  function URLSearchParams_(init){ this._p = []; var self = this; if (typeof init === "string") { init.replace(/^\?/, "").split("&").forEach(function(kv){ if (!kv) return; var i = kv.indexOf("="); self._p.push([decodeURIComponent(i < 0 ? kv : kv.slice(0, i)), decodeURIComponent(i < 0 ? "" : kv.slice(i + 1))]); }); } }
+  URLSearchParams_.prototype.get = function(k){ for (var i = 0; i < this._p.length; i++) if (this._p[i][0] === k) return this._p[i][1]; return null; };
+  URLSearchParams_.prototype.has = function(k){ return this.get(k) !== null; };
+  URLSearchParams_.prototype.append = function(k, v){ this._p.push([k, String(v)]); };
+  URLSearchParams_.prototype.set = function(k, v){ var f = false; for (var i = 0; i < this._p.length; i++) if (this._p[i][0] === k) { if (!f) { this._p[i][1] = String(v); f = true; } else { this._p.splice(i--, 1); } } if (!f) this.append(k, v); };
+  URLSearchParams_.prototype.toString = function(){ return this._p.map(function(kv){ return encodeURIComponent(kv[0]) + "=" + encodeURIComponent(kv[1]); }).join("&"); };
+  function URL_(href, base){
+    href = String(href);
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) {
+      var b = new URL_(base || g.location.href);
+      if (href.charAt(0) === "/") href = b.origin + href;
+      else href = b.origin + b.pathname.replace(/[^\/]*$/, "") + href;
+    }
+    var m = href.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:)\/\/([^\/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/);
+    if (!m) throw new TypeError("Invalid URL: " + href);
+    this.protocol = m[1]; this.host = m[2]; this.hostname = m[2].replace(/:\d+$/, ""); this.port = (m[2].match(/:(\d+)$/) || [])[1] || "";
+    this.pathname = m[3] || "/"; this.search = m[4] || ""; this.hash = m[5] || ""; this.origin = this.protocol + "//" + this.host;
+    this.searchParams = new URLSearchParams_(this.search); this.href = this.origin + this.pathname + this.search + this.hash;
+  }
+  URL_.prototype.toString = function(){ return this.href; };
+  g.URL = URL_; g.URLSearchParams = URLSearchParams_;
+
+  // ---- TextEncoder / TextDecoder (UTF-8) ---------------------------------------------------
+  g.TextEncoder = function(){ };
+  g.TextEncoder.prototype.encode = function(s){ s = String(s === undefined ? "" : s); var o = []; for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); if (c >= 0xd800 && c < 0xdc00 && i + 1 < s.length) { var d = s.charCodeAt(i + 1); if (d >= 0xdc00 && d < 0xe000) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i++; } } if (c < 0x80) o.push(c); else if (c < 0x800) o.push(0xc0 | (c >> 6), 0x80 | (c & 63)); else if (c < 0x10000) o.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); else o.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); } return new Uint8Array(o); };
+  g.TextDecoder = function(){ };
+  g.TextDecoder.prototype.decode = function(b){ if (!b) return ""; var u = b instanceof ArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer, b.byteOffset, b.byteLength); var s = "", i = 0; while (i < u.length) { var c = u[i++]; if (c < 0x80) s += String.fromCharCode(c); else if (c < 0xe0) s += String.fromCharCode(((c & 31) << 6) | (u[i++] & 63)); else if (c < 0xf0) { var c2 = u[i++], c3 = u[i++]; s += String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63)); } else { var a = u[i++], b2 = u[i++], d = u[i++]; var cp = (((c & 7) << 18) | ((a & 63) << 12) | ((b2 & 63) << 6) | (d & 63)) - 0x10000; s += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 1023)); } } return s; };
+
+  // ---- atob / btoa -----------------------------------------------------------------------------
+  var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  g.btoa = function(s){ s = String(s); var o = "", i = 0; while (i < s.length) { var a = s.charCodeAt(i++), b = s.charCodeAt(i++), c = s.charCodeAt(i++); o += B64[a >> 2] + B64[((a & 3) << 4) | ((b || 0) >> 4)] + (isNaN(b) ? "=" : B64[((b & 15) << 2) | ((c || 0) >> 6)]) + (isNaN(c) ? "=" : B64[c & 63]); } return o; };
+  g.atob = function(s){ s = String(s).replace(/[^A-Za-z0-9+\/]/g, ""); var o = "", acc = 0, bits = 0; for (var i = 0; i < s.length; i++) { acc = (acc << 6) | B64.indexOf(s[i]); bits += 6; if (bits >= 8) { bits -= 8; o += String.fromCharCode((acc >> bits) & 255); acc &= (1 << bits) - 1; } } return o; };
+
+  // ---- timers: the runtime may use them; run on microtask order, delay ignored ----------------
+  var tid = 1; g.setTimeout = function(fn){ var id = tid++; var args = Array.prototype.slice.call(arguments, 2); Promise.resolve().then(function(){ if (!g.__cleared || !g.__cleared[id]) fn.apply(null, args); }); return id; };
+  g.clearTimeout = function(id){ (g.__cleared = g.__cleared || {})[id] = 1; }; g.setInterval = function(){ return tid++; }; g.clearInterval = noop;
+  g.queueMicrotask = g.queueMicrotask || function(fn){ Promise.resolve().then(fn); };
+}
+
+// Pure-JS crypto.subtle for engines without WebCrypto: SHA-256, HMAC, HKDF, AES-GCM, ECDH P-256.
+function senshiCrypto(g) {
+  function u8(x) {
+    if (x instanceof Uint8Array) return x;
+    if (x instanceof ArrayBuffer) return new Uint8Array(x);
+    if (x && x.buffer) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+    throw new TypeError("BufferSource expected");
+  }
+  function ab(bytes) { var o = new Uint8Array(bytes.length); o.set(bytes); return o.buffer; }
+  function cat() { var n = 0, i; for (i = 0; i < arguments.length; i++) n += arguments[i].length; var o = new Uint8Array(n), p = 0; for (i = 0; i < arguments.length; i++) { o.set(arguments[i], p); p += arguments[i].length; } return o; }
+
+  // ---- SHA-256 / HMAC / HKDF -----------------------------------------------------------------
+  var K256 = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+  function sha256(data) {
+    var m = u8(data), n = m.length, padn = ((n + 9 + 63) >> 6) << 6, buf = new Uint8Array(padn);
+    buf.set(m); buf[n] = 0x80;
+    var bits = n * 8; buf[padn - 4] = (bits >>> 24) & 255; buf[padn - 3] = (bits >>> 16) & 255; buf[padn - 2] = (bits >>> 8) & 255; buf[padn - 1] = bits & 255;
+    buf[padn - 8] = Math.floor(n / 536870912) & 255;
+    var H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]), W = new Uint32Array(64);
+    for (var off = 0; off < padn; off += 64) {
+      var i;
+      for (i = 0; i < 16; i++) W[i] = (buf[off + 4 * i] << 24) | (buf[off + 4 * i + 1] << 16) | (buf[off + 4 * i + 2] << 8) | buf[off + 4 * i + 3];
+      for (i = 16; i < 64; i++) {
+        var a = W[i - 15], b = W[i - 2];
+        var s0 = ((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3);
+        var s1 = ((b >>> 17) | (b << 15)) ^ ((b >>> 19) | (b << 13)) ^ (b >>> 10);
+        W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+      }
+      var A = H[0], B = H[1], C = H[2], D = H[3], E = H[4], F = H[5], G = H[6], Hh = H[7];
+      for (i = 0; i < 64; i++) {
+        var S1 = ((E >>> 6) | (E << 26)) ^ ((E >>> 11) | (E << 21)) ^ ((E >>> 25) | (E << 7));
+        var ch = (E & F) ^ (~E & G);
+        var t1 = (Hh + S1 + ch + K256[i] + W[i]) | 0;
+        var S0 = ((A >>> 2) | (A << 30)) ^ ((A >>> 13) | (A << 19)) ^ ((A >>> 22) | (A << 10));
+        var mj = (A & B) ^ (A & C) ^ (B & C);
+        var t2 = (S0 + mj) | 0;
+        Hh = G; G = F; F = E; E = (D + t1) | 0; D = C; C = B; B = A; A = (t1 + t2) | 0;
+      }
+      H[0] += A; H[1] += B; H[2] += C; H[3] += D; H[4] += E; H[5] += F; H[6] += G; H[7] += Hh;
+    }
+    var out = new Uint8Array(32);
+    for (i = 0; i < 8; i++) { out[4 * i] = H[i] >>> 24; out[4 * i + 1] = (H[i] >>> 16) & 255; out[4 * i + 2] = (H[i] >>> 8) & 255; out[4 * i + 3] = H[i] & 255; }
+    return out;
+  }
+  function hmac(key, data) {
+    key = u8(key); if (key.length > 64) key = sha256(key);
+    var ip = new Uint8Array(64), op = new Uint8Array(64), i;
+    for (i = 0; i < 64; i++) { var k = i < key.length ? key[i] : 0; ip[i] = k ^ 0x36; op[i] = k ^ 0x5c; }
+    return sha256(cat(op, sha256(cat(ip, u8(data)))));
+  }
+  function hkdf(ikm, salt, info, len) {
+    salt = salt && u8(salt).length ? u8(salt) : new Uint8Array(32);
+    var prk = hmac(salt, ikm), out = new Uint8Array(0), t = new Uint8Array(0), i = 1;
+    info = u8(info);
+    while (out.length < len) { t = hmac(prk, cat(t, info, new Uint8Array([i++]))); out = cat(out, t); }
+    return out.subarray(0, len);
+  }
+
+  // ---- AES + GCM -----------------------------------------------------------------------------
+  var AES = null;
+  function aesTables() {
+    if (AES) return AES;
+    var sbox = new Uint8Array(256), p = 1, q = 1;
+    do {
+      p = (p ^ (p << 1) ^ (p & 0x80 ? 0x1b : 0)) & 0xff;
+      q ^= q << 1; q ^= q << 2; q ^= q << 4; q &= 0xff; if (q & 0x80) q ^= 0x09;
+      var x = (q ^ ((q << 1) | (q >>> 7)) ^ ((q << 2) | (q >>> 6)) ^ ((q << 3) | (q >>> 5)) ^ ((q << 4) | (q >>> 4))) & 0xff;
+      sbox[p] = x ^ 0x63;
+    } while (p !== 1);
+    sbox[0] = 0x63;
+    var T = [new Uint32Array(256), new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)];
+    for (var i = 0; i < 256; i++) {
+      var sv = sbox[i], s2 = ((sv << 1) ^ (sv & 0x80 ? 0x1b : 0)) & 0xff, s3 = s2 ^ sv;
+      T[0][i] = ((s2 << 24) | (sv << 16) | (sv << 8) | s3) >>> 0; T[1][i] = ((s3 << 24) | (s2 << 16) | (sv << 8) | sv) >>> 0;
+      T[2][i] = ((sv << 24) | (s3 << 16) | (s2 << 8) | sv) >>> 0; T[3][i] = ((sv << 24) | (sv << 16) | (s3 << 8) | s2) >>> 0;
+    }
+    return (AES = { sbox: sbox, T: T });
+  }
+  function aesKey(key) {
+    var t = aesTables(), sb = t.sbox, nk = key.length / 4, rounds = nk + 6, rk = new Uint32Array(4 * (rounds + 1)), k, rcon = 1;
+    for (k = 0; k < nk; k++) rk[k] = ((key[4 * k] << 24) | (key[4 * k + 1] << 16) | (key[4 * k + 2] << 8) | key[4 * k + 3]) >>> 0;
+    function sub(w) { return ((sb[w >>> 24] << 24) | (sb[(w >>> 16) & 255] << 16) | (sb[(w >>> 8) & 255] << 8) | sb[w & 255]) >>> 0; }
+    for (k = nk; k < rk.length; k++) {
+      var w = rk[k - 1];
+      if (k % nk === 0) { w = sub(((w << 8) | (w >>> 24)) >>> 0); w = (w ^ (rcon << 24)) >>> 0; rcon = ((rcon << 1) ^ (rcon & 0x80 ? 0x1b : 0)) & 0xff; }
+      else if (nk > 6 && k % nk === 4) w = sub(w);
+      rk[k] = (rk[k - nk] ^ w) >>> 0;
+    }
+    return { rk: rk, rounds: rounds, sb: sb, T: t.T };
+  }
+  function aesBlock(a, s0, s1, s2, s3, out) {
+    var T0 = a.T[0], T1 = a.T[1], T2 = a.T[2], T3 = a.T[3], sb = a.sb, rk = a.rk, t0, t1, t2, t3, r = 4;
+    s0 ^= rk[0]; s1 ^= rk[1]; s2 ^= rk[2]; s3 ^= rk[3];
+    for (var round = 1; round < a.rounds; round++) {
+      t0 = T0[s0 >>> 24] ^ T1[(s1 >>> 16) & 255] ^ T2[(s2 >>> 8) & 255] ^ T3[s3 & 255] ^ rk[r];
+      t1 = T0[s1 >>> 24] ^ T1[(s2 >>> 16) & 255] ^ T2[(s3 >>> 8) & 255] ^ T3[s0 & 255] ^ rk[r + 1];
+      t2 = T0[s2 >>> 24] ^ T1[(s3 >>> 16) & 255] ^ T2[(s0 >>> 8) & 255] ^ T3[s1 & 255] ^ rk[r + 2];
+      t3 = T0[s3 >>> 24] ^ T1[(s0 >>> 16) & 255] ^ T2[(s1 >>> 8) & 255] ^ T3[s2 & 255] ^ rk[r + 3];
+      s0 = t0; s1 = t1; s2 = t2; s3 = t3; r += 4;
+    }
+    out[0] = ((sb[s0 >>> 24] << 24) | (sb[(s1 >>> 16) & 255] << 16) | (sb[(s2 >>> 8) & 255] << 8) | sb[s3 & 255]) ^ rk[r];
+    out[1] = ((sb[s1 >>> 24] << 24) | (sb[(s2 >>> 16) & 255] << 16) | (sb[(s3 >>> 8) & 255] << 8) | sb[s0 & 255]) ^ rk[r + 1];
+    out[2] = ((sb[s2 >>> 24] << 24) | (sb[(s3 >>> 16) & 255] << 16) | (sb[(s0 >>> 8) & 255] << 8) | sb[s1 & 255]) ^ rk[r + 2];
+    out[3] = ((sb[s3 >>> 24] << 24) | (sb[(s0 >>> 16) & 255] << 16) | (sb[(s1 >>> 8) & 255] << 8) | sb[s2 & 255]) ^ rk[r + 3];
+  }
+  function ghash(h, aad, ct) {
+    // h: 4 big-endian words. Bitwise GF(2^128) multiply; inputs are small.
+    var y0 = 0, y1 = 0, y2 = 0, y3 = 0;
+    function block(b, o, n) {
+      var w0 = 0, w1 = 0, w2 = 0, w3 = 0, i, v;
+      var t = new Uint8Array(16); for (i = 0; i < n; i++) t[i] = b[o + i];
+      w0 = (t[0] << 24) | (t[1] << 16) | (t[2] << 8) | t[3]; w1 = (t[4] << 24) | (t[5] << 16) | (t[6] << 8) | t[7];
+      w2 = (t[8] << 24) | (t[9] << 16) | (t[10] << 8) | t[11]; w3 = (t[12] << 24) | (t[13] << 16) | (t[14] << 8) | t[15];
+      mul(y0 ^ w0, y1 ^ w1, y2 ^ w2, y3 ^ w3);
+    }
+    function mul(x0, x1, x2, x3) {
+      var z0 = 0, z1 = 0, z2 = 0, z3 = 0, v0 = h[0], v1 = h[1], v2 = h[2], v3 = h[3], xs = [x0, x1, x2, x3];
+      for (var i = 0; i < 128; i++) {
+        if ((xs[i >> 5] >>> (31 - (i & 31))) & 1) { z0 ^= v0; z1 ^= v1; z2 ^= v2; z3 ^= v3; }
+        var lsb = v3 & 1;
+        v3 = (v3 >>> 1) | (v2 << 31); v2 = (v2 >>> 1) | (v1 << 31); v1 = (v1 >>> 1) | (v0 << 31); v0 = v0 >>> 1;
+        if (lsb) v0 ^= 0xe1000000;
+      }
+      y0 = z0; y1 = z1; y2 = z2; y3 = z3;
+    }
+    var i;
+    for (i = 0; i < aad.length; i += 16) block(aad, i, Math.min(16, aad.length - i));
+    for (i = 0; i < ct.length; i += 16) block(ct, i, Math.min(16, ct.length - i));
+    mul(y0 ^ 0, y1 ^ (aad.length * 8), y2 ^ 0, y3 ^ (ct.length * 8));
+    return [y0 | 0, y1 | 0, y2 | 0, y3 | 0];
+  }
+  function gcm(keyBytes, iv, aad, data, decrypt, tagLen) {
+    var a = aesKey(keyBytes), ks = new Uint32Array(4), i, j;
+    aad = aad ? u8(aad) : new Uint8Array(0); iv = u8(iv); tagLen = tagLen || 16;
+    aesBlock(a, 0, 0, 0, 0, ks);
+    var h = [ks[0] | 0, ks[1] | 0, ks[2] | 0, ks[3] | 0], j0;
+    if (iv.length === 12) {
+      j0 = [((iv[0] << 24) | (iv[1] << 16) | (iv[2] << 8) | iv[3]) | 0, ((iv[4] << 24) | (iv[5] << 16) | (iv[6] << 8) | iv[7]) | 0, ((iv[8] << 24) | (iv[9] << 16) | (iv[10] << 8) | iv[11]) | 0, 1];
+    } else throw new Error("only 96-bit GCM IVs supported");
+    var body = data, ctBytes, tagIn = null;
+    if (decrypt) { tagIn = data.subarray(data.length - tagLen); body = data.subarray(0, data.length - tagLen); }
+    var out = new Uint8Array(body.length), ctr = (j0[3] + 1) >>> 0;
+    for (i = 0; i < body.length; i += 16) {
+      aesBlock(a, j0[0], j0[1], j0[2], ctr, ks); ctr = (ctr + 1) >>> 0;
+      var m = Math.min(16, body.length - i);
+      for (j = 0; j < m; j++) out[i + j] = body[i + j] ^ ((ks[j >> 2] >>> (24 - 8 * (j & 3))) & 255);
+    }
+    ctBytes = decrypt ? body : out;
+    var gh = ghash(h, aad, ctBytes), tk = new Uint32Array(4);
+    aesBlock(a, j0[0], j0[1], j0[2], j0[3], tk);
+    var tag = new Uint8Array(16);
+    for (i = 0; i < 4; i++) { var w = (gh[i] ^ tk[i]) >>> 0; tag[4 * i] = w >>> 24; tag[4 * i + 1] = (w >>> 16) & 255; tag[4 * i + 2] = (w >>> 8) & 255; tag[4 * i + 3] = w & 255; }
+    if (decrypt) {
+      var bad = 0; for (i = 0; i < tagLen; i++) bad |= tag[i] ^ tagIn[i];
+      if (bad) throw new Error("OperationError");
+      return out;
+    }
+    return cat(out, tag.subarray(0, tagLen));
+  }
+
+  // ---- P-256 ----------------------------------------------------------------------------------
+  var P = BigInt("0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+  var N = BigInt("0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+  var GX = BigInt("0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296");
+  var GY = BigInt("0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5");
+  function md(a) { a %= P; return a < 0n ? a + P : a; }
+  function inv(a) { var r = md(a), e = P - 2n, res = 1n; while (e > 0n) { if (e & 1n) res = res * r % P; r = r * r % P; e >>= 1n; } return res; }
+  function dbl(pt) {
+    if (!pt) return null; var X = pt[0], Y = pt[1], Z = pt[2];
+    if (Y === 0n) return null;
+    var d = Z * Z % P, gm = Y * Y % P, bt = X * gm % P, al = 3n * ((X - d) % P) * ((X + d) % P) % P;
+    var X3 = md(al * al - 8n * bt), Z3 = md((Y + Z) * (Y + Z) - gm - d);
+    return [X3, md(al * (4n * bt - X3) - 8n * gm * gm), Z3];
+  }
+  function add(p1, p2) {
+    if (!p1) return p2; if (!p2) return p1;
+    var Z1Z1 = p1[2] * p1[2] % P, Z2Z2 = p2[2] * p2[2] % P;
+    var U1 = p1[0] * Z2Z2 % P, U2 = p2[0] * Z1Z1 % P, S1 = p1[1] * p2[2] % P * Z2Z2 % P, S2 = p2[1] * p1[2] % P * Z1Z1 % P;
+    var H = md(U2 - U1), R = md(S2 - S1);
+    if (H === 0n) return R === 0n ? dbl(p1) : null;
+    var HH = H * H % P, HHH = H * HH % P, V = U1 * HH % P, X3 = md(R * R - HHH - 2n * V);
+    return [X3, md(R * (V - X3) - S1 * HHH), p1[2] * p2[2] % P * H % P];
+  }
+  function mulPt(k, x, y) {
+    var acc = null, pt = [x, y, 1n];
+    for (var i = k.toString(2).length - 1; i >= 0; i--) { acc = dbl(acc); if ((k >> BigInt(i)) & 1n) acc = add(acc, pt); }
+    if (!acc) throw new Error("point at infinity");
+    var zi = inv(acc[2]), zi2 = zi * zi % P;
+    return [md(acc[0] * zi2), md(acc[1] * zi2 % P * zi)];
+  }
+  function bytesToBig(b) { var s = "0x"; for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") + b[i].toString(16); return BigInt(s); }
+  function bigToBytes(n, len) { var h = n.toString(16); while (h.length < len * 2) h = "0" + h; var o = new Uint8Array(len); for (var i = 0; i < len; i++) o[i] = parseInt(h.substr(i * 2, 2), 16); return o; }
+  var nativeRV = g.crypto && typeof g.crypto.getRandomValues === "function" ? g.crypto.getRandomValues.bind(g.crypto) : null;
+  function randBytes(n) {
+    var o = new Uint8Array(n);
+    if (nativeRV) return nativeRV(o);
+    for (var i = 0; i < n; i++) o[i] = Math.floor(Math.random() * 256);
+    return o;
+  }
+  function b64url(b) { return g.btoa(String.fromCharCode.apply(null, b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+  function unb64url(s) { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; var r = g.atob(s), o = new Uint8Array(r.length); for (var i = 0; i < r.length; i++) o[i] = r.charCodeAt(i); return o; }
+
+  // ---- CryptoKey-ish + SubtleCrypto -----------------------------------------------------------
+  function algName(a) { return (typeof a === "string" ? a : a && a.name || "").toUpperCase(); }
+  function mkKey(type, algorithm, extractable, usages, data) { return { type: type, algorithm: algorithm, extractable: !!extractable, usages: usages || [], _d: data }; }
+  function hashOf(a) { var h = a && a.hash; return algName(h); }
+  var subtle = {
+    digest: function (alg, data) { return Promise.resolve().then(function () { if (algName(alg) !== "SHA-256") throw new Error("NotSupported: " + algName(alg)); return ab(sha256(data)); }); },
+    generateKey: function (alg, ext, usages) {
+      return Promise.resolve().then(function () {
+        if (algName(alg) === "ECDH") {
+          var d; do { d = bytesToBig(randBytes(32)) % N; } while (d === 0n);
+          var pt = mulPt(d, GX, GY);
+          var al = { name: "ECDH", namedCurve: "P-256" };
+          return { publicKey: mkKey("public", al, true, [], pt), privateKey: mkKey("private", al, ext, usages, { d: d, pub: pt }) };
+        }
+        if (algName(alg) === "AES-GCM") return mkKey("secret", { name: "AES-GCM", length: alg.length }, ext, usages, randBytes(alg.length / 8));
+        throw new Error("NotSupported generateKey " + algName(alg));
+      });
+    },
+    importKey: function (fmt, data, alg, ext, usages) {
+      return Promise.resolve().then(function () {
+        var n = algName(alg);
+        if (n === "ECDH") {
+          var pt;
+          if (fmt === "raw") { var r = u8(data); if (r.length !== 65 || r[0] !== 4) throw new Error("DataError"); pt = [bytesToBig(r.subarray(1, 33)), bytesToBig(r.subarray(33, 65))]; }
+          else if (fmt === "jwk") { pt = [bytesToBig(unb64url(data.x)), bytesToBig(unb64url(data.y))]; if (data.d) { var dd = bytesToBig(unb64url(data.d)); return mkKey("private", { name: "ECDH", namedCurve: "P-256" }, ext, usages, { d: dd, pub: pt }); } }
+          else throw new Error("NotSupported importKey " + fmt);
+          if (md(pt[1] * pt[1]) !== md(pt[0] * pt[0] * pt[0] - 3n * pt[0] + BigInt("0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b"))) throw new Error("DataError: point not on curve");
+          return mkKey("public", { name: "ECDH", namedCurve: "P-256" }, true, [], pt);
+        }
+        if (n === "HKDF" || n === "PBKDF2") return mkKey("secret", { name: n }, false, usages, new Uint8Array(u8(data)));
+        if (n === "HMAC") return mkKey("secret", { name: "HMAC", hash: { name: hashOf(alg) } }, ext, usages, new Uint8Array(u8(data)));
+        if (n === "AES-GCM" || n === "AES-CBC" || n === "AES-CTR") { if (fmt === "jwk") data = unb64url(data.k); return mkKey("secret", { name: n, length: u8(data).length * 8 }, ext, usages, new Uint8Array(u8(data))); }
+        throw new Error("NotSupported importKey " + n);
+      });
+    },
+    exportKey: function (fmt, key) {
+      return Promise.resolve().then(function () {
+        if (!key.extractable && key.type !== "public") throw new Error("InvalidAccessError");
+        if (key.algorithm.name === "ECDH") {
+          var pt = key.type === "public" ? key._d : key._d.pub;
+          if (fmt === "raw") return ab(cat(new Uint8Array([4]), bigToBytes(pt[0], 32), bigToBytes(pt[1], 32)));
+          if (fmt === "jwk") { var j = { kty: "EC", crv: "P-256", x: b64url(bigToBytes(pt[0], 32)), y: b64url(bigToBytes(pt[1], 32)), ext: true, key_ops: key.usages }; if (key.type === "private") j.d = b64url(bigToBytes(key._d.d, 32)); return j; }
+        }
+        if (fmt === "raw" && key.type === "secret") return ab(key._d);
+        if (fmt === "jwk" && key.type === "secret") return { kty: "oct", k: b64url(key._d), alg: key.algorithm.name === "AES-GCM" ? "A" + key._d.length * 8 + "GCM" : undefined, ext: true, key_ops: key.usages };
+        throw new Error("NotSupported exportKey " + fmt);
+      });
+    },
+    deriveBits: function (alg, base, length) {
+      return Promise.resolve().then(function () {
+        var n = algName(alg);
+        if (n === "ECDH") { var pub = alg.public._d, sh = mulPt(base._d.d, pub[0], pub[1]); var x = bigToBytes(sh[0], 32); return ab(length ? x.subarray(0, length >> 3) : x); }
+        if (n === "HKDF") { if (hashOf(alg) !== "SHA-256") throw new Error("NotSupported hash " + hashOf(alg)); return ab(hkdf(base._d, alg.salt ? u8(alg.salt) : null, alg.info ? u8(alg.info) : new Uint8Array(0), length >> 3)); }
+        throw new Error("NotSupported deriveBits " + n);
+      });
+    },
+    deriveKey: function (alg, base, derived, ext, usages) {
+      var self = this;
+      return Promise.resolve().then(function () {
+        var dn = algName(derived), bits = dn === "HMAC" ? (derived.length || 256) : derived.length;
+        return self.deriveBits(alg, base, bits).then(function (raw) { return self.importKey("raw", raw, derived, ext, usages); });
+      });
+    },
+    encrypt: function (alg, key, data) {
+      return Promise.resolve().then(function () { if (algName(alg) !== "AES-GCM") throw new Error("NotSupported encrypt " + algName(alg)); return ab(gcm(key._d, alg.iv, alg.additionalData, u8(data), false, (alg.tagLength || 128) >> 3)); });
+    },
+    decrypt: function (alg, key, data) {
+      return Promise.resolve().then(function () { if (algName(alg) !== "AES-GCM") throw new Error("NotSupported decrypt " + algName(alg)); return ab(gcm(key._d, alg.iv, alg.additionalData, u8(data), true, (alg.tagLength || 128) >> 3)); });
+    },
+    sign: function (alg, key, data) { return Promise.resolve().then(function () { if (algName(alg) !== "HMAC") throw new Error("NotSupported sign"); return ab(hmac(key._d, data)); }); },
+    verify: function (alg, key, sig, data) { return Promise.resolve().then(function () { var m = hmac(key._d, data), s = u8(sig), d = m.length === s.length ? 0 : 1; for (var i = 0; i < m.length; i++) d |= m[i] ^ (s[i] || 0); return d === 0; }); }
+  };
+  var cr = g.crypto || {};
+  cr.subtle = subtle;
+  if (!cr.getRandomValues) cr.getRandomValues = function (a) { var b = randBytes(a.byteLength); new Uint8Array(a.buffer, a.byteOffset, a.byteLength).set(b); return a; };
+  if (!cr.randomUUID) cr.randomUUID = function () { var b = randBytes(16); b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128; var h = ""; for (var i = 0; i < 16; i++) h += (b[i] < 16 ? "0" : "") + b[i].toString(16); return h.substr(0, 8) + "-" + h.substr(8, 4) + "-" + h.substr(12, 4) + "-" + h.substr(16, 4) + "-" + h.substr(20); };
+  g.crypto = cr;
+  g.__cryptoPoly = { sha256: sha256, hmac: hmac, hkdf: hkdf, gcm: gcm };
+}
+
+// Minimal WebAssembly stand-in for engines without WebAssembly: translates a module that uses only
+function senshiWasm(g) {
+  function compile(b) {
+    var p = 8, i, j, secs = {};
+    function u32() { var r = 0, s = 0, x; do { x = b[p++]; r |= (x & 127) << s; s += 7; } while (x & 128); return r >>> 0; }
+    function s32() { var r = 0, s = 0, x; do { x = b[p++]; r |= (x & 127) << s; s += 7; } while (x & 128); if (s < 32 && (x & 64)) r |= -(1 << s); return r | 0; }
+    function str(n) { var o = ""; for (var k = 0; k < n; k++) o += String.fromCharCode(b[p++]); return o; }
+    while (p < b.length) { var id = b[p++]; var len = u32(); secs[id] = [p, len]; p += len; }
+
+    // types
+    var types = [];
+    p = secs[1][0]; var nt = u32();
+    for (i = 0; i < nt; i++) { p++; var np = u32(); p += np; var nr = u32(); p += nr; types.push({ params: np, results: nr }); }
+    // functions
+    var funcType = [];
+    p = secs[3][0]; var nf = u32();
+    for (i = 0; i < nf; i++) funcType.push(u32());
+    // memory
+    var pages = 1;
+    if (secs[5]) { p = secs[5][0]; u32(); var fl = u32(); pages = u32(); }
+    // globals
+    var globalInit = [];
+    if (secs[6]) {
+      p = secs[6][0]; var ng = u32();
+      for (i = 0; i < ng; i++) { p += 2; var op = b[p++]; var v = s32(); p++; globalInit.push(v); }
+    }
+    // exports
+    var exportsFn = {};
+    p = secs[7][0]; var ne = u32();
+    for (i = 0; i < ne; i++) { var nl = u32(); var nm = str(nl); var kind = b[p++]; var idx = u32(); if (kind === 0) exportsFn[nm] = idx; }
+
+    // code
+    p = secs[10][0]; var ncode = u32(); var src = [];
+    for (var fi = 0; fi < ncode; fi++) {
+      var sz = u32(); var end = p + sz; var ty = types[funcType[fi]];
+      var nlocalGroups = u32(), nlocals = 0;
+      for (i = 0; i < nlocalGroups; i++) { nlocals += u32(); p++; }
+      var sp = 0, maxsp = 0, labelN = 0;
+      var out = [];
+      var ctl = [{ kind: "func", label: "F", base: 0, arity: ty.results }];
+      var dead = 0, deadNest = 0;
+      function S(n) { return "s" + n; }
+      function push(expr) { out.push(S(sp) + "=" + expr + ";"); sp++; if (sp > maxsp) maxsp = sp; }
+      function pop() { sp--; return S(sp); }
+      function skipImm(op) {
+        if (op === 0x0c || op === 0x0d || op === 0x10) u32();
+        else if (op === 0x0e) { var c = u32(); for (var k = 0; k <= c; k++) u32(); }
+        else if (op >= 0x20 && op <= 0x24) u32();
+        else if (op >= 0x28 && op <= 0x3e) { u32(); u32(); }
+        else if (op === 0x3f || op === 0x40) p++;
+        else if (op === 0x41) s32();
+        else if (op === 0x42) { while (b[p++] & 128); }
+        else if (op === 0x43) p += 4; else if (op === 0x44) p += 8;
+      }
+      function branch(depth) {
+        var t = ctl[ctl.length - 1 - depth], code = "";
+        if (t.kind === "loop") return "continue " + t.label + ";";
+        if (t.kind === "func") return "return" + (t.arity ? " " + S(sp - 1) : "") + ";";
+        if (t.arity) code += S(t.base) + "=" + S(sp - 1) + ";";
+        return code + "break " + t.label + ";";
+      }
+      var bin = {
+        0x46: "(a===b)|0", 0x47: "(a!==b)|0", 0x48: "(a<b)|0", 0x49: "((a>>>0)<(b>>>0))|0", 0x4a: "(a>b)|0", 0x4b: "((a>>>0)>(b>>>0))|0",
+        0x4c: "(a<=b)|0", 0x4d: "((a>>>0)<=(b>>>0))|0", 0x4e: "(a>=b)|0", 0x4f: "((a>>>0)>=(b>>>0))|0",
+        0x6a: "(a+b)|0", 0x6b: "(a-b)|0", 0x6c: "Math.imul(a,b)", 0x6d: "(a/b)|0", 0x6e: "Math.floor((a>>>0)/(b>>>0))|0",
+        0x6f: "(a%b)|0", 0x70: "((a>>>0)%(b>>>0))|0", 0x71: "a&b", 0x72: "a|b", 0x73: "a^b", 0x74: "a<<b", 0x75: "a>>b", 0x76: "(a>>>b)|0",
+        0x77: "((a<<(b&31))|(a>>>((32-(b&31))&31)))|0", 0x78: "((a>>>(b&31))|(a<<((32-(b&31))&31)))|0"
+      };
+      while (p < end) {
+        var op = b[p++];
+        if (dead) {
+          if (op === 0x02 || op === 0x03 || op === 0x04) { p++; deadNest++; continue; }
+          if (op === 0x05 && deadNest === 0) { /* fallthrough to normal else handling */ }
+          else if (op === 0x0b) { if (deadNest > 0) { deadNest--; continue; } }
+          else { skipImm(op); continue; }
+        }
+        if (op === 0x02 || op === 0x03 || op === 0x04) {
+          var bt = b[p++]; var ar = bt === 0x40 ? 0 : 1; var lab = "L" + (labelN++);
+          if (op === 0x04) {
+            var c = pop();
+            ctl.push({ kind: "if", label: lab, base: sp, arity: ar, hasElse: false });
+            out.push(lab + ":{if(" + c + "!==0){");
+          } else if (op === 0x03) {
+            ctl.push({ kind: "loop", label: lab, base: sp, arity: ar });
+            out.push(lab + ":while(true){");
+          } else {
+            ctl.push({ kind: "block", label: lab, base: sp, arity: ar });
+            out.push(lab + ":{");
+          }
+          continue;
+        }
+        if (op === 0x05) {
+          var t5 = ctl[ctl.length - 1]; t5.hasElse = true; dead = 0; deadNest = 0; sp = t5.base;
+          out.push("}else{"); continue;
+        }
+        if (op === 0x0b) {
+          var t = ctl.pop();
+          if (t.kind === "func") { if (!dead) out.push(t.arity ? "return " + S(sp - 1) + ";" : ""); break; }
+          if (t.kind === "loop") out.push("break " + t.label + ";}");
+          else if (t.kind === "if") out.push("}}");
+          else out.push("}");
+          dead = 0; deadNest = 0; sp = t.base + t.arity; if (sp > maxsp) maxsp = sp;
+          continue;
+        }
+        switch (op) {
+          case 0x00: out.push('throw new Error("unreachable");'); dead = 1; break;
+          case 0x01: break;
+          case 0x0c: out.push(branch(u32())); dead = 1; break;
+          case 0x0d: { var c2 = pop(); out.push("if(" + c2 + "!==0){" + branch(u32()) + "}"); break; }
+          case 0x0e: {
+            var cnt = u32(); var cv = pop(); var parts = ["switch(" + cv + "){"];
+            for (j = 0; j < cnt; j++) parts.push("case " + j + ":{" + branch(u32()) + "}");
+            parts.push("default:{" + branch(u32()) + "}}"); out.push(parts.join("")); dead = 1; break;
+          }
+          case 0x0f: out.push(ty.results ? "return " + S(sp - 1) + ";" : "return;"); dead = 1; break;
+          case 0x10: {
+            var ci = u32(); var cty = types[funcType[ci]]; var args = [];
+            for (j = 0; j < cty.params; j++) args.unshift(pop());
+            var call = "f" + ci + "(" + args.join(",") + ")";
+            if (cty.results) push(call); else out.push(call + ";"); break;
+          }
+          case 0x1a: sp--; break;
+          case 0x1b: { var sc = pop(), sb = pop(), sa = pop(); push("(" + sc + "!==0?" + sa + ":" + sb + ")"); break; }
+          case 0x20: { var li = u32(); push(li < ty.params ? "p" + li : "l" + li); break; }
+          case 0x21: { var li2 = u32(); out.push((li2 < ty.params ? "p" : "l") + li2 + "=" + pop() + ";"); break; }
+          case 0x22: { var li3 = u32(); out.push((li3 < ty.params ? "p" : "l") + li3 + "=" + S(sp - 1) + ";"); break; }
+          case 0x23: push("G[" + u32() + "]"); break;
+          case 0x24: out.push("G[" + u32() + "]=" + pop() + ";"); break;
+          case 0x28: case 0x2c: case 0x2d: case 0x2e: case 0x2f: {
+            u32(); var off = u32(); var ad = pop(); var a = "((" + ad + ">>>0)+" + off + ")";
+            if (op === 0x28) push("(M[" + a + "]|(M[" + a + "+1]<<8)|(M[" + a + "+2]<<16)|(M[" + a + "+3]<<24))");
+            else if (op === 0x2d) push("M[" + a + "]");
+            else if (op === 0x2c) push("(M[" + a + "]<<24>>24)");
+            else if (op === 0x2f) push("(M[" + a + "]|(M[" + a + "+1]<<8))");
+            else push("((M[" + a + "]|(M[" + a + "+1]<<8))<<16>>16)");
+            break;
+          }
+          case 0x36: case 0x3a: case 0x3b: {
+            u32(); var off2 = u32(); var val = pop(); var ad2 = pop(); var a2 = "((" + ad2 + ">>>0)+" + off2 + ")";
+            out.push("M[" + a2 + "]=" + val + ";");
+            if (op !== 0x3a) out.push("M[" + a2 + "+1]=" + val + ">>8;");
+            if (op === 0x36) out.push("M[" + a2 + "+2]=" + val + ">>16;M[" + a2 + "+3]=" + val + ">>24;");
+            break;
+          }
+          case 0x3f: p++; push(String(pages)); break;
+          case 0x41: push(String(s32())); break;
+          case 0x45: { var e = pop(); push("(" + e + "===0)|0"); break; }
+          case 0x67: { var e1 = pop(); push("Math.clz32(" + e1 + ")"); break; }
+          default:
+            if (bin[op]) { var bb = pop(), aa = pop(); push(bin[op].replace(/\ba\b/g, "(" + aa + ")").replace(/\bb\b/g, "(" + bb + ")")); }
+            else throw new Error("wasm op 0x" + op.toString(16) + " unsupported");
+        }
+      }
+      p = end;
+      var decl = [], params = [], k;
+      for (k = 0; k < ty.params; k++) params.push("p" + k);
+      for (k = 0; k < nlocals; k++) decl.push("l" + (ty.params + k) + "=0");
+      for (k = 0; k < maxsp + 1; k++) decl.push("s" + k + "=0");
+      var pre = ""; for (k = 0; k < ty.params; k++) pre += "p" + k + "|=0;";
+      src.push("function f" + (fi + 0) + "(" + params.join(",") + "){" + pre + (decl.length ? "var " + decl.join(",") + ";" : "") + "F:{" + out.join("\n") + "}}");
+    }
+    // data segments
+    var mem = new Uint8Array(pages * 65536);
+    if (secs[11]) {
+      p = secs[11][0]; var nd = u32();
+      for (i = 0; i < nd; i++) {
+        var flag = u32(); var off0 = 0;
+        if (flag === 0) { p++; off0 = s32(); p++; }
+        var dl = u32(); for (j = 0; j < dl; j++) mem[off0 + j] = b[p++];
+      }
+    }
+    var names = [], vals = [];
+    for (var nme in exportsFn) { names.push(nme); }
+    var body = "var M=mem,G=gl;\n" + src.join("\n") + "\nreturn {" + names.map(function (n) { return JSON.stringify(n) + ":f" + exportsFn[n]; }).join(",") + "};";
+    var fnsObj = new Function("mem", "gl", body)(mem, globalInit.slice());
+    var exportsObj = { memory: { buffer: mem.buffer } };
+    for (var n2 in fnsObj) exportsObj[n2] = fnsObj[n2];
+    return { exports: exportsObj, _src: body };
+  }
+  g.WebAssembly = {
+    instantiate: function (b) {
+      try {
+        var u = b instanceof ArrayBuffer ? new Uint8Array(b) : new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+        return Promise.resolve({ instance: compile(u), module: {} });
+      } catch (e) { return Promise.reject(e); }
+    }
+  };
+}
+
+// Evaluates the runtime's source with every property of g standing in for the
+// global of the same name (window, document, crypto, fetch, WebAssembly ...).
+function senshiRunPlayer(code, g) {
+  var names = Object.keys(g), vals = [], i;
+  for (i = 0; i < names.length; i++) vals.push(g[names[i]]);
+  names.push(code);
+  Function.apply(null, names).apply(g, vals);
+}
+
+// A response as the runtime's fetch() sees it. The app's Client hands bodies
+// back as strings; for the PNG-typed replies used here that is Latin-1, one
+// char per byte, which this turns back into bytes.
+function senshiResponse(status, body, headers, g) {
+  var str = String(body || ""), bytes = new Uint8Array(str.length), i;
+  for (i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 255;
+  var hdrs = headers || {};
+  return {
+    status: status,
+    ok: status >= 200 && status < 300,
+    headers: {
+      get: function (k) {
+        var want = String(k).toLowerCase();
+        for (var name in hdrs) if (String(name).toLowerCase() === want) return String(hdrs[name]);
+        return null;
+      },
+    },
+    arrayBuffer: function () { var o = new Uint8Array(bytes.length); o.set(bytes); return Promise.resolve(o.buffer); },
+    text: function () { return Promise.resolve(new g.TextDecoder().decode(bytes)); },
+    json: function () { return Promise.resolve(JSON.parse(new g.TextDecoder().decode(bytes))); },
+  };
+}
 
 class DefaultExtension extends MProvider {
   constructor() {
@@ -548,22 +1127,74 @@ class DefaultExtension extends MProvider {
     return fetched.filter(function (s) { return s !== null; });
   }
 
-  // remote_source_id → { height, tracks, src }. src is the master playlist URL
-  // (with a short-lived token). A failure costs the quality label and the
-  // subtitles, and in direct mode the whole version, so callers decide.
+  // fetch() for the player runtime, over the app's Client. Request bodies cross
+  // the bridge as plain number arrays (a typed array would arrive as a map) and
+  // come out as raw bytes; the PNG-typed replies come back Latin-1.
+  playerFetch(g, url, opts) {
+    opts = opts || {};
+    var headers = {}, k, src = this.streamHeaders;
+    for (k in src) headers[k] = src[k];
+    for (k in (opts.headers || {})) headers[k] = opts.headers[k];
+    var method = String(opts.method || "GET").toUpperCase();
+    var p;
+    if (method === "GET") {
+      p = this.client.get(String(url), headers);
+    } else {
+      var b = opts.body, arr = [], i;
+      if (typeof b === "string") b = new g.TextEncoder().encode(b);
+      else if (b instanceof ArrayBuffer) b = new Uint8Array(b);
+      else if (b && b.buffer) b = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+      for (i = 0; b && i < b.length; i++) arr.push(b[i]);
+      p = this.client.post(String(url), headers, arr);
+    }
+    return p.then(function (res) {
+      return senshiResponse(res.statusCode, res.body, res.headers, g);
+    });
+  }
+
+  // Loads the runtime once per extension instance and returns window.__oct.
+  async player() {
+    if (this._playerP) return this._playerP;
+    var self = this;
+    this._playerP = (async function () {
+      var res = await self.client.get(PLAYER_URL, self.streamHeaders);
+      var code = (res && res.body) || "";
+      if (code.length < 1000 || /^s*</.test(code)) {
+        throw new Error("Senshi's player script could not be loaded (HTTP " + (res && res.statusCode) + ")");
+      }
+      var g = {};
+      senshiEnv(g);
+      senshiCrypto(g);
+      senshiWasm(g);
+      g.fetch = function (url, opts) { return self.playerFetch(g, url, opts); };
+      senshiRunPlayer(code, g);
+      for (var i = 0; i < 20 && !g.__oct; i++) await Promise.resolve();
+      if (!g.__oct || typeof g.__oct.open !== "function") {
+        throw new Error("Senshi's player script changed shape (no __oct.open)");
+      }
+      return g.__oct;
+    })();
+    this._playerP.catch(function () { self._playerP = null; });
+    return this._playerP;
+  }
+
+  // remote_source_id → { src, tracks, error }. src is the master playlist URL
+  // (with a short-lived signed token). A failure costs the subtitles and in
+  // direct mode the whole version, so it is reported in error, not thrown.
   async sourceInfo(remoteId) {
     try {
-      var data = await this.getJson(SOURCES_URL + remoteId, this.streamHeaders);
+      var oct = await this.player();
+      var data = await oct.open(Number(remoteId));
       var entry = Array.isArray(data) ? data[0] : data;
-      if (!entry) return null;
-      var q = entry.source && entry.source.quality;
+      var srcs = entry && entry.source;
+      var first = Array.isArray(srcs) ? srcs[0] : srcs;
       return {
-        height: parseInt(q, 10) || 0,
-        src: (entry.source && entry.source.src) || "",
-        tracks: Array.isArray(entry.tracks) ? entry.tracks : [],
+        src: (first && first.src) || "",
+        tracks: entry && Array.isArray(entry.tracks) ? entry.tracks : [],
+        error: first && first.src ? "" : "empty reply",
       };
     } catch (e) {
-      return null;
+      return { src: "", tracks: [], error: String((e && e.message) || e) };
     }
   }
 
@@ -826,7 +1457,8 @@ class DefaultExtension extends MProvider {
     var getMaster = function (rid) {
       var info = infoOf[rid];
       if (!info || !info.src) {
-        return Promise.reject(new Error("Senshi's stream lookup returned nothing for this episode"));
+        return Promise.reject(new Error("Senshi's stream lookup returned nothing for this episode" +
+          (info && info.error ? " (" + info.error + ")" : "")));
       }
       if (!masters[rid]) {
         masters[rid] = self.fetchPlaylist(info.src).then(function (b) { return self.parseMaster(b, info.src); });
@@ -899,10 +1531,9 @@ class DefaultExtension extends MProvider {
     embeds.forEach(function (e) {
       if (e && e.remote_source_id && ids.indexOf(e.remote_source_id) < 0) ids.push(e.remote_source_id);
     });
-    var self = this;
-    var infos = await Promise.all(ids.map(function (rid) { return self.sourceInfo(rid); }));
+    // One after another: the player runtime keeps a single handshake session.
     var infoOf = {};
-    ids.forEach(function (rid, i) { infoOf[rid] = infos[i]; });
+    for (var n = 0; n < ids.length; n++) infoOf[ids[n]] = await this.sourceInfo(ids[n]);
 
     var headers = this.streamHeaders;
 
