@@ -33,7 +33,7 @@ This repository contains the available javascript extension catalogues for the M
 | MyroniX | 0.2.5 | Yes | Sub+Dub | 2026/09/21 |
 | Playback Diagnostic | 0.0.2 | No | N/a | 2026/08/10 |
 | ReAnime | 0.5.2 | No | Sub+Dub | 2026/10/08 |
-| Senshi | 0.5.2 | ? | Sub+Dub | 2026/10/08 |
+| Senshi | 0.5.3 | ? | Sub+Dub | 2026/10/08 |
 
 ## Novel
 

@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.2",
+    "version": "0.5.3",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -1127,48 +1127,57 @@ class DefaultExtension extends MProvider {
     return fetched.filter(function (s) { return s !== null; });
   }
 
-  // One request for the player. A failure names the request; the app's Rust
-  // client and its plain Dart client decode bodies differently, so when the
-  // first throws a FormatException the same request is retried on the other.
-  async playerSend(method, url, headers, arr) {
-    var tryOne = async function (c) {
-      return method === "GET" ? await c.get(url, headers) : await c.post(url, headers, arr);
-    };
-    try {
-      return await tryOne(this.client);
-    } catch (e) {
-      var msg = String((e && e.message) || e);
-      if (msg.indexOf("FormatException") >= 0) {
-        try {
-          return await tryOne(new Client({ useDartHttpClient: true }));
-        } catch (e2) {
-          msg = msg + "; retry: " + String((e2 && e2.message) || e2);
-        }
-      }
-      throw new Error(method + " " + String(url).replace(/^https?:\/\/([^\/]+)(\/[^?]{0,40}).*$/, "$1$2") +
-        (arr ? " [" + arr.length + " bytes]" : "") + ": " + msg);
+  // One request for the player. A body is sent as a Latin-1 string (one char
+  // per byte) with a matching charset: the app's HTTP layer turns a String body
+  // into bytes with the declared charset, and it chokes on a byte list that is
+  // not valid UTF-8 (FormatException). If that still fails, the request is
+  // retried on the app's plain Dart client and then as a byte list; a failure
+  // names the request.
+  async playerSend(method, url, headers, bytes) {
+    var body = null, i;
+    if (bytes) {
+      var parts = [];
+      for (i = 0; i < bytes.length; i += 4096) parts.push(String.fromCharCode.apply(null, bytes.slice(i, i + 4096)));
+      body = parts.join("");
     }
+    var attempts = [
+      [this.client, body],
+      [new Client({ useDartHttpClient: true }), body],
+      [this.client, bytes],
+    ];
+    var msg = "";
+    for (i = 0; i < attempts.length; i++) {
+      if (i > 0 && (!bytes || msg.indexOf("FormatException") < 0)) break;
+      try {
+        var c = attempts[i][0];
+        return method === "GET" ? await c.get(url, headers) : await c.post(url, headers, attempts[i][1]);
+      } catch (e) {
+        msg += (msg ? "; retry: " : "") + String((e && e.message) || e);
+      }
+    }
+    throw new Error(method + " " + String(url).replace(/^https?:\/\/([^\/]+)(\/[^?]{0,40}).*$/, "$1$2") +
+      (bytes ? " [" + bytes.length + " bytes]" : "") + ": " + msg);
   }
 
-  // fetch() for the player runtime, over the app's Client. Request bodies cross
-  // the bridge as plain number arrays (a typed array would arrive as a map) and
-  // come out as raw bytes; the PNG-typed replies come back Latin-1.
+  // fetch() for the player runtime, over the app's Client; the PNG-typed
+  // replies come back as Latin-1 strings.
   playerFetch(g, url, opts) {
     opts = opts || {};
     var headers = {}, k, src = this.streamHeaders;
     for (k in src) headers[k] = src[k];
     for (k in (opts.headers || {})) headers[k] = opts.headers[k];
     var method = String(opts.method || "GET").toUpperCase();
-    var arr = null;
+    var bytes = null;
     if (method !== "GET") {
       var b = opts.body, i;
-      arr = [];
+      bytes = [];
       if (typeof b === "string") b = new g.TextEncoder().encode(b);
       else if (b instanceof ArrayBuffer) b = new Uint8Array(b);
       else if (b && b.buffer) b = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
-      for (i = 0; b && i < b.length; i++) arr.push(b[i]);
+      for (i = 0; b && i < b.length; i++) bytes.push(b[i]);
+      headers["Content-Type"] = "image/png; charset=latin1";
     }
-    return this.playerSend(method, String(url), headers, arr).then(function (res) {
+    return this.playerSend(method, String(url), headers, bytes).then(function (res) {
       return senshiResponse(res.statusCode, res.body, res.headers, g);
     });
   }
