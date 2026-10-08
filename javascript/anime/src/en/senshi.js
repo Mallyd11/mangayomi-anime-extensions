@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.1",
+    "version": "0.5.2",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -1127,6 +1127,29 @@ class DefaultExtension extends MProvider {
     return fetched.filter(function (s) { return s !== null; });
   }
 
+  // One request for the player. A failure names the request; the app's Rust
+  // client and its plain Dart client decode bodies differently, so when the
+  // first throws a FormatException the same request is retried on the other.
+  async playerSend(method, url, headers, arr) {
+    var tryOne = async function (c) {
+      return method === "GET" ? await c.get(url, headers) : await c.post(url, headers, arr);
+    };
+    try {
+      return await tryOne(this.client);
+    } catch (e) {
+      var msg = String((e && e.message) || e);
+      if (msg.indexOf("FormatException") >= 0) {
+        try {
+          return await tryOne(new Client({ useDartHttpClient: true }));
+        } catch (e2) {
+          msg = msg + "; retry: " + String((e2 && e2.message) || e2);
+        }
+      }
+      throw new Error(method + " " + String(url).replace(/^https?:\/\/([^\/]+)(\/[^?]{0,40}).*$/, "$1$2") +
+        (arr ? " [" + arr.length + " bytes]" : "") + ": " + msg);
+    }
+  }
+
   // fetch() for the player runtime, over the app's Client. Request bodies cross
   // the bridge as plain number arrays (a typed array would arrive as a map) and
   // come out as raw bytes; the PNG-typed replies come back Latin-1.
@@ -1136,18 +1159,16 @@ class DefaultExtension extends MProvider {
     for (k in src) headers[k] = src[k];
     for (k in (opts.headers || {})) headers[k] = opts.headers[k];
     var method = String(opts.method || "GET").toUpperCase();
-    var p;
-    if (method === "GET") {
-      p = this.client.get(String(url), headers);
-    } else {
-      var b = opts.body, arr = [], i;
+    var arr = null;
+    if (method !== "GET") {
+      var b = opts.body, i;
+      arr = [];
       if (typeof b === "string") b = new g.TextEncoder().encode(b);
       else if (b instanceof ArrayBuffer) b = new Uint8Array(b);
       else if (b && b.buffer) b = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
       for (i = 0; b && i < b.length; i++) arr.push(b[i]);
-      p = this.client.post(String(url), headers, arr);
     }
-    return p.then(function (res) {
+    return this.playerSend(method, String(url), headers, arr).then(function (res) {
       return senshiResponse(res.statusCode, res.body, res.headers, g);
     });
   }
@@ -1157,7 +1178,7 @@ class DefaultExtension extends MProvider {
     if (this._playerP) return this._playerP;
     var self = this;
     this._playerP = (async function () {
-      var res = await self.client.get(PLAYER_URL, self.streamHeaders);
+      var res = await self.playerSend("GET", PLAYER_URL, self.streamHeaders, null);
       var code = (res && res.body) || "";
       if (code.length < 1000 || /^s*</.test(code)) {
         throw new Error("Senshi's player script could not be loaded (HTTP " + (res && res.statusCode) + ")");
