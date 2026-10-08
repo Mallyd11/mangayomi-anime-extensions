@@ -14,7 +14,7 @@ def extensionInfo(filepath):
     start = data.find(s) + len(s)
     end = data.find(e)
     cont = data[start:end]
-    return fix_json(data[start:end])[0]
+    return fix_json(data[start:end])
 
 def readFile(fileName):
     # Explicit utf-8: the default codepage on Windows mangles non-ASCII source
@@ -39,6 +39,24 @@ def writeJsonFile(fileName,data):
     json.dump(data,f,indent=4,ensure_ascii=False)
     f.close()
     print(f"DONE: {fileName}")
+
+
+def preserveExistingOrder(entries, existing):
+    positions = {
+        (entry.get("name", ""), entry.get("lang", "")): index
+        for index, entry in enumerate(existing)
+    }
+    return sorted(
+        entries,
+        key=lambda entry: (
+            positions.get(
+                (entry.get("name", ""), entry.get("lang", "")),
+                len(positions),
+            ),
+            entry.get("name", "").casefold(),
+            entry.get("lang", "").casefold(),
+        ),
+    )
     
     
 def generateHash(lang,name):

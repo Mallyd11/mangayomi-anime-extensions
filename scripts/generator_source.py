@@ -2,7 +2,14 @@ from pathlib import Path
 import os, shutil, json, re
 from glob import glob
 from pprint import pp
-from common import readFile, readJsonFile, writeJsonFile, getParentPath,extensionInfo
+from common import (
+    extensionInfo,
+    getParentPath,
+    preserveExistingOrder,
+    readFile,
+    readJsonFile,
+    writeJsonFile,
+)
 from model import Source, ItemType
 
 def formatExtenstionInfo(info):
@@ -53,19 +60,31 @@ try:
     for filePath in js_files:
         paths = Path(filePath).resolve().parts
 
-        info = extensionInfo(filePath)
-        formattedInfo: list = formatExtenstionInfo(info)
+        for info in extensionInfo(filePath):
+            formattedInfo: list = formatExtenstionInfo(info)
 
-        if "anime" in paths:
-            animeList.extend(formattedInfo)
-        elif "manga" in paths:
-            mangaList.extend(formattedInfo)
-        else:
-            novelList.extend(formattedInfo)
+            if "anime" in paths:
+                animeList.extend(formattedInfo)
+            elif "manga" in paths:
+                mangaList.extend(formattedInfo)
+            else:
+                novelList.extend(formattedInfo)
 
-    writeJsonFile(main_dir / "anime_index.json", animeList)
-    writeJsonFile(main_dir / "index.json", mangaList)
-    writeJsonFile(main_dir / "novel_index.json", novelList)
+    anime_path = main_dir / "anime_index.json"
+    manga_path = main_dir / "index.json"
+    novel_path = main_dir / "novel_index.json"
+    writeJsonFile(
+        anime_path,
+        preserveExistingOrder(animeList, readJsonFile(anime_path)),
+    )
+    writeJsonFile(
+        manga_path,
+        preserveExistingOrder(mangaList, readJsonFile(manga_path)),
+    )
+    writeJsonFile(
+        novel_path,
+        preserveExistingOrder(novelList, readJsonFile(novel_path)),
+    )
 except Exception as e:
     print("ERR: " + paths[len(paths) - 1])
     print(e)
