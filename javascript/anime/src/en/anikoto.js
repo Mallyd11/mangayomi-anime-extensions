@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.26",
+    "version": "0.4.27",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -641,14 +641,22 @@ class DefaultExtension extends MProvider {
 
   // The downloader takes the FIRST entry whose whole originalUrl ends in
   // .m3u8/.m3u (a signed ?token=... URL is rejected) and fetches its url. Only
-  // VidCloud's CDN survives the app's parallel segment pool; MegaPlay's and the
-  // others answer 429 partway through. So only VidCloud entries get an alias
-  // param (both the CDN and the proxy read params by name and ignore it), and
-  // every other server is left unmatched so it can never be the one picked.
-  _dlAlias(u, label) {
-    if (!u || !/vidcloud/i.test(String(label || ""))) return u;
-    if (/\.(m3u8|m3u)$/i.test(u)) return u;
-    return u + (u.indexOf("?") >= 0 ? "&" : "?") + "x=.m3u8";
+  // VidCloud's CDN survives the app's parallel segment pool; the others answer
+  // 429 partway through. So when the list holds a VidCloud entry only those get
+  // an alias param (CDNs read params by name and ignore it) and every other
+  // server stays unmatched; with no VidCloud entry, all get it so a download
+  // can at least start.
+  _applyDownloadAlias(streams) {
+    var vc = function (st) { return /vidcloud/i.test(String(st.quality || "")); };
+    var any = false;
+    for (var i = 0; i < streams.length; i++) if (vc(streams[i])) { any = true; break; }
+    for (var j = 0; j < streams.length; j++) {
+      var u = streams[j].originalUrl;
+      if (!u || (any && !vc(streams[j]))) continue;
+      if (/\.(m3u8|m3u)$/i.test(u)) continue;
+      streams[j].originalUrl = u + (u.indexOf("?") >= 0 ? "&" : "?") + "x=.m3u8";
+    }
+    return streams;
   }
 
   // Emit one server's playlists into `streams`.
@@ -674,7 +682,7 @@ class DefaultExtension extends MProvider {
         // The downloader only accepts an originalUrl that ends in .m3u8; the
         // proxy reads its params by name, so the extra one is ignored and the
         // URL still plays when the player opens it directly.
-        originalUrl: this._dlAlias(proxyUrl, audioLabel),
+        originalUrl: proxyUrl,
         quality: (pl.label ? pl.label + " - " : "") + audioLabel + " ⟨fixed⟩",
         // The proxy attaches the upstream Referer itself; forwarding ours would
         // make Mangayomi send it to the proxy instead.
@@ -687,7 +695,7 @@ class DefaultExtension extends MProvider {
         url: playlists[v].url,
         // An inlined playlist has no URL of its own; keep the real one here so
         // the app still has something addressable to fall back on.
-        originalUrl: this._dlAlias(playlists[v].originalUrl || m3u8, audioLabel),
+        originalUrl: playlists[v].originalUrl || m3u8,
         quality: (playlists[v].label ? playlists[v].label + " - " : "") + audioLabel,
         headers: hdrs,
         subtitles: subtitles,
@@ -1330,7 +1338,7 @@ class DefaultExtension extends MProvider {
     return [chosen, rest];
   }
 
-  // Downloads only work from VidCloud (see _dlAlias), so make sure a VidCloud
+  // Downloads only work from VidCloud (see _applyDownloadAlias), so make sure a VidCloud
   // entry is in the list even when the viewer has not switched that server on.
   // It goes last, so it never leads the picker or changes what plays by default.
   async _ensureVidcloud(tiers, audioLabel, collected) {
@@ -1514,10 +1522,12 @@ class DefaultExtension extends MProvider {
     subStreams = this._applyPlaybackPrefs(subStreams, serverOrder, qualityPref);
     dubStreams = this._applyPlaybackPrefs(dubStreams, serverOrder, qualityPref);
 
-    if (audioPref === "dub_sub") return dubStreams.concat(subStreams);
-    if (audioPref === "sub")     return subStreams;
-    if (audioPref === "dub")     return dubStreams;
-    return subStreams.concat(dubStreams);
+    var ordered;
+    if (audioPref === "dub_sub") ordered = dubStreams.concat(subStreams);
+    else if (audioPref === "sub") ordered = subStreams;
+    else if (audioPref === "dub") ordered = dubStreams;
+    else ordered = subStreams.concat(dubStreams);
+    return this._applyDownloadAlias(ordered);
   }
 
   getFilterList() {
