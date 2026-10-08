@@ -26,6 +26,18 @@
         }
     },
     "anime": {
+        "AniKoto": {
+            "name": "AniKoto",
+            "version": "0.4.22",
+            "langs": "en",
+            "lastUpd": 1791479069.582322
+        },
+        "AniWave": {
+            "name": "AniWave",
+            "version": "0.2.4",
+            "langs": "en",
+            "lastUpd": 1791479069.582322
+        },
         "ReAnime": {
             "name": "ReAnime",
             "version": "0.5.2",
@@ -49,12 +61,6 @@
             "version": "0.1.1",
             "langs": "en",
             "lastUpd": 1790357285.862423
-        },
-        "AniKoto": {
-            "name": "AniKoto",
-            "version": "0.4.21",
-            "langs": "en",
-            "lastUpd": 1790089145.015745
         },
         "Senshi": {
             "name": "Senshi",
@@ -97,12 +103,6 @@
             "version": "0.2.8",
             "langs": "en",
             "lastUpd": 1787165614.772946
-        },
-        "AniWave": {
-            "name": "AniWave",
-            "version": "0.2.3",
-            "langs": "en",
-            "lastUpd": 1786471456.464118
         },
         "Playback Diagnostic": {
             "name": "Playback Diagnostic",
