@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.4",
+    "version": "0.5.5",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -1150,40 +1150,13 @@ class DefaultExtension extends MProvider {
       if (i > 0 && (!bytes || msg.indexOf("FormatException") < 0)) break;
       try {
         var c = attempts[i][0];
-        var r = method === "GET" ? await c.get(url, headers) : await c.post(url, headers, attempts[i][1]);
-        if (bytes && r && r.statusCode === 403) await this.playerDiag(headers, bytes, body);   // TEMPORARY
-        return r;
+        return method === "GET" ? await c.get(url, headers) : await c.post(url, headers, attempts[i][1]);
       } catch (e) {
         msg += (msg ? "; retry: " : "") + String((e && e.message) || e);
       }
     }
     throw new Error(method + " " + String(url).replace(/^https?:\/\/([^\/]+)(\/[^?]{0,40}).*$/, "$1$2") +
       (bytes ? " [" + bytes.length + " bytes]" : "") + ": " + msg);
-  }
-
-  // TEMPORARY diagnostic (removed again once the 403 is understood): posts the
-  // same body five ways to an echo server on this PC so the bytes each route
-  // really puts on the wire can be compared. Silent when nothing listens.
-  async playerDiag(headers, bytes, str) {
-    if (this._diagDone) return;
-    this._diagDone = true;
-    var hex = function (a) { var o = ""; for (var j = 0; j < a.length; j++) o += (a[j] < 16 ? "0" : "") + a[j].toString(16); return o; };
-    var dart = new Client({ useDartHttpClient: true });
-    var tests = [
-      ["A_rust_string_latin1", this.client, str, "image/png; charset=latin1"],
-      ["B_dart_string_latin1", dart, str, "image/png; charset=latin1"],
-      ["C_rust_list_latin1", this.client, bytes, "image/png; charset=latin1"],
-      ["D_dart_list_latin1", dart, bytes, "image/png; charset=latin1"],
-      ["E_rust_string_nocharset", this.client, str, "image/png"],
-    ];
-    for (var t = 0; t < tests.length; t++) {
-      var h = { "X-Expect-Len": String(bytes.length), "X-Expect-Head": hex(bytes.slice(0, 16)), "X-Expect-Tail": hex(bytes.slice(-8)), "Content-Type": tests[t][3] };
-      try {
-        await tests[t][1].post("http://127.0.0.1:8799/v/" + tests[t][0], h, tests[t][2]);
-      } catch (e) {
-        try { await this.client.get("http://127.0.0.1:8799/err/" + tests[t][0] + "/" + encodeURIComponent(String((e && e.message) || e).slice(0, 120)), {}); } catch (e2) {}
-      }
-    }
   }
 
   // fetch() for the player runtime, over the app's Client; the PNG-typed
@@ -1251,7 +1224,12 @@ class DefaultExtension extends MProvider {
         error: first && first.src ? "" : "empty reply",
       };
     } catch (e) {
-      return { src: "", tracks: [], error: String((e && e.message) || e) };
+      var m = String((e && e.message) || e);
+      // The handshake POST is binary. The app's HTTP layer (http_interceptor's
+      // Request.copyWith) rebuilds every request body as UTF-8 text, so the
+      // server always sees different bytes and answers 403.
+      if (m.indexOf("authorization failed") >= 0) m += " - the app re-encodes the binary handshake request, which this site rejects";
+      return { src: "", tracks: [], error: m };
     }
   }
 

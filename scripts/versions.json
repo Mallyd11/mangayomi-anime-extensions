@@ -26,17 +26,17 @@
         }
     },
     "anime": {
+        "Senshi": {
+            "name": "Senshi",
+            "version": "0.5.5",
+            "langs": "en",
+            "lastUpd": 1791482003.342117
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.28",
             "langs": "en",
             "lastUpd": 1791481709.694681
-        },
-        "Senshi": {
-            "name": "Senshi",
-            "version": "0.5.4",
-            "langs": "en",
-            "lastUpd": 1791481672.225682
         },
         "AniWave": {
             "name": "AniWave",
