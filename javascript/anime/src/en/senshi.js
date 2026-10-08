@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.5.5",
+    "version": "0.6.0",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -99,6 +99,24 @@ var UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/12
 // replaced the old open sources API, so it is fetched fresh (the site rotates it
 // roughly daily) and run here rather than copied.
 var PLAYER_URL = "https://cdn.vidcloud.se/vjs/vendor.js";
+
+// Backup streams. The direct route above needs one binary POST that the app's HTTP
+// layer cannot send intact (see sourceInfo), so when it fails the same title is
+// looked up on Anidap's open API instead: AniList id (Senshi's anime record carries
+// it) -> aniembed.se slug -> chad.anidap.lol /servers and /sources. Only providers
+// that were played in the app's own libmpv are used: "nero" (plain 1080p HLS, a
+// separate English-hardsub stream and a separate dub stream, no headers needed)
+// and "zuna" (plain 1080p HLS with a soft English subtitle file, Referer from the
+// API). "yuki" is left out: its direct host answers a Cloudflare block and the site
+// itself reaches it only through a proxy this player cannot read.
+var CHAD_URL = "https://chad.anidap.lol/rest/api";
+var EMBED_URL = "https://aniembed.se/e/";
+var BACKUP_SERVERS = { sub: ["nero", "zuna"], dub: ["nero"] };
+var BACKUP_NAMES = { nero: "Nero", zuna: "Zuna" };
+
+// Set once the direct route has failed in this runtime, so later episodes go
+// straight to the backup instead of repeating a request that cannot succeed.
+var senshiDirectBroken = false;
 
 var PAGE_SIZE = 30;
 
@@ -1561,29 +1579,28 @@ class DefaultExtension extends MProvider {
     var embeds = await this.getJson(this.source.baseUrl + "/episode-embeds/" + animeId + "/" + epNum);
     if (!Array.isArray(embeds) || embeds.length === 0) return [];
 
-    // One lookup per distinct backend id (a HardSub and a Dub row usually share it).
-    var ids = [];
-    embeds.forEach(function (e) {
-      if (e && e.remote_source_id && ids.indexOf(e.remote_source_id) < 0) ids.push(e.remote_source_id);
-    });
-    // One after another: the player runtime keeps a single handshake session.
-    var infoOf = {};
-    for (var n = 0; n < ids.length; n++) infoOf[ids[n]] = await this.sourceInfo(ids[n]);
-
-    var headers = this.streamHeaders;
-
-    var jobs = [];
-    embeds.forEach(function (e) {
-      if (!e || !e.remote_source_id) return;
-      var dub = e.status === "Dub";
-      // Same status twice (some releases list a row per CDN) adds nothing.
-      for (var i = 0; i < jobs.length; i++) {
-        if (jobs[i].dub === dub && jobs[i].rid === e.remote_source_id) return;
+    var videos = [], directErr = null, backupErr = null;
+    if (!senshiDirectBroken) {
+      try {
+        videos = await this.directList(embeds, animeId, epNum);
+      } catch (e) {
+        directErr = e;
+        if (String((e && e.message) || e).indexOf("re-encodes the binary handshake") >= 0) senshiDirectBroken = true;
       }
-      jobs.push({ dub: dub, rid: e.remote_source_id });
-    });
-
-    var videos = await this.directVideos(jobs, infoOf, animeId, epNum);
+    }
+    if (videos.length === 0) {
+      try {
+        videos = await this.backupVideos(animeId, epNum);
+      } catch (e2) {
+        backupErr = e2;
+      }
+    }
+    if (videos.length === 0) {
+      var parts = [];
+      if (directErr) parts.push("direct: " + String((directErr && directErr.message) || directErr));
+      if (backupErr) parts.push("backup: " + String((backupErr && backupErr.message) || backupErr));
+      throw new Error(parts.length ? parts.join(" | ") : "Senshi has no streams for this episode");
+    }
 
     // Mangayomi plays the first entry and takes auto-play subtitles from it,
     // so the preferred audio has to lead. originalUrl equals url on every
@@ -1596,6 +1613,114 @@ class DefaultExtension extends MProvider {
       return 0;
     });
     videos.forEach(function (v) { delete v._dub; });
+    return videos;
+  }
+
+  // The direct route: the site's own player handshake, then edl:// playback.
+  async directList(embeds, animeId, epNum) {
+    // One lookup per distinct backend id (a HardSub and a Dub row usually share it).
+    var ids = [];
+    embeds.forEach(function (e) {
+      if (e && e.remote_source_id && ids.indexOf(e.remote_source_id) < 0) ids.push(e.remote_source_id);
+    });
+    // One after another: the player runtime keeps a single handshake session.
+    var infoOf = {};
+    for (var n = 0; n < ids.length; n++) infoOf[ids[n]] = await this.sourceInfo(ids[n]);
+
+    var jobs = [];
+    embeds.forEach(function (e) {
+      if (!e || !e.remote_source_id) return;
+      var dub = e.status === "Dub";
+      // Same status twice (some releases list a row per CDN) adds nothing.
+      for (var i = 0; i < jobs.length; i++) {
+        if (jobs[i].dub === dub && jobs[i].rid === e.remote_source_id) return;
+      }
+      jobs.push({ dub: dub, rid: e.remote_source_id });
+    });
+
+    return await this.directVideos(jobs, infoOf, animeId, epNum);
+  }
+
+  // Subtitles from an Anidap track list: real captions only, English first.
+  backupSubtitles(tracks) {
+    var wanted = [];
+    (Array.isArray(tracks) ? tracks : []).forEach(function (t, i) {
+      if (!t) return;
+      var file = t.url || t.file;
+      var kind = String(t.kind || "").toLowerCase();
+      var label = String(t.label || t.lang || "");
+      if (!file || kind === "thumbnails" || kind === "chapters" || kind === "metadata") return;
+      if (/thumbnail/i.test(label) || file.indexOf("#xywh=") >= 0) return;
+      if (/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(file)) return;
+      var rank = /^english$/i.test(label) ? 0 : /^english/i.test(label) ? 1 : 2;
+      wanted.push({ file: file, label: label || "Unknown", rank: rank, i: i });
+    });
+    wanted.sort(function (a, b) { return a.rank - b.rank || a.i - b.i; });
+    var cap = parseInt(this.getPreference("senshi_pref_sub_count"), 10);
+    if (!cap || cap < 1) cap = 6;
+    return wanted.slice(0, cap).map(function (w) { return { file: w.file, label: w.label }; });
+  }
+
+  // Streams for the same episode from Anidap's open API (see BACKUP_SERVERS).
+  async backupVideos(animeId, epNum) {
+    var self = this;
+    var detail = await this.getJson(this.source.baseUrl + "/anime/" + animeId);
+    var aid = detail && detail.anilist_id;
+    if (!aid) throw new Error("no AniList id for this title");
+
+    var emb = await this.client.get(EMBED_URL + aid + "/1", { "User-Agent": UA });
+    var m = String((emb && emb.body) || "").match(/id:"([^"]+)",anilistId:/);
+    if (!m) throw new Error("title not found on the backup source");
+    var slug = m[1];
+
+    var chadHeaders = { "User-Agent": UA, "Accept": "application/json" };
+    var sres = await this.client.get(CHAD_URL + "/servers?id=" + slug + "&epNum=" + epNum, chadHeaders);
+    var servers = null;
+    try { servers = JSON.parse((sres && sres.body) || ""); } catch (e) { servers = null; }
+    if (!servers) throw new Error("backup server list unavailable (HTTP " + (sres && sres.statusCode) + ")");
+
+    var offered = function (list, id) {
+      for (var i = 0; list && i < list.length; i++) if (list[i] && list[i].id === id) return true;
+      return false;
+    };
+    var wants = [];
+    ["sub", "dub"].forEach(function (type) {
+      var list = type === "sub" ? servers.subProviders : servers.dubProviders;
+      BACKUP_SERVERS[type].forEach(function (id) {
+        if (offered(list, id)) wants.push({ type: type, id: id });
+      });
+    });
+    if (wants.length === 0) throw new Error("no usable backup server for this episode");
+
+    var got = await Promise.all(wants.map(function (w) {
+      return self.client
+        .get(CHAD_URL + "/sources?id=" + slug + "&epNum=" + epNum + "&type=" + w.type + "&providerId=" + w.id, chadHeaders)
+        .then(function (res) {
+          var d = JSON.parse((res && res.body) || "");
+          return d && d.sources && d.sources[0] && d.sources[0].url ? d : null;
+        })
+        .catch(function () { return null; });
+    }));
+
+    var videos = [];
+    for (var i = 0; i < wants.length; i++) {
+      var d = got[i];
+      if (!d) continue;
+      var api = d.headers || {};
+      var hdrs = { "User-Agent": api["User-Agent"] || UA };
+      if (api.Referer) hdrs.Referer = api.Referer;
+      if (api.Origin) hdrs.Origin = api.Origin;
+      var link = d.sources[0].url;
+      videos.push({
+        url: link,
+        originalUrl: link,
+        quality: (wants[i].type === "dub" ? "Dub" : "Sub") + " (" + BACKUP_NAMES[wants[i].id] + ")",
+        headers: hdrs,
+        subtitles: this.backupSubtitles(d.tracks),
+        _dub: wants[i].type === "dub",
+      });
+    }
+    if (videos.length === 0) throw new Error("backup servers returned no streams");
     return videos;
   }
 
