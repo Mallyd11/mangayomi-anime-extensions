@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "ReAnime": {
+            "name": "ReAnime",
+            "version": "0.5.2",
+            "langs": "en",
+            "lastUpd": 1791478476.573759
+        },
         "Anidap": {
             "name": "Anidap",
             "version": "1.10.3",
@@ -61,12 +67,6 @@
             "version": "0.1.8",
             "langs": "en",
             "lastUpd": 1790079600.124666
-        },
-        "ReAnime": {
-            "name": "ReAnime",
-            "version": "0.5.1",
-            "langs": "en",
-            "lastUpd": 1790042741.348207
         },
         "MyroniX": {
             "name": "MyroniX",

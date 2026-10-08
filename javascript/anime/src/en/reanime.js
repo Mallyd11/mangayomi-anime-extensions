@@ -14,7 +14,7 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.5.1",
+    "version": "0.5.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -1170,7 +1170,7 @@ class DefaultExtension extends MProvider {
     // Parse audio renditions and the (single) video variant.
     const lines = master.split("\n");
     const audios = []; // { uri, lang, name }
-    let videoUri = null, streamInf = "";
+    let videoUri = null, streamInf = "", bestH = -1, bestBw = -1;
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i].trim();
       if (l.indexOf("#EXT-X-MEDIA:") === 0 && l.indexOf("TYPE=AUDIO") >= 0) {
@@ -1182,7 +1182,17 @@ class DefaultExtension extends MProvider {
         });
       } else if (l.indexOf("#EXT-X-STREAM-INF") === 0) {
         const next = (lines[i + 1] || "").trim();
-        if (next && next.charAt(0) !== "#") { videoUri = next; streamInf = l; }
+        if (next && next.charAt(0) !== "#") {
+          // Some shows list several renditions (1080p, 720p, 640x360) — keep
+          // the tallest, falling back to the highest BANDWIDTH.  Taking the
+          // last one listed played a 640x360 rendition on A Returner's Magic
+          // Should Be Special S2.
+          const h = parseInt((l.match(/RESOLUTION=\d+x(\d+)/) || [])[1] || "0", 10);
+          const bw = parseInt((l.match(/BANDWIDTH=(\d+)/) || [])[1] || "0", 10);
+          if (!videoUri || h > bestH || (h === bestH && bw > bestBw)) {
+            videoUri = next; streamInf = l; bestH = h; bestBw = bw;
+          }
+        }
       }
     }
     if (!videoUri) return [];
