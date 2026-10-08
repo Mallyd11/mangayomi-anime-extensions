@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.22",
+    "version": "0.4.23",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -659,7 +659,10 @@ class DefaultExtension extends MProvider {
         // Keep both fields on the corrected stream so the fixed entry behaves
         // consistently on every supported app version.
         url: proxyUrl,
-        originalUrl: proxyUrl,
+        // The downloader only accepts an originalUrl that ends in .m3u8; the
+        // proxy reads its params by name, so the extra one is ignored and the
+        // URL still plays when the player opens it directly.
+        originalUrl: proxyUrl + "&x=.m3u8",
         quality: (pl.label ? pl.label + " - " : "") + audioLabel + " ⟨fixed⟩",
         // The proxy attaches the upstream Referer itself; forwarding ours would
         // make Mangayomi send it to the proxy instead.
