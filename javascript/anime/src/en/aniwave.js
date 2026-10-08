@@ -9,7 +9,7 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=256&domain=https://aniwaves.ru",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.3",
+    "version": "0.2.4",
     "pkgPath": "anime/src/en/aniwave.js",
     "isManga": false,
     "isNsfw": false,
@@ -353,9 +353,10 @@ class DefaultExtension extends MProvider {
     } catch (e) {}
 
     if (!body || body.indexOf("#EXT-X-STREAM-INF") < 0) {
+      var hintedUrl = this.hintM3u8(playlistUrl);
       streams.push({
-        url: this.hintM3u8(playlistUrl),
-        originalUrl: playlistUrl,
+        url: hintedUrl,
+        originalUrl: hintedUrl,
         quality: label,
         headers: headers,
         hls: true,
@@ -386,9 +387,10 @@ class DefaultExtension extends MProvider {
     }
 
     if (variants.length === 0) {
+      var hintedFallbackUrl = this.hintM3u8(playlistUrl);
       streams.push({
-        url: this.hintM3u8(playlistUrl),
-        originalUrl: playlistUrl,
+        url: hintedFallbackUrl,
+        originalUrl: hintedFallbackUrl,
         quality: label,
         headers: headers,
         hls: true,
@@ -400,9 +402,10 @@ class DefaultExtension extends MProvider {
       return (parseInt(b.quality, 10) || 0) - (parseInt(a.quality, 10) || 0);
     });
     for (var v = 0; v < variants.length; v++) {
+      var hintedVariantUrl = this.hintM3u8(variants[v].url);
       streams.push({
-        url: this.hintM3u8(variants[v].url),
-        originalUrl: playlistUrl,
+        url: hintedVariantUrl,
+        originalUrl: hintedVariantUrl,
         quality: variants[v].quality + " · " + label,
         headers: headers,
         hls: true,

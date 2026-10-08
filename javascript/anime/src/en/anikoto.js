@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.21",
+    "version": "0.4.22",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -652,10 +652,14 @@ class DefaultExtension extends MProvider {
     var proxy = playlists.wrapped ? this.proxyBase() : "";
     for (var p = 0; proxy && p < playlists.length; p++) {
       var pl = playlists[p];
+      var proxyUrl = proxy + "/m3u8?url=" + encodeURIComponent(pl.url) +
+                     "&referer=" + encodeURIComponent(proxyReferer);
       streams.push({
-        url: proxy + "/m3u8?url=" + encodeURIComponent(pl.url) +
-             "&referer=" + encodeURIComponent(proxyReferer),
-        originalUrl: pl.url,
+        // Mangayomi 0.8.9 opens originalUrl, while newer releases open url.
+        // Keep both fields on the corrected stream so the fixed entry behaves
+        // consistently on every supported app version.
+        url: proxyUrl,
+        originalUrl: proxyUrl,
         quality: (pl.label ? pl.label + " - " : "") + audioLabel + " ⟨fixed⟩",
         // The proxy attaches the upstream Referer itself; forwarding ours would
         // make Mangayomi send it to the proxy instead.
