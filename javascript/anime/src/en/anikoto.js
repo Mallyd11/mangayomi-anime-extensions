@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.23",
+    "version": "0.4.24",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -639,6 +639,14 @@ class DefaultExtension extends MProvider {
     return raw.replace(/\/+$/, "");
   }
 
+  // The downloader accepts an entry only when the whole originalUrl string ends
+  // in .m3u8/.m3u (a signed ?token=... URL is rejected). Append a dummy param so
+  // it does; both the CDN and the proxy read their params by name and ignore it.
+  _dlAlias(u) {
+    if (!u || /\.(m3u8|m3u)$/i.test(u)) return u;
+    return u + (u.indexOf("?") >= 0 ? "&" : "?") + "x=.m3u8";
+  }
+
   // Emit one server's playlists into `streams`.
   //
   // When a playlist needs a body-level fix (PNG-wrapped segments or ad
@@ -662,7 +670,7 @@ class DefaultExtension extends MProvider {
         // The downloader only accepts an originalUrl that ends in .m3u8; the
         // proxy reads its params by name, so the extra one is ignored and the
         // URL still plays when the player opens it directly.
-        originalUrl: proxyUrl + "&x=.m3u8",
+        originalUrl: this._dlAlias(proxyUrl),
         quality: (pl.label ? pl.label + " - " : "") + audioLabel + " ⟨fixed⟩",
         // The proxy attaches the upstream Referer itself; forwarding ours would
         // make Mangayomi send it to the proxy instead.
@@ -675,7 +683,7 @@ class DefaultExtension extends MProvider {
         url: playlists[v].url,
         // An inlined playlist has no URL of its own; keep the real one here so
         // the app still has something addressable to fall back on.
-        originalUrl: playlists[v].originalUrl || m3u8,
+        originalUrl: this._dlAlias(playlists[v].originalUrl || m3u8),
         quality: (playlists[v].label ? playlists[v].label + " - " : "") + audioLabel,
         headers: hdrs,
         subtitles: subtitles,
