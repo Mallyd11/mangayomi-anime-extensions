@@ -26,14 +26,14 @@
         }
     },
     "anime": {
-        "Anichi": {
-            "name": "Anichi",
+        "AnimeKai": {
+            "name": "AnimeKai",
             "version": "0.1.0",
             "langs": "en",
-            "lastUpd": 1791484721.830279
+            "lastUpd": 1791484840.229155
         },
-        "AnimeKai (Unoriginal)": {
-            "name": "AnimeKai (Unoriginal)",
+        "Anichi": {
+            "name": "Anichi",
             "version": "0.1.0",
             "langs": "en",
             "lastUpd": 1791484721.830279

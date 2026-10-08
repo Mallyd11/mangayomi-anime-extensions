@@ -44,7 +44,7 @@ const mangayomiSources = [
     "notes": "",
   },
   {
-    "name": "AnimeKai (Unoriginal)",
+    "name": "AnimeKai",
     "id": 232158530,
     "lang": "en",
     "baseUrl": "https://animekaitv.to",
