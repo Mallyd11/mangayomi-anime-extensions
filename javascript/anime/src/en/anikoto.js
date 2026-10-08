@@ -21,6 +21,50 @@ const mangayomiSources = [
     "sourceCodeLanguage": 1,
     "notes": "",
   },
+  {
+    "name": "Anichi",
+    "id": 878498226,
+    "lang": "en",
+    "baseUrl": "https://anichi.to",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anichi.to",
+    "typeSource": "single",
+    "itemType": 1,
+    "version": "0.1.0",
+    "pkgPath": "anime/src/en/anikoto.js",
+    "isManga": false,
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/anikoto.js",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": "Ported from the Apache-licensed Yuzono Aniyomi Anikoto theme",
+  },
+  {
+    "name": "AnimeKai (Unoriginal)",
+    "id": 232158530,
+    "lang": "en",
+    "baseUrl": "https://animekaitv.to",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekaitv.to",
+    "typeSource": "single",
+    "itemType": 1,
+    "version": "0.1.0",
+    "pkgPath": "anime/src/en/anikoto.js",
+    "isManga": false,
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/anikoto.js",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": "Ported from the Apache-licensed Yuzono Aniyomi KotoKai source",
+  },
 ];
 
 // Pre-filled address of the unwrapping proxy (proxy/proxy.js in this repo), so
@@ -132,12 +176,11 @@ class DefaultExtension extends MProvider {
     }
   }
 
-  // Extract {slug} from watch page URLs:
-  //   https://anikototv.to/watch/{slug}/ep-1  →  {slug}
-  //   https://anikototv.to/watch/{slug}        →  {slug}
+  // Extract {slug} from watch or catalog URLs. Anichi lists /anime/{slug}
+  // while AniKoto and AnimeKai usually list /watch/{slug}/ep-{number}.
   extractSlug(url) {
     var path = url.replace(/^https?:\/\/[^\/]+/, "");
-    var m = path.match(/\/watch\/([^\/\?#]+)/);
+    var m = path.match(/\/(?:watch|anime)\/([^\/\?#]+)/);
     return m ? m[1] : "";
   }
 
@@ -191,7 +234,7 @@ class DefaultExtension extends MProvider {
 
     // Description
     var description = "";
-    var synEl = doc.selectFirst(".synopsis");
+    var synEl = doc.selectFirst(".synopsis, .synopsis-full, .series-blurb__full");
     if (synEl) description = synEl.text.trim();
     if (!description) {
       var descMeta = doc.selectFirst("meta[name='description']");
@@ -203,6 +246,7 @@ class DefaultExtension extends MProvider {
     //                  "Action  ,  Adventure  ,  Fantasy", "8.87", "24m min", "13", "Studio"
     var genre = [];
     var status = 5;
+    var author = "";
     var metaSpans = doc.select(".info span");
     for (var i = 0; i < metaSpans.length; i++) {
       var t = (metaSpans[i].text || "").trim();
@@ -220,6 +264,22 @@ class DefaultExtension extends MProvider {
           if (g && g.length > 1 && g.length < 40) cleaned.push(g);
         }
         if (cleaned.length > 1) genre = cleaned;
+      }
+    }
+
+    // Anichi's redesigned details page uses labelled metadata rows instead of
+    // the older .info spans shared by AniKoto and AnimeKai.
+    var metaRows = doc.select(".media-meta-grid .meta-row");
+    for (var r = 0; r < metaRows.length; r++) {
+      var labelEl = metaRows[r].selectFirst(".meta-label");
+      var valueEl = metaRows[r].selectFirst(".meta-value");
+      if (!labelEl || !valueEl) continue;
+      var label = (labelEl.text || "").replace(":", "").trim().toLowerCase();
+      var value = (valueEl.text || "").trim();
+      if (label === "status") status = this.statusCode(value);
+      if (label === "studios") author = value;
+      if (label === "genre" && value) {
+        genre = value.split(",").map(function (part) { return part.trim(); }).filter(Boolean);
       }
     }
 
@@ -329,6 +389,7 @@ class DefaultExtension extends MProvider {
       name: name,
       imageUrl: imageUrl,
       description: description,
+      author: author,
       genre: genre,
       status: status,
       link: this.source.baseUrl + "/watch/" + slug,
