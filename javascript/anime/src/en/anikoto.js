@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anikototv.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.4.27",
+    "version": "0.4.28",
     "pkgPath": "anime/src/en/anikoto.js",
     "isManga": false,
     "isNsfw": false,
@@ -641,18 +641,21 @@ class DefaultExtension extends MProvider {
 
   // The downloader takes the FIRST entry whose whole originalUrl ends in
   // .m3u8/.m3u (a signed ?token=... URL is rejected) and fetches its url. Only
-  // VidCloud's CDN survives the app's parallel segment pool; the others answer
-  // 429 partway through. So when the list holds a VidCloud entry only those get
-  // an alias param (CDNs read params by name and ignore it) and every other
-  // server stays unmatched; with no VidCloud entry, all get it so a download
-  // can at least start.
+  // VidPlay's CDN (vidtube) survives the app's parallel segment pool; MegaPlay,
+  // VidCloud and the rest answer 429 partway through. So when the list holds a
+  // VidPlay entry only those get an alias param (CDNs read params by name and
+  // ignore it) and every other server stays unmatched; with none, all get it so
+  // a download can at least start.
   _applyDownloadAlias(streams) {
-    var vc = function (st) { return /vidcloud/i.test(String(st.quality || "")); };
+    var good = function (st) {
+      var ref = st.headers && st.headers.Referer ? String(st.headers.Referer) : "";
+      return /vidplay/i.test(String(st.quality || "")) || ref.indexOf("vidtube") >= 0;
+    };
     var any = false;
-    for (var i = 0; i < streams.length; i++) if (vc(streams[i])) { any = true; break; }
+    for (var i = 0; i < streams.length; i++) if (good(streams[i])) { any = true; break; }
     for (var j = 0; j < streams.length; j++) {
       var u = streams[j].originalUrl;
-      if (!u || (any && !vc(streams[j]))) continue;
+      if (!u || (any && !good(streams[j]))) continue;
       if (/\.(m3u8|m3u)$/i.test(u)) continue;
       streams[j].originalUrl = u + (u.indexOf("?") >= 0 ? "&" : "?") + "x=.m3u8";
     }
@@ -1338,28 +1341,6 @@ class DefaultExtension extends MProvider {
     return [chosen, rest];
   }
 
-  // Downloads only work from VidCloud (see _applyDownloadAlias), so make sure a VidCloud
-  // entry is in the list even when the viewer has not switched that server on.
-  // It goes last, so it never leads the picker or changes what plays by default.
-  async _ensureVidcloud(tiers, audioLabel, collected) {
-    for (var i = 0; i < collected.length; i++) {
-      if (/vidcloud/i.test(String(collected[i].quality || ""))) return collected;
-    }
-    var entries = tiers[0].concat(tiers[1]);
-    for (var e = 0; e < entries.length; e++) {
-      if (entries[e].group !== "vidcloud") continue;
-      var saved = this._seenSources;
-      this._seenSources = {}; // same file under another server must not hide it
-      try {
-        var label = entries[e].name + (audioLabel ? " [" + audioLabel + "]" : "");
-        collected = this._mergeStreams(collected, await this._resolveStreams(entries[e].linkId, label, true));
-      } catch (err) {}
-      this._seenSources = saved;
-      break;
-    }
-    return collected;
-  }
-
   // Resolve one tier of servers, merging what they carry, until the ladder is
   // good enough or a budget runs out. Returns the streams collected.
   async _walkServers(entries, audioLabel, collected, enabled) {
@@ -1427,7 +1408,6 @@ class DefaultExtension extends MProvider {
           if (collected.length === 0) {
             collected = await this._walkServers(tiers[1], audioLabel, collected, enabled);
           }
-          collected = await this._ensureVidcloud(tiers, audioLabel, collected);
           if (isDub) dubStreams = dubStreams.concat(collected);
           else       subStreams = subStreams.concat(collected);
         }
@@ -1442,7 +1422,6 @@ class DefaultExtension extends MProvider {
       if (subStreams.length === 0) {
         subStreams = await this._walkServers(flatTiers[1], "", subStreams, enabled);
       }
-      subStreams = await this._ensureVidcloud(flatTiers, "", subStreams);
       return { sub: subStreams, dub: [] };
     } catch (e) {}
     return empty;
