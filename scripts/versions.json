@@ -26,6 +26,18 @@
         }
     },
     "anime": {
+        "Anichi": {
+            "name": "Anichi",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1791484604.179737
+        },
+        "AnimeKai (Unoriginal)": {
+            "name": "AnimeKai (Unoriginal)",
+            "version": "0.1.0",
+            "langs": "en",
+            "lastUpd": 1791484604.179737
+        },
         "Senshi": {
             "name": "Senshi",
             "version": "0.6.0",
