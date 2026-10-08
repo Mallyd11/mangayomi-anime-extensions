@@ -91,8 +91,12 @@ def source_version(entry):
     text = staged_text(m.group(1))
     if text is None:
         return None
-    # Match the header block's version, which is the first one in the file.
-    m = re.search(r'"version"\s*:\s*"([0-9][0-9.]*)"', text)
+    # A file can declare several sources (Anichi and AnimeKai live in anikoto.js),
+    # so take the version that follows this entry's own name; fall back to the
+    # first one in the header for a single-source file.
+    name = re.escape(entry.get("name") or "")
+    m = (re.search(r'"name"\s*:\s*"' + name + r'"[^{}]*?"version"\s*:\s*"([0-9][0-9.]*)"', text)
+         or re.search(r'"version"\s*:\s*"([0-9][0-9.]*)"', text))
     return m.group(1) if m else None
 
 
