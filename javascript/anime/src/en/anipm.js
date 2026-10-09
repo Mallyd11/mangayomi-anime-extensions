@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://ani.pm/apple-touch-icon.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "pkgPath": "anime/src/en/anipm.js",
     "isManga": false,
     "isNsfw": false,
@@ -128,29 +128,11 @@ class DefaultExtension extends MProvider {
     return await this.catalog(["sort=trending"], page);
   }
 
-  // The site's "Latest" feed (newest episodes first) is published as an RSS file.
-  // It is a single 40-episode page, so later pages fall back to the catalogue of
-  // airing shows sorted newest first.
+  // Same feed as https://ani.pm/latest: newest episode arrivals first, 60 per
+  // page. A show with several new episodes appears once per page.
   async getLatestUpdates(page) {
-    if (page > 1) return await this.catalog(["status=RELEASING", "sort=newest"], page - 1);
-    var res = await this.client.get(this.source.baseUrl + "/latest.rss", this.getHeaders(this.source.baseUrl));
-    var xml = res.body || "";
-    var list = [];
-    var seen = {};
-    var items = xml.split("<item>");
-    for (var i = 1; i < items.length; i++) {
-      var it = items[i];
-      var link = (it.match(/<link>([^<]+)<\/link>/) || [])[1] || "";
-      var route = (link.match(/\/anime\/([^/?#<]+)/) || [])[1] || "";
-      if (!route || seen[route]) continue;
-      seen[route] = true;
-      var title = ((it.match(/<title>([^<]+)<\/title>/) || [])[1] || route)
-        .replace(/\s+—\s+Episode\s+[\d.]+\s*$/, "")
-        .replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
-      var thumb = ((it.match(/<media:thumbnail url="([^"]+)"/) || [])[1] || "").replace(/&amp;/g, "&");
-      list.push({ name: title, imageUrl: thumb, link: route });
-    }
-    return { list: list, hasNextPage: true };
+    var j = await this.api("/anime/latest-episodes?page=" + page + "&limit=60");
+    return { list: this.parseItems(j.items), hasNextPage: j.hasNextPage === true };
   }
 
   async search(query, page, filters) {

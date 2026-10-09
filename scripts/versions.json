@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AniPM": {
+            "name": "AniPM",
+            "version": "0.1.4",
+            "langs": "en",
+            "lastUpd": 1791580399.855421
+        },
         "AnimeKai": {
             "name": "AnimeKai",
             "version": "0.1.0",
@@ -67,12 +73,6 @@
             "version": "1.10.3",
             "langs": "en",
             "lastUpd": 1790881370.184572
-        },
-        "AniPM": {
-            "name": "AniPM",
-            "version": "0.1.3",
-            "langs": "en",
-            "lastUpd": 1790523031.938077
         },
         "AllWish": {
             "name": "AllWish",
