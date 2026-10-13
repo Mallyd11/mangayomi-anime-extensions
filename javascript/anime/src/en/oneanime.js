@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.0",
+    "version": "0.2.1",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -542,6 +542,8 @@ class DefaultExtension extends MProvider {
     } catch (e) {}
 
     var audioPref = this.audioPref();
+    var split = this.splitEpisodes();
+    var self = this;
     var eps = epJson.episodes || [];
     var chapters = [];
     for (var i = 0; i < eps.length; i++) {
@@ -557,15 +559,25 @@ class DefaultExtension extends MProvider {
       if (ep.title && !/^Episode\s+\d+$/i.test(ep.title)) label += " - " + ep.title;
 
       var img = ep.image || "";
-      chapters.push({
-        name: label,
-        // <anilist id the stream API wants>|<episode number>|<sub flag><dub flag>
-        url: (ep.anilistId || id) + "|" + ep.number + "|" + (ep.sub ? "1" : "0") + (ep.dub ? "1" : "0"),
-        dateUpload: this.toEpochMs(ep.date),
-        scanlator: ep.sub && ep.dub ? "Sub & Dub" : (ep.sub ? "Sub" : "Dub"),
-        thumbnailUrl: thumbs && /^https?:/.test(img) ? img : null,
-        description: ep.description || null,
-      });
+      // <anilist id the stream API wants>|<episode number>|<sub flag><dub flag>[|<s or d>]
+      var epUrl = (ep.anilistId || id) + "|" + ep.number + "|" + (ep.sub ? "1" : "0") + (ep.dub ? "1" : "0");
+      var mk = function (name, url, scanlator) {
+        return {
+          name: name,
+          url: url,
+          dateUpload: self.toEpochMs(ep.date),
+          scanlator: scanlator,
+          thumbnailUrl: thumbs && /^https?:/.test(img) ? img : null,
+          description: ep.description || null,
+        };
+      };
+      if (split && ep.sub && ep.dub && audioPref !== "sub" && audioPref !== "dub") {
+        // Pushed Dub first because the list is reversed below, which puts Sub on top.
+        chapters.push(mk(label + " (Dub)", epUrl + "|d", "Dub"));
+        chapters.push(mk(label, epUrl + "|s", "Sub"));
+      } else {
+        chapters.push(mk(label, epUrl, ep.sub && ep.dub ? "Sub & Dub" : (ep.sub ? "Sub" : "Dub")));
+      }
     }
 
     var studios = [];
@@ -886,6 +898,22 @@ class DefaultExtension extends MProvider {
     }
   }
 
+  // Mangayomi reads the default audio and subtitle from the FIRST entry of a list and
+  // re-applies the last-used track when another entry is picked, so choosing Sub or Dub
+  // inside the player cannot change them. Listing each episode twice does: each one is its
+  // own player session, led by its own kind.
+  splitEpisodes() {
+    var v = this.readPref("oneanime_pref_split", false);
+    return v === true || v === "true";
+  }
+
+  // Moves the kind the episode was opened as to the front of the entries.
+  leadKinds(kinds, lead) {
+    var want = lead === "d" ? "Dub" : (lead === "s" ? "Sub" : "");
+    if (!want || kinds.indexOf(want) <= 0) return kinds;
+    return [want].concat(kinds.filter(function (k) { return k !== want; }));
+  }
+
   dubAudioEnabled() {
     var v = this.readPref("oneanime_pref_dub_audio", true);
     return v !== false && v !== "false";
@@ -938,6 +966,81 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
+  // Does a leading chunk of an .ass file look like a signs-and-songs track? Its first events
+  // are opening/ending lyrics and on-screen signs (styles such as OP_Eng, DN OP, Signs 2),
+  // never ordinary dialogue; a full track gives itself away with a dialogue style.
+  looksLikeSignsSongs(body) {
+    if (String(body).indexOf("[Script Info]") < 0) return false;
+    var lines = String(body).split("\n"), seen = 0, positive = false;
+    for (var i = 0; i < lines.length && seen < 12; i++) {
+      if (lines[i].indexOf("Dialogue:") !== 0) continue;
+      var style = (lines[i].split(",")[3] || "").trim();
+      // Only complete lines count: the chunk is cut mid-line.
+      if (lines[i].split(",").length < 10) continue;
+      seen++;
+      if (/^(default|dialogue|main|italics?|thoughts?|narrat\w*|internal|flashback)/i.test(style)) return false;
+      if (/(^|[^a-z])(op|ed|signs?|songs?|kara\w*|lyrics?|title|ts)([^a-z]|$)/i.test(style)) positive = true;
+    }
+    return seen >= 2 && positive;
+  }
+
+  // The site's subtitle list is incomplete: the MKV embeds a separate signs-and-songs track
+  // and the CDN serves it as its own file, but the list often omits it (Death Note E1 lists
+  // only the AI dub captions; Attack on Titan lists only the full track). On every title
+  // checked the files sit side by side, signs and songs at eng_3.ass next to the full
+  // eng_4.ass, and one token opens the whole directory. So when the list does not offer
+  // one, the neighbours of the full track (and eng_3) are fetched a few KB at a time and
+  // kept only if their content looks like signs and songs - a wrong guess forces nothing.
+  async discoverSignsSongs(subs, headers) {
+    try {
+      var dir = null, query = "", prefix = "", anchor = 0;
+      for (var i = 0; i < (subs || []).length; i++) {
+        var m = String(subs[i].url || "").match(/^(https?:\/\/[^?]*\/subtitles\/[^\/?]+\/)([^\/?]+)\?(.*)$/);
+        if (!m) continue;
+        if (!dir) { dir = m[1]; query = m[3]; }
+        var n = m[2].match(/^(.*?)eng_(\d+)\.ass$/);
+        var lang = String(subs[i].lang || "").toLowerCase();
+        if (n && /^en/.test(lang) && this.rankSubtitle(subs[i].label) >= 2) {
+          dir = m[1]; query = m[3]; prefix = n[1]; anchor = parseInt(n[2], 10);
+          break;
+        }
+      }
+      if (!dir) return null;
+      // Neighbours of the full track (either side: Koi Kaze has the full track at eng_3 and
+      // its signs and songs at eng_4), then eng_3. Never the full track itself.
+      var tries = [];
+      if (anchor > 1) tries.push(anchor - 1);
+      if (anchor > 0) tries.push(anchor + 1);
+      if (tries.indexOf(3) < 0 && anchor !== 3) tries.push(3);
+
+      // A signs-and-songs track is a fraction of the full one. Its size, when both can be
+      // read, rules out a neighbour that is just another full variant starting with a sign.
+      var anchorTotal = 0;
+      if (anchor) {
+        var ar = await this.client.get(dir + prefix + "eng_" + anchor + ".ass?" + query, { "Range": "bytes=0-0" });
+        anchorTotal = parseInt((this.headerValue(ar.headers, "content-range").split("/")[1] || "0"), 10) || 0;
+      }
+      for (var k = 0; k < tries.length; k++) {
+        var url = dir + prefix + "eng_" + tries[k] + ".ass?" + query;
+        var res = await this.client.get(url, { "Range": "bytes=0-6143" });
+        if (res.statusCode !== 200 && res.statusCode !== 206) continue;
+        if (!this.looksLikeSignsSongs(res.body || "")) continue;
+        var total = parseInt((this.headerValue(res.headers, "content-range").split("/")[1] || "0"), 10) || 0;
+        if (anchorTotal && total && total >= anchorTotal * 0.9) continue;
+        return { url: url, label: "Signs & Songs" };
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // The one subtitle forced on at video-open time: signs and songs when the list leads with
+  // Dub (the English dub already says the dialogue), the full English dialogue otherwise.
+  async defaultSubtitles(raw, first, headers) {
+    var pick = first === "Dub" ? this.signsSongsSubtitle(raw) : this.fullEnglishSubtitle(raw);
+    if (!pick && first === "Dub") pick = await this.discoverSignsSongs(raw, headers);
+    return pick ? [{ file: pick.url, label: pick.label || "English" }] : [];
+  }
+
   // Everything one server contributes, before it is turned into picker entries. One fetch
   // covers every kind (["Sub"], ["Dub"], or both, already ordered), since they are the same
   // file - fetching the API a second time for the other audio label would return
@@ -967,11 +1070,6 @@ class DefaultExtension extends MProvider {
       var results = await Promise.all(jobs);
       var info = results[1] || { res: "", audio: null };
 
-      // Mangayomi reads default tracks from the FIRST entry of the list only (and keeps the
-      // last-used track when another entry is picked), so the default follows which kind
-      // leads the list, i.e. the Preferred audio setting, not the entry tapped in the player.
-      var pick = kinds[0] === "Dub" ? this.signsSongsSubtitle(data.subtitles) : this.fullEnglishSubtitle(data.subtitles);
-
       return {
         base: {
           server: server,
@@ -980,7 +1078,8 @@ class DefaultExtension extends MProvider {
           res: info.res,
           audio: info.audio,
           headers: headers,
-          subs: pick ? [{ file: pick.url, label: pick.label || "English" }] : [],
+          rawSubs: data.subtitles || [],
+          subs: [],
         },
       };
     } catch (e) {
@@ -1055,7 +1154,7 @@ class DefaultExtension extends MProvider {
     if (!/^\d+$/.test(anilistId) || !episode) return [];
 
     var hasSub = flags.charAt(0) !== "0", hasDub = flags.charAt(1) !== "0";
-    var kinds = this.entryKinds(hasSub, hasDub, this.audioPref());
+    var kinds = this.leadKinds(this.entryKinds(hasSub, hasDub, this.audioPref()), parts[3] || "");
     if (!kinds.length) return [];
 
     // Ticked servers first; the others only as a rescue lane. An episode that refuses to
@@ -1082,6 +1181,11 @@ class DefaultExtension extends MProvider {
         else if (errors.indexOf(results[r].error) < 0) errors.push(results[r].error);
       }
       if (!bases.length) continue;
+
+      // Same subtitles on every server (same video id), decided once; the default follows
+      // which kind leads the list (see splitEpisodes).
+      var subs = await this.defaultSubtitles(bases[0].rawSubs, kinds[0], bases[0].headers);
+      for (var q = 0; q < bases.length; q++) bases[q].subs = subs;
 
       // The English audio is the same on every server (same video id, only the first hop
       // differs), so it is built once and shared: one playlist fetch, one timestamp read.
@@ -1203,6 +1307,14 @@ class DefaultExtension extends MProvider {
             "Dub only",
           ],
           entryValues: ["sub_dub", "dub_sub", "sub", "dub"],
+        },
+      },
+      {
+        key: "oneanime_pref_split",
+        checkBoxPreference: {
+          title: "Sub and Dub as separate episodes",
+          summary: "Lists every episode that has both twice, once per version. Opening the Dub one starts with the English audio and the English signs & songs subtitle; opening the Sub one starts with the Japanese audio and the full English subtitle. Mangayomi keeps your last audio and subtitle choice when you switch between Sub and Dub inside the player, so this is the reliable way to get those defaults. Refresh the anime after changing it.",
+          value: false,
         },
       },
       {
