@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.3",
+    "version": "0.2.4",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -891,8 +891,11 @@ class DefaultExtension extends MProvider {
       var probe = {};
       for (var k in headers) probe[k] = headers[k];
       probe["Range"] = "bytes=0-187";
-      var check = await this.client.get(urls[0], probe);
-      if (check.statusCode !== 200 && check.statusCode !== 206) return this.why("audio mirror HTTP " + check.statusCode);
+      var check = null;
+      try {
+        check = await this.client.get(urls[0], probe);
+      } catch (e) {} // unverifiable from here; the player has its own network stack
+      if (check && check.statusCode !== 200 && check.statusCode !== 206) return this.why("audio mirror HTTP " + check.statusCode);
 
       var at = pts0;
       var parts = ["!delay_open,media_type=audio,codec=aac", "!track_meta,lang=eng,title=English"];
@@ -1032,17 +1035,33 @@ class DefaultExtension extends MProvider {
       // read, rules out a neighbour that is just another full variant starting with a sign.
       var anchorTotal = 0;
       if (anchor) {
-        var ar = await this.client.get(dir + prefix + "eng_" + anchor + ".ass?" + query, { "Range": "bytes=0-0" });
-        anchorTotal = parseInt((this.headerValue(ar.headers, "content-range").split("/")[1] || "0"), 10) || 0;
+        try {
+          var ar = await this.client.get(dir + prefix + "eng_" + anchor + ".ass?" + query, { "Range": "bytes=0-0" });
+          anchorTotal = parseInt((this.headerValue(ar.headers, "content-range").split("/")[1] || "0"), 10) || 0;
+        } catch (e) {}
       }
+      // The extension's own HTTP client can fail where the player's does not (the app's
+      // default client is a different stack), so a probe that THROWS proves nothing. If
+      // none of them could be read at all, the first neighbour is used unverified - it is
+      // the signs-and-songs file on every title but Koi Kaze - rather than losing it.
+      var unreadable = 0;
       for (var k = 0; k < tries.length; k++) {
         var url = dir + prefix + "eng_" + tries[k] + ".ass?" + query;
-        var res = await this.client.get(url, { "Range": "bytes=0-6143" });
+        var res;
+        try {
+          res = await this.client.get(url, { "Range": "bytes=0-6143" });
+        } catch (e) {
+          unreadable++;
+          continue;
+        }
         if (res.statusCode !== 200 && res.statusCode !== 206) continue;
         if (!this.looksLikeSignsSongs(res.body || "")) continue;
         var total = parseInt((this.headerValue(res.headers, "content-range").split("/")[1] || "0"), 10) || 0;
         if (anchorTotal && total && total >= anchorTotal * 0.9) continue;
         return { url: url, label: "Signs & Songs" };
+      }
+      if (tries.length && unreadable === tries.length) {
+        return { url: dir + prefix + "eng_" + tries[0] + ".ass?" + query, label: "Signs & Songs" };
       }
     } catch (e) {}
     return null;
