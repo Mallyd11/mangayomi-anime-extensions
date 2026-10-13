@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.4",
+    "version": "0.2.5",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -1044,24 +1044,28 @@ class DefaultExtension extends MProvider {
       // default client is a different stack), so a probe that THROWS proves nothing. If
       // none of them could be read at all, the first neighbour is used unverified - it is
       // the signs-and-songs file on every title but Koi Kaze - rather than losing it.
-      var unreadable = 0;
+      var ruledOut = {};
       for (var k = 0; k < tries.length; k++) {
         var url = dir + prefix + "eng_" + tries[k] + ".ass?" + query;
         var res;
         try {
           res = await this.client.get(url, { "Range": "bytes=0-6143" });
         } catch (e) {
-          unreadable++;
           continue;
         }
+        // Only a file that was read and is plainly something else rules a neighbour out; a
+        // refusal or odd status from the extension's own client says nothing about the file.
         if (res.statusCode !== 200 && res.statusCode !== 206) continue;
-        if (!this.looksLikeSignsSongs(res.body || "")) continue;
         var total = parseInt((this.headerValue(res.headers, "content-range").split("/")[1] || "0"), 10) || 0;
-        if (anchorTotal && total && total >= anchorTotal * 0.9) continue;
+        if (!this.looksLikeSignsSongs(res.body || "") || (anchorTotal && total && total >= anchorTotal * 0.9)) {
+          ruledOut[tries[k]] = true;
+          continue;
+        }
         return { url: url, label: "Signs & Songs" };
       }
-      if (tries.length && unreadable === tries.length) {
-        return { url: dir + prefix + "eng_" + tries[0] + ".ass?" + query, label: "Signs & Songs" };
+      // Nothing confirmed: take the first neighbour that was not ruled out.
+      for (var g = 0; g < tries.length; g++) {
+        if (!ruledOut[tries[g]]) return { url: dir + prefix + "eng_" + tries[g] + ".ass?" + query, label: "Signs & Songs" };
       }
     } catch (e) {}
     return null;
