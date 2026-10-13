@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.9",
+    "version": "0.2.0",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -366,6 +366,15 @@ var OA_CRYPTO = (function () {
 
 // Cached for the life of the isolate. A refresh from the live bundle lands here.
 var OA_LIVE_KEYS = null;
+
+// English audio for the Dub entry (see englishAudioEdl). The mirror is fixed because the
+// playlist's own host is often one that iOS's TLS stack cannot reach; the key unwraps the
+// fake image header the CDN puts on segments requested with an image extension.
+var OA_SEGMENT_HOST = "vault-93.rundowncdn.top";
+var OA_WRAP_KEY = [0x9d, 0x2a, 0xf1, 0x47, 0xb3, 0x8e, 0x5c, 0x70, 0xa6, 0x19, 0xe4, 0x3b, 0xd8, 0x62, 0x0f, 0xc5];
+// ~2.8 hours of 4 s segments. A movie of 2 h is ~1800 parts (~230 KB of URL); beyond this
+// the plain file is used rather than hand the player an unreasonably large URL.
+var OA_MAX_AUDIO_SEGMENTS = 2500;
 
 class DefaultExtension extends MProvider {
   constructor() {
@@ -735,18 +744,151 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // The master m3u8 carries the real resolution. Not safe to assume - almost everything on
-  // this backend is 1080p, but an obscure 2004 title (id 634) serves 712x478, so this is
-  // read live rather than hardcoded. The URL is already in hand from fetchStream, so this
-  // only costs a fetch of the playlist text itself, not another call to the site's API.
-  async resolution(masterUrl, headers) {
+  // The master m3u8 carries the real resolution and the separate English audio rendition.
+  // Resolution is not safe to assume - almost everything on this backend is 1080p, but an
+  // obscure 2004 title (id 634) serves 712x478 - so it is read live. The URL is already in
+  // hand from fetchStream, so this only costs a fetch of the playlist text itself, not
+  // another call to the site's API. `audio` is the absolute URL of the English rendition's
+  // playlist, or null when the episode has none (some episodes list only the Japanese track).
+  async masterInfo(masterUrl, headers) {
+    var info = { res: "", audio: null };
     try {
       var res = await this.client.get(masterUrl, headers);
-      var m = (res.body || "").match(/RESOLUTION=\d+x(\d+)/);
-      return m ? m[1] + "p" : "";
+      var body = res.body || "";
+      var m = body.match(/RESOLUTION=\d+x(\d+)/);
+      if (m) info.res = m[1] + "p";
+      var base = masterUrl.split("?")[0];
+      base = base.slice(0, base.lastIndexOf("/") + 1);
+      var lines = body.split("\n");
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i];
+        if (l.indexOf("#EXT-X-MEDIA:TYPE=AUDIO") !== 0) continue;
+        var lang = (l.match(/LANGUAGE="([^"]*)"/) || [])[1] || "";
+        var name = (l.match(/NAME="([^"]*)"/) || [])[1] || "";
+        var uri = (l.match(/URI="([^"]*)"/) || [])[1];
+        if (uri && (/^en/i.test(lang) || /english/i.test(name))) {
+          info.audio = /^https?:/i.test(uri) ? uri : base + uri;
+          break;
+        }
+      }
+      // Only AAC was measured to line up; anything else keeps the plain file.
+      var codecs = (body.match(/CODECS="([^"]*)"/) || [])[1] || "";
+      if (codecs && codecs.indexOf("mp4a") < 0) info.audio = null;
+    } catch (e) {}
+    return info;
+  }
+
+  // The presentation timestamp (seconds) of the first audio packet in a rendition's first
+  // segment, or null when it cannot be read. It is NOT a constant: most episodes start at
+  // 1.4 s (ffmpeg's MPEG-TS default) but One Piece E1 starts at 0.965, and using 1.4 there
+  // put the English audio 440 ms off the picture (measured by cross-correlating the
+  // rendered audio against the MKV's own English track; with the true value the offset is
+  // 0 ms, deep into the episode too). The MKV's tracks all start at 0, so the first
+  // sample of the rendition belongs at time 0.
+  //
+  // The extension only sees response bodies as text, so the segment is requested in its
+  // listed form (".png" / ".webp", served as image/* with no charset, which arrives one
+  // character per byte). The CDN disguises those: an 8-byte PNG signature (or a 12-byte
+  // RIFF/WEBP header) followed by the MPEG-TS XORed with a fixed 16-byte key. A PES header
+  // carries the PTS in five bytes (33 bits, 90 kHz); the first sits within the first
+  // kilobyte. Everything is sanity-checked, so a client that decodes differently yields null.
+  async firstPts(segUrl, headers) {
+    try {
+      var h = {};
+      for (var k in headers) h[k] = headers[k];
+      h["Range"] = "bytes=0-1023";
+      var res = await this.client.get(segUrl, h);
+      var s = res.body || "";
+      if ((res.statusCode !== 206 && res.statusCode !== 200) || s.length < 1024) return null;
+      var raw = [];
+      for (var i = 0; i < 1024; i++) {
+        var c = s.charCodeAt(i);
+        if (c > 255) return null;
+        raw.push(c);
+      }
+      var skip = 0;
+      if (raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4e && raw[3] === 0x47) skip = 8;
+      else if (raw[0] === 0x52 && raw[1] === 0x49 && raw[2] === 0x46 && raw[3] === 0x46) skip = 12;
+      if (!skip) return null;
+      var n = 1024 - skip, ts = [];
+      for (var j = 0; j < n; j++) ts.push(raw[j + skip] ^ OA_WRAP_KEY[j & 15]);
+      if (ts[0] !== 0x47 || ts[188] !== 0x47) return null;
+      for (var p = 0; p + 188 <= n; p += 188) {
+        if (ts[p] !== 0x47) return null;
+        var afc = (ts[p + 3] >> 4) & 3;
+        if (!(ts[p + 1] & 0x40) || afc === 0 || afc === 2) continue; // no payload start here
+        var o = p + 4 + (afc === 3 ? ts[p + 4] + 1 : 0);
+        if (o + 14 > n) continue;
+        if (ts[o] !== 0 || ts[o + 1] !== 0 || ts[o + 2] !== 1) continue; // not a PES header
+        if ((ts[o + 7] >> 6) < 2) continue; // carries no PTS
+        var pts = ((ts[o + 9] >> 1) & 7) * 1073741824 + ts[o + 10] * 4194304 +
+          (ts[o + 11] >> 1) * 32768 + ts[o + 12] * 128 + (ts[o + 13] >> 1);
+        var sec = pts / 90000;
+        return sec >= 0 && sec < 60 ? sec : null;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // The English audio as the body of an mpv EDL (without the "edl://" prefix and without
+  // the video): one lazily-opened part per segment, each carrying its own start= because
+  // mpv cannot learn where an unopened segment starts (without it every segment after the
+  // first reads as out of range). Opening them all up front instead costs ~2.6 segments/s,
+  // i.e. minutes of frozen spinner. Segments are requested as ".ts", which the CDN answers
+  // with raw unwrapped MPEG-TS (the disguised forms are not playable by ordinary players),
+  // from a fixed rundowncdn mirror: atomic4cdn mirrors fail their TLS handshake under the
+  // mbedtls stack iOS uses (ReAnime hit this), and rundowncdn answered every test. Needs only
+  // the Referer the stream already carries. Returns null when anything cannot be confirmed
+  // (no playlist, first timestamp unreadable, mirror refuses): the caller then falls back to
+  // the plain file, which always plays.
+  async englishAudioEdl(playlistUrl, headers) {
+    try {
+      var res = await this.client.get(playlistUrl, headers);
+      if (res.statusCode !== 200) return null;
+      var pbase = playlistUrl.split("?")[0];
+      pbase = pbase.slice(0, pbase.lastIndexOf("/") + 1);
+      var lines = String(res.body || "").split("\n");
+      var segs = [], dur = null;
+      for (var i = 0; i < lines.length; i++) {
+        var l = lines[i].replace(/\r$/, "");
+        var m = l.match(/^#EXTINF:([\d.]+)/);
+        if (m) { dur = m[1]; continue; }
+        if (l && l.charAt(0) !== "#" && dur !== null) {
+          segs.push({ url: /^https?:/i.test(l) ? l : pbase + l, dur: dur });
+          dur = null;
+        }
+      }
+      if (!segs.length || segs.length > OA_MAX_AUDIO_SEGMENTS) return null;
+
+      var pts0 = await this.firstPts(segs[0].url, headers);
+      if (pts0 === null) return null;
+
+      var urls = [];
+      for (var s = 0; s < segs.length; s++) {
+        urls.push(segs[s].url.split("?")[0].replace(/\.[A-Za-z0-9]+$/, ".ts")
+          .replace(/^(https?:\/\/)[^\/]+/i, "$1" + OA_SEGMENT_HOST));
+      }
+      var probe = {};
+      for (var k in headers) probe[k] = headers[k];
+      probe["Range"] = "bytes=0-187";
+      var check = await this.client.get(urls[0], probe);
+      if (check.statusCode !== 200 && check.statusCode !== 206) return null;
+
+      var at = pts0;
+      var parts = ["!delay_open,media_type=audio,codec=aac", "!track_meta,lang=eng,title=English"];
+      for (var u = 0; u < urls.length; u++) {
+        parts.push("%" + urls[u].length + "%" + urls[u] + ",start=" + at.toFixed(4) + ",length=" + segs[u].dur);
+        at += parseFloat(segs[u].dur);
+      }
+      return parts.join(";");
     } catch (e) {
-      return "";
+      return null;
     }
+  }
+
+  dubAudioEnabled() {
+    var v = this.readPref("oneanime_pref_dub_audio", true);
+    return v !== false && v !== "false";
   }
 
   // The MKV embeds several English tracks, and the file's own "default" flag on them is not
@@ -796,11 +938,12 @@ class DefaultExtension extends MProvider {
     return null;
   }
 
-  // One fetch produces every kind (["Sub"], ["Dub"], or both, already ordered) offered for
-  // this server, since they are the same file - fetching the API a second time for the
-  // other audio label would return byte-identical bytes. The requested subOrDub value only
-  // has to be one the episode actually has; which one is irrelevant to the result.
-  async videosFromServer(anilistId, episode, server, kinds) {
+  // Everything one server contributes, before it is turned into picker entries. One fetch
+  // covers every kind (["Sub"], ["Dub"], or both, already ordered), since they are the same
+  // file - fetching the API a second time for the other audio label would return
+  // byte-identical bytes. The requested subOrDub value only has to be one the episode
+  // actually has; which one is irrelevant to the result.
+  async serverBase(anilistId, episode, server, kinds) {
     try {
       var lang = kinds[0] === "Dub" ? "d" : "s";
       var data = await this.fetchStream(anilistId, episode, server, lang);
@@ -820,45 +963,88 @@ class DefaultExtension extends MProvider {
       // episode if a very long session outlives that.
       var master = data.sources && data.sources[0] && data.sources[0].url;
       var jobs = [this.resolveDirectUrl(dl, headers)];
-      if (master) jobs.push(this.resolution(master, headers));
+      if (master) jobs.push(this.masterInfo(master, headers));
       var results = await Promise.all(jobs);
-      var direct = results[0];
-      var res = results[1] || "";
+      var info = results[1] || { res: "", audio: null };
 
       // Mangayomi reads default tracks from the FIRST entry of the list only (and keeps the
       // last-used track when another entry is picked), so the default follows which kind
       // leads the list, i.e. the Preferred audio setting, not the entry tapped in the player.
       var pick = kinds[0] === "Dub" ? this.signsSongsSubtitle(data.subtitles) : this.fullEnglishSubtitle(data.subtitles);
-      var subs = pick ? [{ file: pick.url, label: pick.label || "English" }] : [];
 
-      // Mangayomi's downloader only offers a download when a video's originalUrl path ends
-      // in a known video extension (.mkv is on its list), and fetches `url` - never
-      // originalUrl - so this only ever affects which entries can be downloaded.
-      //
-      // Sub and Dub share this exact url/originalUrl - it is the same file - but the app's
-      // own JS bridge (eval/javascript/service.dart getVideoList()) deduplicates the RAW
-      // list from a video's (url, originalUrl) pair alone, before it ever looks at quality.
-      // Two entries with identical url AND identical originalUrl collapse into one, silently,
-      // no matter how their labels differ - confirmed live: v0.1.5 always lost the second
-      // entry per server this way. A URL fragment ("#sub"/"#dub") makes each pair unique
-      // without changing what gets requested: fragments are stripped by every HTTP client
-      // before the request line is built, so the network call, the CDN's signature check,
-      // and Uri.path (what the downloader's extension check reads) are all untouched.
-      var videos = [];
-      for (var i = 0; i < kinds.length; i++) {
-        var tag = "#" + kinds[i].toLowerCase();
-        videos.push({
-          url: dl + tag,
-          originalUrl: (direct || dl) + tag,
-          quality: server + (res ? " " + res : "") + " · " + kinds[i],
+      return {
+        base: {
+          server: server,
+          dl: dl,
+          direct: results[0],
+          res: info.res,
+          audio: info.audio,
           headers: headers,
-          subtitles: subs,
-        });
-      }
-      return { videos: videos };
+          subs: pick ? [{ file: pick.url, label: pick.label || "English" }] : [],
+        },
+      };
     } catch (e) {
       return { error: server + ": " + (e && e.message ? e.message : String(e)) };
     }
+  }
+
+  // Turns one server's base into picker entries.
+  //
+  // Sub is the plain file: its first audio track is the Japanese original.
+  //
+  // Dub, when the English audio could be confirmed (audioBody), is the same file with the
+  // site's separate English audio placed FIRST: an mpv EDL of two stream sets, English
+  // audio then the MKV. The tracks are then English (1, the default: the first audio track
+  // wins when no language is preferred), Japanese (2), the file's own English (3), and every
+  // embedded subtitle exactly as in the plain file. Mangayomi remembers the last-used track
+  // by ID and re-applies it when another entry is picked, so ID 1 meaning "this entry's
+  // language" in both entries is what lets switching Sub <-> Dub in the player change the
+  // audio. When it could not be confirmed, Dub is just the plain file again.
+  //
+  // originalUrl is what the app plays on the first open of a fresh player screen (url only
+  // after a switch), so for the EDL entry both fields are the EDL. It is not downloadable
+  // (the downloader fetches url and gates on originalUrl ending in a video extension), so
+  // when no plain entry is listed (Dub only) a plain "Dub (file)" entry is added for
+  // downloads, and as a fallback should the EDL misbehave on a device.
+  //
+  // Plain Sub and Dub share one url/originalUrl - same file - but the app's own JS bridge
+  // (eval/javascript/service.dart getVideoList()) deduplicates the RAW list by that
+  // (url, originalUrl) pair alone, before it ever looks at quality: two identical pairs
+  // collapse into one, silently - confirmed live, v0.1.5 lost the second entry per server
+  // that way. A URL fragment ("#sub"/"#dub") makes each pair unique without changing what
+  // gets requested: fragments are stripped by every HTTP client before the request line is
+  // built, so the network call, the CDN's signature check, and Uri.path (what the
+  // downloader's extension check reads) are all untouched.
+  entriesFor(base, kinds, audioBody) {
+    var label = base.server + (base.res ? " " + base.res : "");
+    var self = this;
+    function plain(kind, tag, name) {
+      return {
+        url: base.dl + tag,
+        originalUrl: (base.direct || base.dl) + tag,
+        quality: label + " · " + name,
+        headers: base.headers,
+        subtitles: base.subs,
+      };
+    }
+    var out = [];
+    for (var i = 0; i < kinds.length; i++) {
+      var kind = kinds[i];
+      if (kind === "Dub" && audioBody) {
+        var edl = "edl://!new_stream;" + audioBody + ";!new_stream;%" + base.dl.length + "%" + base.dl;
+        out.push({
+          url: edl,
+          originalUrl: edl,
+          quality: label + " · Dub",
+          headers: base.headers,
+          subtitles: base.subs,
+        });
+      } else {
+        out.push(plain(kind, "#" + kind.toLowerCase(), kind));
+      }
+    }
+    if (audioBody && kinds.indexOf("Sub") < 0) out.push(plain("Dub", "#dubfile", "Dub (file)"));
+    return out;
   }
 
   async getVideoList(url) {
@@ -888,14 +1074,27 @@ class DefaultExtension extends MProvider {
       // requests - the picker ends up showing every combination the tier can offer, not just
       // whichever server happened to answer first.
       var results = await Promise.all(servers.map(function (server) {
-        return self.videosFromServer(anilistId, episode, server, kinds);
+        return self.serverBase(anilistId, episode, server, kinds);
       }));
-      var videos = [];
+      var bases = [];
       for (var r = 0; r < results.length; r++) {
-        if (results[r].videos) videos = videos.concat(results[r].videos);
+        if (results[r].base) bases.push(results[r].base);
         else if (errors.indexOf(results[r].error) < 0) errors.push(results[r].error);
       }
-      if (videos.length) return videos;
+      if (!bases.length) continue;
+
+      // The English audio is the same on every server (same video id, only the first hop
+      // differs), so it is built once and shared: one playlist fetch, one timestamp read.
+      var audioBody = null;
+      if (kinds.indexOf("Dub") >= 0 && this.dubAudioEnabled()) {
+        for (var b = 0; b < bases.length && !audioBody; b++) {
+          if (bases[b].audio) audioBody = await this.englishAudioEdl(bases[b].audio, bases[b].headers);
+        }
+      }
+
+      var videos = [];
+      for (var e = 0; e < bases.length; e++) videos = videos.concat(this.entriesFor(bases[e], kinds, audioBody));
+      return videos;
     }
     // Throw rather than return []: the player then shows the reason with a Retry button
     // instead of a bare "video list is empty".
@@ -995,7 +1194,7 @@ class DefaultExtension extends MProvider {
         key: "oneanime_pref_audio",
         listPreference: {
           title: "Preferred audio",
-          summary: "Sub and Dub both show up in the player's quality list; this orders them (Mangayomi plays whichever is first), picks the default subtitle (Sub first: full English dialogue; Dub first: English signs & songs when the site offers it) and, for the -only options, hides episodes missing that version. Both audio tracks are in every file and the app, not this extension, decides which one starts: to start in English set Settings > Player > Audio > Preferred languages to en, or switch tracks from the player's audio menu.",
+          summary: "Sub and Dub both show up in the player's quality list; this orders them (Mangayomi plays whichever is first), picks the default subtitle (Sub first: full English dialogue; Dub first: English signs & songs when the site offers it) and, for the -only options, hides episodes missing that version. Sub starts with the Japanese audio and Dub with the English audio; either can be switched from the player's audio menu.",
           valueIndex: 0,
           entries: [
             "Sub then Dub (Sub plays, Dub as backup)",
@@ -1004,6 +1203,14 @@ class DefaultExtension extends MProvider {
             "Dub only",
           ],
           entryValues: ["sub_dub", "dub_sub", "sub", "dub"],
+        },
+      },
+      {
+        key: "oneanime_pref_dub_audio",
+        checkBoxPreference: {
+          title: "English audio on Dub",
+          summary: "The Dub entry plays the site's separate English audio with the picture, so choosing Dub starts in English. Turn this off if Dub will not play or buffers: Dub then opens the same file as Sub, with both audio tracks in the player's audio menu.",
+          value: true,
         },
       },
       {
