@@ -1,34 +1,34 @@
 {
     "manga": {
-        "Comix": {
-            "name": "Comix",
-            "version": "0.1.0",
-            "langs": "en",
-            "lastUpd": 1791645930.113939
+        "WeLoMa": {
+            "name": "WeLoMa",
+            "version": "1.0.1",
+            "langs": "ja",
+            "lastUpd": 1791925665.913328
         },
         "Weeb Central": {
             "name": "Weeb Central",
-            "version": "0.1.1",
+            "version": "0.1.2",
             "langs": "en",
-            "lastUpd": 1779415180.160092
-        },
-        "ReadComicOnline": {
-            "name": "ReadComicOnline",
-            "version": "0.3.1",
-            "langs": "en",
-            "lastUpd": 1779415180.160092
-        },
-        "WeLoMa": {
-            "name": "WeLoMa",
-            "version": "1.0.0",
-            "langs": "ja",
-            "lastUpd": 1779410651.044824
+            "lastUpd": 1791925665.913328
         },
         "Mangapill": {
             "name": "Mangapill",
-            "version": "1.0.4",
+            "version": "1.0.5",
             "langs": "en",
-            "lastUpd": 1779410651.044824
+            "lastUpd": 1791925665.913328
+        },
+        "ReadComicOnline": {
+            "name": "ReadComicOnline",
+            "version": "0.3.2",
+            "langs": "en",
+            "lastUpd": 1791925665.913328
+        },
+        "Comix": {
+            "name": "Comix",
+            "version": "0.1.1",
+            "langs": "en",
+            "lastUpd": 1791925665.913328
         }
     },
     "anime": {
@@ -136,29 +136,29 @@
         }
     },
     "novel": {
+        "Novelbuddy": {
+            "name": "Novelbuddy",
+            "version": "0.2.1",
+            "langs": "en",
+            "lastUpd": 1791925665.913328
+        },
         "NovelFire": {
             "name": "NovelFire",
-            "version": "0.1.0",
+            "version": "0.1.1",
             "langs": "en",
-            "lastUpd": 1787511418.409035
+            "lastUpd": 1791925665.913328
         },
         "bookReadFree": {
             "name": "bookReadFree",
-            "version": "0.1.0",
+            "version": "0.1.1",
             "langs": "en",
-            "lastUpd": 1787511418.409035
-        },
-        "Novelbuddy": {
-            "name": "Novelbuddy",
-            "version": "0.2.0",
-            "langs": "en",
-            "lastUpd": 1787511294.690894
+            "lastUpd": 1791925665.913328
         },
         "J-Garden": {
             "name": "J-Garden",
-            "version": "0.1.0",
+            "version": "0.1.1",
             "langs": "fr",
-            "lastUpd": 1787501583.305029
+            "lastUpd": 1791925665.913328
         }
     }
 }

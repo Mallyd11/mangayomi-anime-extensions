@@ -12,14 +12,14 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/manga/src/ja/weloma.js",
         "apiUrl": "",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "isManga": true,
         "itemType": 0,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": ""
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
     },
     {
         "name": "Weeb Central",
@@ -34,14 +34,14 @@
         "hasCloudflare": true,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/manga/src/en/weebcentral.js",
         "apiUrl": "",
-        "version": "0.1.1",
+        "version": "0.1.2",
         "isManga": true,
         "itemType": 0,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": ""
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
     },
     {
         "name": "Mangapill",
@@ -56,14 +56,14 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/manga/src/en/mangapill.js",
         "apiUrl": "",
-        "version": "1.0.4",
+        "version": "1.0.5",
         "isManga": true,
         "itemType": 0,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": ""
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
     },
     {
         "name": "ReadComicOnline",
@@ -78,14 +78,14 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/manga/src/en/readcomiconline.js",
         "apiUrl": "",
-        "version": "0.3.1",
+        "version": "0.3.2",
         "isManga": true,
         "itemType": 0,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": ""
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
     },
     {
         "name": "Comix",
@@ -100,13 +100,13 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/manga/src/en/comix.js",
         "apiUrl": "https://comix.to/api",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "isManga": true,
         "itemType": 0,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": ""
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
     }
 ]

@@ -10,11 +10,11 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| Comix | 0.1.0 | en | 2026/10/10 |
-| Weeb Central | 0.1.1 | en | 2026/05/21 |
-| ReadComicOnline | 0.3.1 | en | 2026/05/21 |
-| WeLoMa | 1.0.0 | ja | 2026/05/21 |
-| Mangapill | 1.0.4 | en | 2026/05/21 |
+| WeLoMa | 1.0.1 | ja | 2026/10/13 |
+| Weeb Central | 0.1.2 | en | 2026/10/13 |
+| Mangapill | 1.0.5 | en | 2026/10/13 |
+| ReadComicOnline | 0.3.2 | en | 2026/10/13 |
+| Comix | 0.1.1 | en | 2026/10/13 |
 
 ## Anime
 
@@ -42,10 +42,10 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| NovelFire | 0.1.0 | en | 2026/08/23 |
-| bookReadFree | 0.1.0 | en | 2026/08/23 |
-| Novelbuddy | 0.2.0 | en | 2026/08/23 |
-| J-Garden | 0.1.0 | fr | 2026/08/23 |
+| Novelbuddy | 0.2.1 | en | 2026/10/13 |
+| NovelFire | 0.1.1 | en | 2026/10/13 |
+| bookReadFree | 0.1.1 | en | 2026/10/13 |
+| J-Garden | 0.1.1 | fr | 2026/10/13 |
 
 </details>
 

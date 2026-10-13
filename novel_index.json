@@ -12,14 +12,14 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/novel/src/en/novelbuddy.js",
         "apiUrl": "https://api.novelbuddy.me",
-        "version": "0.2.0",
+        "version": "0.2.1",
         "isManga": false,
         "itemType": 2,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": "Site is a Next.js app - all data comes from api.novelbuddy.me"
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions - Site is a Next.js app - all data comes from api.novelbuddy.me"
     },
     {
         "name": "NovelFire",
@@ -34,14 +34,14 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/novel/src/en/NovelFire.js",
         "apiUrl": "",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "isManga": false,
         "itemType": 2,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": ""
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
     },
     {
         "name": "bookReadFree",
@@ -56,14 +56,14 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/novel/src/en/bookReadFree.js",
         "apiUrl": "",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "isManga": false,
         "itemType": 2,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": ""
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
     },
     {
         "name": "J-Garden",
@@ -78,13 +78,13 @@
         "hasCloudflare": false,
         "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/novel/src/fr/jgarden.js",
         "apiUrl": "https://j-garden.fr/wp-json/wp/v2",
-        "version": "0.1.0",
+        "version": "0.1.1",
         "isManga": false,
         "itemType": 2,
         "isFullData": false,
         "appMinVerReq": "0.5.0",
         "additionalParams": "",
         "sourceCodeLanguage": 1,
-        "notes": "French fan-translation team on WordPress + Elementor. Series are pages, chapters are posts."
+        "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions - French fan-translation team on WordPress + Elementor. Series are pages, chapters are posts."
     }
 ]
