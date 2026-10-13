@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -811,20 +811,23 @@ class DefaultExtension extends MProvider {
       h["Range"] = "bytes=0-1023";
       var res = await this.client.get(segUrl, h);
       var s = res.body || "";
-      if ((res.statusCode !== 206 && res.statusCode !== 200) || s.length < 1024) return null;
+      if ((res.statusCode !== 206 && res.statusCode !== 200) || s.length < 1024) {
+        this._ptsWhy = "HTTP " + res.statusCode + ", " + s.length + " chars";
+        return null;
+      }
       var raw = [];
       for (var i = 0; i < 1024; i++) {
         var c = s.charCodeAt(i);
-        if (c > 255) return null;
+        if (c > 255) { this._ptsWhy = "char " + c + " at " + i; return null; }
         raw.push(c);
       }
       var skip = 0;
       if (raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4e && raw[3] === 0x47) skip = 8;
       else if (raw[0] === 0x52 && raw[1] === 0x49 && raw[2] === 0x46 && raw[3] === 0x46) skip = 12;
-      if (!skip) return null;
+      if (!skip) { this._ptsWhy = "head " + raw.slice(0, 4).join(","); return null; }
       var n = 1024 - skip, ts = [];
       for (var j = 0; j < n; j++) ts.push(raw[j + skip] ^ OA_WRAP_KEY[j & 15]);
-      if (ts[0] !== 0x47 || ts[188] !== 0x47) return null;
+      if (ts[0] !== 0x47 || ts[188] !== 0x47) { this._ptsWhy = "not TS"; return null; }
       for (var p = 0; p + 188 <= n; p += 188) {
         if (ts[p] !== 0x47) return null;
         var afc = (ts[p + 3] >> 4) & 3;
@@ -856,7 +859,7 @@ class DefaultExtension extends MProvider {
   async englishAudioEdl(playlistUrl, headers) {
     try {
       var res = await this.client.get(playlistUrl, headers);
-      if (res.statusCode !== 200) return null;
+      if (res.statusCode !== 200) return this.why("audio playlist HTTP " + res.statusCode);
       var pbase = playlistUrl.split("?")[0];
       pbase = pbase.slice(0, pbase.lastIndexOf("/") + 1);
       var lines = String(res.body || "").split("\n");
@@ -870,10 +873,10 @@ class DefaultExtension extends MProvider {
           dur = null;
         }
       }
-      if (!segs.length || segs.length > OA_MAX_AUDIO_SEGMENTS) return null;
+      if (!segs.length || segs.length > OA_MAX_AUDIO_SEGMENTS) return this.why(segs.length + " audio segments");
 
       var pts0 = await this.firstPts(segs[0].url, headers);
-      if (pts0 === null) return null;
+      if (pts0 === null) return this.why("audio timing unreadable" + (this._ptsWhy ? ": " + this._ptsWhy : ""));
 
       var urls = [];
       for (var s = 0; s < segs.length; s++) {
@@ -884,7 +887,7 @@ class DefaultExtension extends MProvider {
       for (var k in headers) probe[k] = headers[k];
       probe["Range"] = "bytes=0-187";
       var check = await this.client.get(urls[0], probe);
-      if (check.statusCode !== 200 && check.statusCode !== 206) return null;
+      if (check.statusCode !== 200 && check.statusCode !== 206) return this.why("audio mirror HTTP " + check.statusCode);
 
       var at = pts0;
       var parts = ["!delay_open,media_type=audio,codec=aac", "!track_meta,lang=eng,title=English"];
@@ -894,8 +897,15 @@ class DefaultExtension extends MProvider {
       }
       return parts.join(";");
     } catch (e) {
-      return null;
+      return this.why("audio error " + (e && e.message ? e.message : e));
     }
+  }
+
+  // Why the Dub entry fell back to the plain file, shown in its label (the fallbacks are
+  // otherwise silent, which made an in-app-only failure impossible to see). Always null.
+  why(reason) {
+    this._why = String(reason).slice(0, 60);
+    return null;
   }
 
   // Mangayomi reads the default audio and subtitle from the FIRST entry of a list and
@@ -1129,12 +1139,16 @@ class DefaultExtension extends MProvider {
     var out = [];
     for (var i = 0; i < kinds.length; i++) {
       var kind = kinds[i];
+      if (kind === "Dub" && !audioBody && this._why) {
+        out.push(plain(kind, "#dub", "Dub (Japanese audio: " + this._why + ")"));
+        continue;
+      }
       if (kind === "Dub" && audioBody) {
         var edl = "edl://!new_stream;" + audioBody + ";!new_stream;%" + base.dl.length + "%" + base.dl;
         out.push({
           url: edl,
           originalUrl: edl,
-          quality: label + " · Dub",
+          quality: label + " · Dub" + (kinds[0] === "Dub" && !(base.subs || []).length ? " (no Signs & Songs found)" : ""),
           headers: base.headers,
           subtitles: base.subs,
         });
@@ -1190,9 +1204,16 @@ class DefaultExtension extends MProvider {
       // The English audio is the same on every server (same video id, only the first hop
       // differs), so it is built once and shared: one playlist fetch, one timestamp read.
       var audioBody = null;
-      if (kinds.indexOf("Dub") >= 0 && this.dubAudioEnabled()) {
-        for (var b = 0; b < bases.length && !audioBody; b++) {
-          if (bases[b].audio) audioBody = await this.englishAudioEdl(bases[b].audio, bases[b].headers);
+      this._why = "";
+      this._ptsWhy = "";
+      if (kinds.indexOf("Dub") >= 0) {
+        if (!this.dubAudioEnabled()) {
+          this._why = "English audio is off";
+        } else {
+          for (var b = 0; b < bases.length && !audioBody; b++) {
+            if (bases[b].audio) audioBody = await this.englishAudioEdl(bases[b].audio, bases[b].headers);
+          }
+          if (!audioBody && !this._why) this._why = "no English audio listed";
         }
       }
 
