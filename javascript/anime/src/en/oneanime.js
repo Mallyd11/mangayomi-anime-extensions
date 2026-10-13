@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.2",
+    "version": "0.2.3",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -574,7 +574,9 @@ class DefaultExtension extends MProvider {
       if (split && ep.sub && ep.dub && audioPref !== "sub" && audioPref !== "dub") {
         // Pushed Dub first because the list is reversed below, which puts Sub on top.
         chapters.push(mk(label + " (Dub)", epUrl + "|d", "Dub"));
-        chapters.push(mk(label, epUrl + "|s", "Sub"));
+        // No suffix: this is the link the combined chapter always had, so an existing one
+        // (with its watch progress) becomes the Sub chapter instead of a third copy.
+        chapters.push(mk(label, epUrl, "Sub"));
       } else {
         chapters.push(mk(label, epUrl, ep.sub && ep.dub ? "Sub & Dub" : (ep.sub ? "Sub" : "Dub")));
       }
@@ -876,7 +878,10 @@ class DefaultExtension extends MProvider {
       if (!segs.length || segs.length > OA_MAX_AUDIO_SEGMENTS) return this.why(segs.length + " audio segments");
 
       var pts0 = await this.firstPts(segs[0].url, headers);
-      if (pts0 === null) return this.why("audio timing unreadable" + (this._ptsWhy ? ": " + this._ptsWhy : ""));
+      // Unreadable in some environments (the app's client): 1.4 s is what ffmpeg gives
+      // almost every episode (only a few such as One Piece differ, by under half a second),
+      // which beats losing the English audio altogether.
+      if (pts0 === null) pts0 = 1.4;
 
       var urls = [];
       for (var s = 0; s < segs.length; s++) {
@@ -1168,7 +1173,8 @@ class DefaultExtension extends MProvider {
     if (!/^\d+$/.test(anilistId) || !episode) return [];
 
     var hasSub = flags.charAt(0) !== "0", hasDub = flags.charAt(1) !== "0";
-    var kinds = this.leadKinds(this.entryKinds(hasSub, hasDub, this.audioPref()), parts[3] || "");
+    var kinds = this.leadKinds(this.entryKinds(hasSub, hasDub, this.audioPref()),
+      parts[3] || (hasSub && hasDub && this.splitEpisodes() ? "s" : ""));
     if (!kinds.length) return [];
 
     // Ticked servers first; the others only as a rescue lane. An episode that refuses to
