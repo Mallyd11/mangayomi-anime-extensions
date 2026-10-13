@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "1Anime": {
+            "name": "1Anime",
+            "version": "0.1.9",
+            "langs": "en",
+            "lastUpd": 1791898173.691299
+        },
         "AniPM": {
             "name": "AniPM",
             "version": "0.1.4",
@@ -85,12 +91,6 @@
             "version": "0.1.1",
             "langs": "en",
             "lastUpd": 1790357285.862423
-        },
-        "1Anime": {
-            "name": "1Anime",
-            "version": "0.1.8",
-            "langs": "en",
-            "lastUpd": 1790079600.124666
         },
         "MyroniX": {
             "name": "MyroniX",

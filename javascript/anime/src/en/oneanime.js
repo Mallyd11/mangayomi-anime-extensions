@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -780,6 +780,22 @@ class DefaultExtension extends MProvider {
     return best;
   }
 
+  // For Dub-first listings the default subtitle is the English signs-and-songs track (it
+  // only translates on-screen text and lyrics, which is all a viewer hearing the English dub
+  // needs), not the full dialogue track that would just repeat what is being said. Only a
+  // track the API actually offers can be forced: the embedded S&S track is not reachable
+  // through Video.subtitles, so when the API does not list one nothing is forced and the
+  // file's own default flag decides.
+  signsSongsSubtitle(subs) {
+    for (var i = 0; i < (subs || []).length; i++) {
+      var s = subs[i];
+      var lang = String(s.lang || "").toLowerCase();
+      if (!s.url || (lang !== "eng" && lang !== "en" && lang.indexOf("english") < 0)) continue;
+      if (/\bs\s*(&|\+|and)\s*s\b|sign|song/.test(String(s.label || "").toLowerCase())) return s;
+    }
+    return null;
+  }
+
   // One fetch produces every kind (["Sub"], ["Dub"], or both, already ordered) offered for
   // this server, since they are the same file - fetching the API a second time for the
   // other audio label would return byte-identical bytes. The requested subOrDub value only
@@ -809,7 +825,10 @@ class DefaultExtension extends MProvider {
       var direct = results[0];
       var res = results[1] || "";
 
-      var pick = this.fullEnglishSubtitle(data.subtitles);
+      // Mangayomi reads default tracks from the FIRST entry of the list only (and keeps the
+      // last-used track when another entry is picked), so the default follows which kind
+      // leads the list, i.e. the Preferred audio setting, not the entry tapped in the player.
+      var pick = kinds[0] === "Dub" ? this.signsSongsSubtitle(data.subtitles) : this.fullEnglishSubtitle(data.subtitles);
       var subs = pick ? [{ file: pick.url, label: pick.label || "English" }] : [];
 
       // Mangayomi's downloader only offers a download when a video's originalUrl path ends
@@ -976,7 +995,7 @@ class DefaultExtension extends MProvider {
         key: "oneanime_pref_audio",
         listPreference: {
           title: "Preferred audio",
-          summary: "Sub and Dub both show up in the player's quality list; this only orders them (Mangayomi plays whichever is first) and, for the -only options, hides episodes missing that version. Every episode's stream carries both audio tracks and every subtitle regardless of which entry you open, so switch tracks for real from the player's own audio menu.",
+          summary: "Sub and Dub both show up in the player's quality list; this orders them (Mangayomi plays whichever is first), picks the default subtitle (Sub first: full English dialogue; Dub first: English signs & songs when the site offers it) and, for the -only options, hides episodes missing that version. Both audio tracks are in every file and the app, not this extension, decides which one starts: to start in English set Settings > Player > Audio > Preferred languages to en, or switch tracks from the player's audio menu.",
           valueIndex: 0,
           entries: [
             "Sub then Dub (Sub plays, Dub as backup)",
