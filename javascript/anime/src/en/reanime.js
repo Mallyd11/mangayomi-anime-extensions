@@ -14,14 +14,14 @@ const mangayomiSources = [
     "sourceCodeUrl":
       "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/anime/src/en/reanime.js",
     "apiUrl": "https://reanime.cz",
-    "version": "0.5.2",
+    "version": "0.5.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
     "appMinVerReq": "0.5.0",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "",
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
     "pkgPath": "anime/src/en/reanime.js",
   },
 ];

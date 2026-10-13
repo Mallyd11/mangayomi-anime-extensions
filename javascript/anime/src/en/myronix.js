@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://myronix.strangled.net/images/axolotl.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.2.5",
+    "version": "0.2.6",
     "pkgPath": "anime/src/en/myronix.js",
     "isManga": false,
     "isNsfw": false,
@@ -19,7 +19,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "",
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
   },
 ];
 

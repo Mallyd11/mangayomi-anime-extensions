@@ -9,9 +9,9 @@ const mangayomiSources = [{
     "isNsfw": false,
     "hasCloudflare": false,
     "itemType": 2,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "novel/src/fr/jgarden.js",
-    "notes": "French fan-translation team on WordPress + Elementor. Series are pages, chapters are posts."
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions - French fan-translation team on WordPress + Elementor. Series are pages, chapters are posts."
 }];
 
 // J-Garden is a WordPress site built with Elementor. There is no catalogue API:

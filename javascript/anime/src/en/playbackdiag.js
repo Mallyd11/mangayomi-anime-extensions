@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://apple.com",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "pkgPath": "anime/src/en/playbackdiag.js",
     "isManga": false,
     "isNsfw": false,
@@ -19,7 +19,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "Diagnostic only — plays reference streams from Apple/Blender to isolate player bugs from provider breakage. Not a real anime source.",
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions - Diagnostic only — plays reference streams from Apple/Blender to isolate player bugs from provider breakage. Not a real anime source.",
   },
 ];
 

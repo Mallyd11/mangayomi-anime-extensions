@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://ani.pm/apple-touch-icon.png",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "pkgPath": "anime/src/en/anipm.js",
     "isManga": false,
     "isNsfw": false,
@@ -19,7 +19,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "",
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
   },
 ];
 

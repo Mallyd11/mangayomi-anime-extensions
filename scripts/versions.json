@@ -32,107 +32,107 @@
         }
     },
     "anime": {
-        "1Anime": {
-            "name": "1Anime",
-            "version": "0.2.5",
-            "langs": "en",
-            "lastUpd": 1791907844.511878
-        },
-        "AniPM": {
-            "name": "AniPM",
-            "version": "0.1.4",
-            "langs": "en",
-            "lastUpd": 1791580399.855421
-        },
-        "AnimeKai": {
-            "name": "AnimeKai",
-            "version": "0.1.0",
-            "langs": "en",
-            "lastUpd": 1791484840.229155
-        },
-        "Anichi": {
-            "name": "Anichi",
-            "version": "0.1.0",
-            "langs": "en",
-            "lastUpd": 1791484721.830279
-        },
-        "Senshi": {
-            "name": "Senshi",
-            "version": "0.6.0",
-            "langs": "en",
-            "lastUpd": 1791482797.735715
-        },
         "AniKoto": {
             "name": "AniKoto",
-            "version": "0.4.28",
+            "version": "0.4.29",
             "langs": "en",
-            "lastUpd": 1791481709.694681
-        },
-        "AniWave": {
-            "name": "AniWave",
-            "version": "0.2.4",
-            "langs": "en",
-            "lastUpd": 1791479069.582322
+            "lastUpd": 1791925628.412915
         },
         "ReAnime": {
             "name": "ReAnime",
-            "version": "0.5.2",
+            "version": "0.5.3",
             "langs": "en",
-            "lastUpd": 1791478476.573759
+            "lastUpd": 1791925628.412915
         },
-        "Anidap": {
-            "name": "Anidap",
-            "version": "1.10.3",
+        "Senshi": {
+            "name": "Senshi",
+            "version": "0.6.1",
             "langs": "en",
-            "lastUpd": 1790881370.184572
-        },
-        "AllWish": {
-            "name": "AllWish",
-            "version": "0.1.1",
-            "langs": "en",
-            "lastUpd": 1790357285.862423
+            "lastUpd": 1791925628.412915
         },
         "MyroniX": {
             "name": "MyroniX",
-            "version": "0.2.5",
+            "version": "0.2.6",
             "langs": "en",
-            "lastUpd": 1790004232.782937
+            "lastUpd": 1791925628.412915
         },
-        "AnimeHeaven": {
-            "name": "AnimeHeaven",
-            "version": "0.0.9",
+        "AllWish": {
+            "name": "AllWish",
+            "version": "0.1.2",
             "langs": "en",
-            "lastUpd": 1789513212.911886
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.7.0",
-            "langs": "en",
-            "lastUpd": 1788789930.988301
-        },
-        "Miruro": {
-            "name": "Miruro",
-            "version": "6.1.13",
-            "langs": "en",
-            "lastUpd": 1788281513.054501
+            "lastUpd": 1791925628.412915
         },
         "JustAnime": {
             "name": "JustAnime",
-            "version": "0.2.8",
+            "version": "0.2.9",
             "langs": "en",
-            "lastUpd": 1787165614.772946
+            "lastUpd": 1791925628.412915
         },
-        "Playback Diagnostic": {
-            "name": "Playback Diagnostic",
-            "version": "0.0.2",
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.7.1",
             "langs": "en",
-            "lastUpd": 1786407249.110207
+            "lastUpd": 1791925628.412915
         },
         "AnimeParadise": {
             "name": "AnimeParadise",
-            "version": "0.3.4",
+            "version": "0.3.5",
             "langs": "en",
-            "lastUpd": 1784564001.048408
+            "lastUpd": 1791925628.412915
+        },
+        "Playback Diagnostic": {
+            "name": "Playback Diagnostic",
+            "version": "0.0.3",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
+        },
+        "AniPM": {
+            "name": "AniPM",
+            "version": "0.1.5",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
+        },
+        "Anidap": {
+            "name": "Anidap",
+            "version": "1.10.4",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
+        },
+        "Miruro": {
+            "name": "Miruro",
+            "version": "6.1.14",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
+        },
+        "AniWave": {
+            "name": "AniWave",
+            "version": "0.2.5",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
+        },
+        "1Anime": {
+            "name": "1Anime",
+            "version": "0.2.6",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
+        },
+        "AnimeHeaven": {
+            "name": "AnimeHeaven",
+            "version": "0.0.10",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
+        },
+        "Anichi": {
+            "name": "Anichi",
+            "version": "0.1.1",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
+        },
+        "AnimeKai": {
+            "name": "AnimeKai",
+            "version": "0.1.1",
+            "langs": "en",
+            "lastUpd": 1791925628.412915
         }
     },
     "novel": {

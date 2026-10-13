@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://senshi.to",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.6.0",
+    "version": "0.6.1",
     "pkgPath": "anime/src/en/senshi.js",
     "isManga": false,
     "isNsfw": false,
@@ -20,7 +20,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "",
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
   },
 ];
 

@@ -8,9 +8,9 @@ const mangayomiSources = [{
     "itemType": 0,
     "isManga": true,
     "isNsfw": true,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "manga/src/en/comix.js",
-    "notes": ""
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
 }];
 
 const StatusMap = {

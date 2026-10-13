@@ -9,9 +9,9 @@ const mangayomiSources = [{
     "isNsfw": false,
     "hasCloudflare": false,
     "itemType": 2,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "pkgPath": "novel/src/en/NovelFire.js",
-    "notes": ""
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
 }];
 
 // Chapters are listed 100 per page. A very long novel would need dozens of

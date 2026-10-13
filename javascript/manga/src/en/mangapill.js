@@ -9,10 +9,11 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=64&domain=https://mangapill.com/",
     "typeSource": "single",
     "isManga": true,
-    "version": "1.0.4",
+    "version": "1.0.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "manga/src/en/mangapill.js",
+    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
   },
 ];
 
