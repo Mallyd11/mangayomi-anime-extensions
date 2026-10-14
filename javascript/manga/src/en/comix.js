@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isManga": true,
     "isNsfw": true,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "manga/src/en/comix.js",
     "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
 }];
@@ -357,11 +357,25 @@ class DefaultExtension extends MProvider {
         }
         pairs.push(`_=${encodeURIComponent(cfg.params._)}`);
         const resp = await this.client.get(`${this.source.apiUrl}/v1${path}?${pairs.join("&")}`);
-        let data = JSON.parse(resp.body);
-        if (data && data.code && /token|key_retired/.test(String(data.code)) && !retry) {
-            comixSigner = null;
-            this.signer = false;
-            return await this.api(path, flat, true);
+        let data;
+        try {
+            data = JSON.parse(resp.body);
+        } catch (e) {
+            const head = String(resp.body).replace(/\s+/g, " ").slice(0, 80);
+            if (!retry) {
+                comixSigner = null;
+                this.signer = false;
+                return await this.api(path, flat, true);
+            }
+            throw new Error("comix: site did not return JSON (" + head + ")");
+        }
+        if (data && typeof data === "object" && data.code && data.status !== "ok" && !("e" in data) && !("result" in data)) {
+            if (!retry) {
+                comixSigner = null;
+                this.signer = false;
+                return await this.api(path, flat, true);
+            }
+            throw new Error("comix: " + data.code + (data.message ? " - " + data.message : ""));
         }
         if (data && typeof data === "object" && "e" in data) {
             const r = await this.readResponse({
@@ -451,12 +465,22 @@ class DefaultExtension extends MProvider {
             return this.api(`/manga/${id}/chapters`, q);
         };
         const first = await fetchPage(1);
+        this.expectChapters(first);
         const rest = [];
         for (let page = 2; page <= first.meta.lastPage; page++) rest.push(fetchPage(page));
         const results = [first].concat(await Promise.all(rest));
         const out = [];
-        for (const j of results) for (const c of j.items) out.push(this.mapChapter(c, url));
+        for (const j of results) {
+            this.expectChapters(j);
+            for (const c of j.items) out.push(this.mapChapter(c, url));
+        }
         return out;
+    }
+
+    expectChapters(r) {
+        if (!r || !Array.isArray(r.items) || !r.meta) {
+            throw new Error("comix: unexpected chapters response: " + JSON.stringify(r).slice(0, 200));
+        }
     }
 
     readPrefs() {
@@ -504,6 +528,7 @@ class DefaultExtension extends MProvider {
 
         // Most active group: whoever posted the most of the newest 20 chapters.
         const newest = await this.api(`/manga/${id}/chapters`, { limit: 20, "order[number]": "desc", page: 1 });
+        this.expectChapters(newest);
         const counts = {};
         for (const c of newest.items) if (c.group && c.group.id !== undefined) counts[c.group.id] = (counts[c.group.id] || 0) + 1;
         const top = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
