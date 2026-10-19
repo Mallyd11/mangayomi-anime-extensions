@@ -32,6 +32,12 @@
         }
     },
     "anime": {
+        "1Anime": {
+            "name": "1Anime",
+            "version": "0.3.0",
+            "langs": "en",
+            "lastUpd": 1792434122.200628
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.29",
@@ -107,12 +113,6 @@
         "AniWave": {
             "name": "AniWave",
             "version": "0.2.5",
-            "langs": "en",
-            "lastUpd": 1791925628.412915
-        },
-        "1Anime": {
-            "name": "1Anime",
-            "version": "0.2.6",
             "langs": "en",
             "lastUpd": 1791925628.412915
         },
