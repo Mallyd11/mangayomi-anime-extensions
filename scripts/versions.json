@@ -1,11 +1,5 @@
 {
     "manga": {
-        "Comix": {
-            "name": "Comix",
-            "version": "0.1.2",
-            "langs": "en",
-            "lastUpd": 1792005313.096446
-        },
         "WeLoMa": {
             "name": "WeLoMa",
             "version": "1.0.1",
