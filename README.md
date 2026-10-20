@@ -10,7 +10,6 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Language | Last Updated |
 |------|---------|----------|---------------|
-| Comix | 0.1.0 | en | 2026/10/20 |
 | WeLoMa | 1.0.1 | ja | 2026/10/13 |
 | Weeb Central | 0.1.2 | en | 2026/10/13 |
 | Mangapill | 1.0.5 | en | 2026/10/13 |
