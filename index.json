@@ -86,5 +86,27 @@
         "additionalParams": "",
         "sourceCodeLanguage": 1,
         "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
+    },
+    {
+        "name": "Comix",
+        "id": 584920173,
+        "baseUrl": "https://comix.to",
+        "lang": "en",
+        "typeSource": "single",
+        "iconUrl": "https://www.google.com/s2/favicons?sz=128&domain=https://comix.to",
+        "dateFormat": "",
+        "dateFormatLocale": "",
+        "isNsfw": false,
+        "hasCloudflare": true,
+        "sourceCodeUrl": "https://raw.githubusercontent.com/Mallyd11/mangayomi-anime-extensions/refs/heads/main/javascript/manga/src/en/comix.js",
+        "apiUrl": "",
+        "version": "0.1.0",
+        "isManga": true,
+        "itemType": 0,
+        "isFullData": false,
+        "appMinVerReq": "0.5.0",
+        "additionalParams": "",
+        "sourceCodeLanguage": 1,
+        "notes": ""
     }
 ]
