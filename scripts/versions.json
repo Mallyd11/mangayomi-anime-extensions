@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "HiAnime": {
+            "name": "HiAnime",
+            "version": "0.7.2",
+            "langs": "en",
+            "lastUpd": 1793034767.096962
+        },
         "1Anime": {
             "name": "1Anime",
             "version": "0.3.0",
@@ -65,12 +71,6 @@
         "JustAnime": {
             "name": "JustAnime",
             "version": "0.2.9",
-            "langs": "en",
-            "lastUpd": 1791925628.412915
-        },
-        "HiAnime": {
-            "name": "HiAnime",
-            "version": "0.7.1",
             "langs": "en",
             "lastUpd": 1791925628.412915
         },

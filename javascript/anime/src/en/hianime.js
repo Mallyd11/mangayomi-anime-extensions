@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hianime.at",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.7.1",
+    "version": "0.7.2",
     "pkgPath": "anime/src/en/hianime.js",
     "isManga": false,
     "isNsfw": false,
@@ -404,16 +404,43 @@ class DefaultExtension extends MProvider {
         subtitles.push({ file: subs[i].src, label: (subs[i].label || subs[i].lang || "Subtitle").trim() });
       }
 
-      // Hand back the MEDIA playlist, never the master.
+      // What to hand the player depends on how this encode carries its sound.
       //
-      // resolveHlsPlaylist returns {kind, variants} — not an array. Testing it
-      // for .length always failed, so every episode fell through to the master
-      // URL. libmpv follows a master fine, which is why playback looked correct,
-      // but the app's m3u8 downloader treats every non-comment line as a segment
-      // (it has no #EXT-X-STREAM-INF handling), so it downloaded "1080/index.m3u8"
-      // as if it were video and the download failed.
+      // Audio muxed into each variant (older encodes): hand back each quality's
+      // MEDIA playlist. That gives the viewer a quality picker and works for
+      // downloads too — the app's downloader used to read every non-comment line
+      // of whatever it was given as a segment, so a master "downloaded" as
+      // 1080/index.m3u8-as-video and failed.
+      //
+      // Audio as separate renditions (newer encodes, e.g. Overgeared): the variants
+      // carry no audio at all, so a bare variant URL plays silent on every
+      // platform. Two ways to give the player sound, measured in the app's own
+      // libmpv:
+      //   - the MASTER: ffmpeg pairs variant and audio group by itself, but it opens
+      //     all 19 playlists (4 video + 15 audio) up front, each on a fresh TLS
+      //     connection — 17.5 s to start, and no quality picker;
+      //   - a variant plus the renditions as external `audios` (what the app turns
+      //     into audio-add): 1.5 s to start, A/V sync within microseconds, and the
+      //     picker survives. This is how ReAnime does it.
+      // So each quality carries the renditions, default language first, and the
+      // master is kept as a last entry for any build that ignores `audios`.
+      // Downloads of these come out video-only: the app's downloader follows one
+      // playlist and has no notion of audio renditions.
       var resolved = await this.resolveHlsPlaylist(data.src, hdrs);
-      if (resolved.kind === "master") {
+      if (resolved.kind === "master" && resolved.separateAudio) {
+        for (var sv = 0; sv < resolved.variants.length; sv++) {
+          streams.push({
+            url: resolved.variants[sv].url, originalUrl: resolved.variants[sv].url,
+            quality: resolved.variants[sv].label + " - ZokoAnime [" + audioLabel + "]",
+            headers: hdrs, subtitles: subtitles, audios: resolved.audios,
+          });
+        }
+        streams.push({
+          url: data.src, originalUrl: data.src,
+          quality: "Auto (all audio, slower start) - ZokoAnime [" + audioLabel + "]",
+          headers: hdrs, subtitles: subtitles,
+        });
+      } else if (resolved.kind === "master") {
         for (var v = 0; v < resolved.variants.length; v++) {
           streams.push({
             url: resolved.variants[v].url, originalUrl: data.src,
@@ -520,6 +547,46 @@ class DefaultExtension extends MProvider {
     }
     if (variants.length === 0) return { kind: "empty-master" };
 
+    // Is the sound delivered as separate renditions rather than muxed into each
+    // variant?
+    //   #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Japanese",...,URI="aud/a0/index.m3u8"
+    // In that case a video variant carries no audio stream at all — measured on
+    // Overgeared, where the 1080 segments hold H.264 only and the sound is AAC in
+    // aud/aN/*.ts. Played on its own, a variant URL is a silent video.
+    //
+    // Collect the renditions of the group the variants point at (AUDIO="aud").
+    // A rendition with no URI means that audio is muxed into the variant, which is
+    // the ordinary case and needs nothing from us.
+    var groupMatch = body.match(/#EXT-X-STREAM-INF:[^\n]*AUDIO="([^"]+)"/i);
+    var wantGroup = groupMatch ? groupMatch[1] : "";
+    var found = [];
+    for (var k = 0; k < lines.length; k++) {
+      var ml = lines[k].trim();
+      if (!/^#EXT-X-MEDIA:/i.test(ml) || !/TYPE=AUDIO/i.test(ml)) continue;
+      var uriMatch = ml.match(/URI="([^"]+)"/i);
+      if (!uriMatch) continue;
+      var groupId = ml.match(/GROUP-ID="([^"]*)"/i);
+      if (wantGroup && groupId && groupId[1] !== wantGroup) continue;
+      var nameMatch = ml.match(/NAME="([^"]*)"/i);
+      var langMatch = ml.match(/LANGUAGE="([^"]*)"/i);
+      found.push({
+        file: this.resolveUrl(uriMatch[1], playlistUrl),
+        label: (nameMatch && nameMatch[1]) || (langMatch && langMatch[1]) || ("Audio " + (found.length + 1)),
+        isDefault: /DEFAULT=YES/i.test(ml),
+      });
+    }
+    // The rendition the playlist marks DEFAULT=YES goes first: the app plays the
+    // first track when none of the viewer's preferred audio languages matches, and
+    // that is how the sub master lands on Japanese and the dub master on English.
+    var audios = [];
+    for (var d1 = 0; d1 < found.length; d1++) {
+      if (found[d1].isDefault) audios.push({ file: found[d1].file, label: found[d1].label });
+    }
+    for (var d2 = 0; d2 < found.length; d2++) {
+      if (!found[d2].isDefault) audios.push({ file: found[d2].file, label: found[d2].label });
+    }
+    var separateAudio = audios.length > 0;
+
     // Sort variants high → low so the user gets the best quality first.
     variants.sort(function(a, b) {
       var aRes = parseInt((a.label || "0").replace(/[^0-9]/g, ""), 10) || 0;
@@ -527,7 +594,7 @@ class DefaultExtension extends MProvider {
       return bRes - aRes;
     });
 
-    return { kind: "master", variants: variants };
+    return { kind: "master", variants: variants, separateAudio: separateAudio, audios: audios };
   }
 
   async getVideoList(url) {
