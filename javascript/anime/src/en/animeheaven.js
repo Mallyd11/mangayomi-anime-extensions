@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.10",
+    "version": "0.0.11",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -303,12 +303,18 @@ class DefaultExtension extends MProvider {
     var seen = {};
     var rx = /(?:^|['"(=\s])(https?:\/\/[^'"()\s<>\\]+?\.(?:mp4|m3u8|mkv|webm)(?:\?[^'"()\s<>\\]*)?)(?=['")\s<>\\]|$)/g;
     var m;
-    // The video CDN validates access via the token embedded in the URL query
-    // string, not via cookies. Sending only UA + Referer keeps the request
-    // clean and avoids any cookie-related rejection by the CDN or downloader.
+    // The CDN checks where the request came from, not just the token in the
+    // query string. When it does not accept a request it answers 200 with a
+    // short "Watch episode on AnimeHeaven.Me" placeholder clip rather than an
+    // error, so a wrong header set looks like the episode playing briefly and
+    // then ending, not like a failure. Send what the browser sends from the
+    // player page: the gate page as the referring page, the site as the
+    // origin, and the same `key` cookie that unlocked the episode.
     var streamHeaders = {
       "User-Agent": this.ua,
-      "Referer": this.source.baseUrl + "/",
+      "Referer": this.source.baseUrl + "/gate.php",
+      "Origin": this.source.baseUrl,
+      "Cookie": "key=" + hash,
     };
     var named = [];
     var others = [];
