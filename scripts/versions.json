@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AnimeHeaven": {
+            "name": "AnimeHeaven",
+            "version": "0.0.14",
+            "langs": "en",
+            "lastUpd": 1793544637.1682746
+        },
         "AniKoto": {
             "name": "AniKoto",
             "version": "0.4.30",
@@ -107,12 +113,6 @@
         "1Anime": {
             "name": "1Anime",
             "version": "0.3.1",
-            "langs": "en",
-            "lastUpd": 1793544400.352881
-        },
-        "AnimeHeaven": {
-            "name": "AnimeHeaven",
-            "version": "0.0.13",
             "langs": "en",
             "lastUpd": 1793544400.352881
         },

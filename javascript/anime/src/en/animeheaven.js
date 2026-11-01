@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.13",
+    "version": "0.0.14",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -339,7 +339,21 @@ class DefaultExtension extends MProvider {
     var looseRx = /(?:^|['"(=\s])(https?:\/\/[^'"()\s<>\\]+?\.(?:mp4|m3u8|mkv|webm)(?:\?[^'"()\s<>\\]*)?)(?=['")\s<>\\]|$)/g;
 
     var found = collect(strictRx, 0);
-    if (found.length === 0) found = collect(looseRx, 1);
+    if (found.length > 0) {
+      // The primary node — the URL with no &error suffix, usually ax — serves
+      // the short branded "Watch episode on AnimeHeaven.Me" clip instead of
+      // the episode, while the &error and &error2 fallbacks serve the real
+      // file. Confirmed by playing all three: only the primary is wrong. Drop
+      // it so the player cannot default to the clip, but keep it when it is
+      // the only URL on the page rather than leave the episode unplayable.
+      var fallbacks = [];
+      for (var fi = 0; fi < found.length; fi++) {
+        if (/&error2?(\b|$)/.test(found[fi].raw)) fallbacks.push(found[fi]);
+      }
+      if (fallbacks.length > 0) found = fallbacks;
+    } else {
+      found = collect(looseRx, 1);
+    }
 
     // Label each entry so the server picker says which URL it actually is.
     // Several candidates used to collapse onto the name "Server 1", which

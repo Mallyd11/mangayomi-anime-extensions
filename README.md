@@ -26,7 +26,7 @@ This repository contains the available javascript extension catalogues for the M
 | AniWave | 0.2.6 | Yes | Sub+Dub | 2026/11/01 |
 | Anichi | 0.1.2 | ? | Sub+Dub | 2026/11/01 |
 | Anidap | 1.10.5 | No | Sub+Dub | 2026/11/01 |
-| AnimeHeaven | 0.0.13 | Yes | Sub Only | 2026/11/01 |
+| AnimeHeaven | 0.0.14 | Yes | Sub Only | 2026/11/01 |
 | AnimeKai | 0.1.2 | ? | Sub+Dub | 2026/11/01 |
 | AnimeParadise | 0.3.6 | No | Sub Only | 2026/11/01 |
 | HiAnime | 0.7.3 | Yes | Sub+Dub | 2026/11/01 |
