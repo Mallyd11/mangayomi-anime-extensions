@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.11",
+    "version": "0.0.12",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -290,74 +290,84 @@ class DefaultExtension extends MProvider {
     }
     var html = res.body || "";
 
-    // Pull every distinct media URL. Different subdomains rotate per refresh,
-    // but each page lists ax/ct/ck etc. as fallbacks. We surface them as
-    // quality options.
+    // Pull the media URLs out of the player page, in two passes ordered by
+    // trust.
     //
-    // Match on the shape of a media URL rather than on the exact
-    // <sub>.animeheaven.me/video.mp4?<token> form the player used to emit: a
-    // host, a path or a container the pattern does not anticipate would leave
-    // the episode with no playable server at all, which looks from the app
-    // like the episode is broken or absent. Anything on an unfamiliar host is
-    // still offered, labelled by that host.
-    var seen = {};
-    var rx = /(?:^|['"(=\s])(https?:\/\/[^'"()\s<>\\]+?\.(?:mp4|m3u8|mkv|webm)(?:\?[^'"()\s<>\\]*)?)(?=['")\s<>\\]|$)/g;
-    var m;
-    // The CDN checks where the request came from, not just the token in the
-    // query string. When it does not accept a request it answers 200 with a
-    // short "Watch episode on AnimeHeaven.Me" placeholder clip rather than an
-    // error, so a wrong header set looks like the episode playing briefly and
-    // then ending, not like a failure. Send what the browser sends from the
-    // player page: the gate page as the referring page, the site as the
-    // origin, and the same `key` cookie that unlocked the episode.
+    // Pass 1 looks for the exact form the player has always used for an
+    // episode: <sub>.animeheaven.me/video.mp4?<token>. Pass 2 — anything
+    // shaped like media, on any host — only runs if pass 1 found nothing, so
+    // that a new CDN or container still plays. The order matters: the site
+    // embeds a short branded "Watch episode on AnimeHeaven.Me" clip, which is
+    // also an .mp4, and a loose match can rank it above the real stream. It
+    // then plays for a few seconds and stops, which looks like a broken
+    // episode rather than the wrong URL.
+    //
+    // The CDN also checks where the request came from, so send what the
+    // browser sends from the player page.
     var streamHeaders = {
       "User-Agent": this.ua,
       "Referer": this.source.baseUrl + "/gate.php",
       "Origin": this.source.baseUrl,
       "Cookie": "key=" + hash,
     };
-    var named = [];
-    var others = [];
-    while ((m = rx.exec(html)) !== null) {
-      // URLs are embedded in HTML, so &amp; can stand in for &.
-      var u = this._decodeHtml(m[1]);
 
-      // The player embeds three kinds of URL suffix:
-      //   &error  → Server 2 fallback
-      //   &error2 → Server 3 fallback
-      //   &d      → "download alias" — INTENTIONALLY omits the access token,
-      //             making it a different (broken) URL that returns HTTP 404.
-      //             Skip it; the full-token Server 1–3 URLs are downloadable.
-      if (/&d(\b|$)/.test(u)) continue;
+    var self = this;
+    function collect(rx, group) {
+      var out = [];
+      var seen = {};
+      var m;
+      rx.lastIndex = 0;
+      while ((m = rx.exec(html)) !== null) {
+        // URLs sit in HTML, so &amp; can stand in for &.
+        var u = self._decodeHtml(group ? m[group] : m[0]);
 
-      // Strip &error / &error2 to get the clean URL with the access token.
-      var clean = u.replace(/&error2?$/, "");
-      if (seen[clean]) continue;
-      seen[clean] = true;
+        // "&d" is the download alias: the same URL with the access token
+        // deliberately left off, so it 404s. Skip it.
+        if (/&d(\b|$)/.test(u)) continue;
 
-      // Label by suffix so users can pick a fallback if the primary fails.
-      // A host we do not recognise is labelled by its hostname instead, so a
-      // server the site adds later still reaches the player.
-      var hostMatch = clean.match(/^https?:\/\/([^\/?#]+)/);
-      var host = hostMatch ? hostMatch[1] : "";
-      if (/(^|\.)animeheaven\.me$/.test(host)) {
-        var label;
-        if (/&error2(\b|$)/.test(u)) label = "Server 3";
-        else if (/&error(\b|$)/.test(u)) label = "Server 2";
-        else label = "Server 1";
-        named.push({ url: clean, label: label });
-      } else {
-        others.push({ url: clean, label: host });
+        // &error / &error2 mark the 2nd and 3rd fallback; strip them to get
+        // the clean URL but remember which one this was.
+        var clean = u.replace(/&error2?$/, "");
+        if (seen[clean]) continue;
+        seen[clean] = true;
+        out.push({ url: clean, raw: u });
       }
+      return out;
     }
 
-    // Keep the familiar Server 1–3 first; anything new goes after them.
-    var all = named.concat(others);
-    for (var i = 0; i < all.length; i++) {
+    var strictRx = /https?:\/\/[\w\-]+\.animeheaven\.me\/video\.mp4\?[^'"\s<>\\]+/g;
+    var looseRx = /(?:^|['"(=\s])(https?:\/\/[^'"()\s<>\\]+?\.(?:mp4|m3u8|mkv|webm)(?:\?[^'"()\s<>\\]*)?)(?=['")\s<>\\]|$)/g;
+
+    var found = collect(strictRx, 0);
+    if (found.length === 0) found = collect(looseRx, 1);
+
+    // Label each entry so the server picker says which URL it actually is.
+    // Several candidates used to collapse onto the name "Server 1", which
+    // made a wrong pick impossible to tell from a right one.
+    var usedLabels = {};
+    for (var i = 0; i < found.length; i++) {
+      var entry = found[i];
+      var hostMatch = entry.url.match(/^https?:\/\/([^\/?#]+)/);
+      var host = hostMatch ? hostMatch[1] : "";
+      var label;
+      if (/(^|\.)animeheaven\.me$/.test(host)) {
+        var n = /&error2(\b|$)/.test(entry.raw) ? "3" : (/&error(\b|$)/.test(entry.raw) ? "2" : "1");
+        label = "Server " + n + " \u00b7 " + host.replace(/\.animeheaven\.me$/, "");
+      } else {
+        var file = entry.url.split("?")[0].split("/").pop() || "stream";
+        label = host + " \u00b7 " + file;
+      }
+      // Keep labels unique so two candidates are never indistinguishable.
+      if (usedLabels[label]) {
+        usedLabels[label] += 1;
+        label = label + " (" + usedLabels[label] + ")";
+      } else {
+        usedLabels[label] = 1;
+      }
       streams.push({
-        url: all[i].url,
-        originalUrl: all[i].url,
-        quality: all[i].label,
+        url: entry.url,
+        originalUrl: entry.url,
+        quality: label,
         headers: streamHeaders,
         subtitles: [],
       });
