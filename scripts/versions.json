@@ -26,6 +26,12 @@
         }
     },
     "anime": {
+        "AnimeHeaven": {
+            "name": "AnimeHeaven",
+            "version": "0.0.11",
+            "langs": "en",
+            "lastUpd": 1793543380.1229188
+        },
         "HiAnime": {
             "name": "HiAnime",
             "version": "0.7.2",
@@ -107,12 +113,6 @@
         "AniWave": {
             "name": "AniWave",
             "version": "0.2.5",
-            "langs": "en",
-            "lastUpd": 1791925628.412915
-        },
-        "AnimeHeaven": {
-            "name": "AnimeHeaven",
-            "version": "0.0.10",
             "langs": "en",
             "lastUpd": 1791925628.412915
         },
