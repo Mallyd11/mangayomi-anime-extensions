@@ -10,9 +10,9 @@ const mangayomiSources = [
     "typeSource": "single",
     "isManga": true,
     "itemType": 0,
-    "version": "0.3.2",
+    "version": "0.3.3",
     "pkgPath": "manga/src/en/readcomiconline.js",
-    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
+    "notes": "",
   },
 ];
 

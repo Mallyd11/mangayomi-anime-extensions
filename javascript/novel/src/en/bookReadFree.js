@@ -9,9 +9,9 @@ const mangayomiSources = [{
     "isNsfw": false,
     "hasCloudflare": false,
     "itemType": 2,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "pkgPath": "novel/src/en/bookReadFree.js",
-    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
+    "notes": ""
 }];
 
 // The site has no global listing -- only per-category index pages -- so Popular

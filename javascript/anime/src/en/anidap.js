@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://anidap.lol",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.10.4",
+    "version": "1.10.5",
     "pkgPath": "anime/src/en/anidap.js",
     "isManga": false,
     "isNsfw": false,
@@ -20,7 +20,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
+    "notes": "",
   },
 ];
 

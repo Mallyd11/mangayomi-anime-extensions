@@ -8,7 +8,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://1anime.app",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.0",
+    "version": "0.3.1",
     "pkgPath": "anime/src/en/oneanime.js",
     "isManga": false,
     "isNsfw": false,
@@ -20,7 +20,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
+    "notes": "",
   },
 ];
 

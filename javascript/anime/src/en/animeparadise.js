@@ -10,9 +10,9 @@ const mangayomiSources = [
       "https://www.google.com/s2/favicons?sz=128&domain=https://animeparadise.moe",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.3.5",
+    "version": "0.3.6",
     "pkgPath": "anime/src/en/animeparadise.js",
-    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
+    "notes": "",
   },
 ];
 

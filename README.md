@@ -19,23 +19,23 @@ This repository contains the available javascript extension catalogues for the M
 
 | Name | Version | Downloads | Sub/Dub | Last Updated |
 |------|---------|-----------|---------|--------------|
-| 1Anime | 0.3.0 | ? | Sub+Dub | 2026/10/19 |
-| AllWish | 0.1.2 | Yes | Sub+Dub | 2026/10/13 |
-| AniKoto | 0.4.29 | No | Sub+Dub | 2026/10/13 |
-| AniPM | 0.1.5 | ? | Sub+Dub | 2026/10/13 |
-| AniWave | 0.2.5 | Yes | Sub+Dub | 2026/10/13 |
-| Anichi | 0.1.1 | ? | Sub+Dub | 2026/10/13 |
-| Anidap | 1.10.4 | No | Sub+Dub | 2026/10/13 |
-| AnimeHeaven | 0.0.12 | Yes | Sub Only | 2026/11/01 |
-| AnimeKai | 0.1.1 | ? | Sub+Dub | 2026/10/13 |
-| AnimeParadise | 0.3.5 | No | Sub Only | 2026/10/13 |
-| HiAnime | 0.7.2 | Yes | Sub+Dub | 2026/10/26 |
-| JustAnime | 0.2.9 | Yes | Sub+Dub | 2026/10/13 |
-| Miruro | 6.1.14 | Yes | Sub+Dub | 2026/10/13 |
-| MyroniX | 0.2.6 | Yes | Sub+Dub | 2026/10/13 |
-| Playback Diagnostic | 0.0.3 | No | N/a | 2026/10/13 |
-| ReAnime | 0.5.3 | No | Sub+Dub | 2026/10/13 |
-| Senshi | 0.6.1 | ? | Sub+Dub | 2026/10/13 |
+| 1Anime | 0.3.1 | ? | Sub+Dub | 2026/11/01 |
+| AllWish | 0.1.3 | Yes | Sub+Dub | 2026/11/01 |
+| AniKoto | 0.4.30 | No | Sub+Dub | 2026/11/01 |
+| AniPM | 0.1.6 | ? | Sub+Dub | 2026/11/01 |
+| AniWave | 0.2.6 | Yes | Sub+Dub | 2026/11/01 |
+| Anichi | 0.1.2 | ? | Sub+Dub | 2026/11/01 |
+| Anidap | 1.10.5 | No | Sub+Dub | 2026/11/01 |
+| AnimeHeaven | 0.0.13 | Yes | Sub Only | 2026/11/01 |
+| AnimeKai | 0.1.2 | ? | Sub+Dub | 2026/11/01 |
+| AnimeParadise | 0.3.6 | No | Sub Only | 2026/11/01 |
+| HiAnime | 0.7.3 | Yes | Sub+Dub | 2026/11/01 |
+| JustAnime | 0.2.10 | Yes | Sub+Dub | 2026/11/01 |
+| Miruro | 6.1.15 | Yes | Sub+Dub | 2026/11/01 |
+| MyroniX | 0.2.7 | Yes | Sub+Dub | 2026/11/01 |
+| Playback Diagnostic | 0.0.4 | No | N/a | 2026/11/01 |
+| ReAnime | 0.5.4 | No | Sub+Dub | 2026/11/01 |
+| Senshi | 0.6.2 | ? | Sub+Dub | 2026/11/01 |
 
 ## Novel
 

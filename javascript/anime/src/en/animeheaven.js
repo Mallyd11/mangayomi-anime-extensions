@@ -7,7 +7,7 @@ const mangayomiSources = [
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animeheaven.me",
     "typeSource": "single",
     "itemType": 1,
-    "version": "0.0.12",
+    "version": "0.0.13",
     "pkgPath": "anime/src/en/animeheaven.js",
     "isManga": false,
     "isNsfw": false,
@@ -19,7 +19,7 @@ const mangayomiSources = [
     "dateFormatLocale": "",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions",
+    "notes": "",
   },
 ];
 

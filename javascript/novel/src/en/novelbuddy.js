@@ -9,9 +9,9 @@ const mangayomiSources = [{
     "isNsfw": false,
     "hasCloudflare": false,
     "itemType": 2,
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pkgPath": "novel/src/en/novelbuddy.js",
-    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions - Site is a Next.js app - all data comes from api.novelbuddy.me"
+    "notes": ""
 }];
 
 // novelbuddy.com now redirects to novelbuddy.me, which renders client-side --

@@ -11,9 +11,9 @@ const mangayomiSources = [
     "isManga": true,
     "itemType": 0,
     "hasCloudflare": true,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "pkgPath": "manga/src/en/weebcentral.js",
-    "notes": "Made by MallyD11  https://github.com/Mallyd11/mangayomi-anime-extensions"
+    "notes": ""
   }
 ];
 
